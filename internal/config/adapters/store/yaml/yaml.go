@@ -1,6 +1,7 @@
 // Package yaml implements ConfigStore by reading a YAML config file from disk.
 //
-// The YAML schema is versioned. The current supported schema version is "1".
+// The YAML schema is versioned; domain.SupportedSchemaVersion is the newest it
+// reads.
 // When the file is absent the adapter returns DefaultConfig without error so
 // that callers need no special-case for first-run.
 package yaml
@@ -11,6 +12,7 @@ import (
 	"fmt"
 	"maps"
 	"os"
+	"reflect"
 	"slices"
 	"time"
 
@@ -66,6 +68,15 @@ type configYAML struct {
 	VendorPolicy    *vendorPolicyYAML    `yaml:"vendor_policy"`
 	FIPSPolicy      *fipsPolicyYAML      `yaml:"fips_policy"`
 	FetchPolicy     *fetchPolicyYAML     `yaml:"fetch_policy"`
+
+	// Storage (schema v3). Absent resolves to the SQLite backend.
+	Storage *storageYAML `yaml:"storage"`
+}
+
+// storageYAML selects the storage backend. Empty values keep the defaults.
+type storageYAML struct {
+	Backend    string `yaml:"backend"`
+	SumDBCache string `yaml:"sumdb_cache"`
 }
 
 // licenseOverrideYAML is the wire form of one operator-recorded licence
@@ -380,15 +391,76 @@ func Parse(data []byte) (domain.Config, error) {
 
 	applyOptionalDefaults(&cfg, defaults)
 
-	if err := applyLicensePolicy(&cfg, y, defaults); err != nil {
-		return domain.Config{}, err
-	}
-
-	if err := applyGovernance(&cfg, y, defaults); err != nil {
+	if err := applySections(&cfg, y, defaults, data); err != nil {
 		return domain.Config{}, err
 	}
 
 	return cfg, nil
+}
+
+// applySections maps the policy, governance and storage sections onto cfg.
+func applySections(cfg *domain.Config, y configYAML, defaults domain.Config, data []byte) error {
+	if err := applyLicensePolicy(cfg, y, defaults); err != nil {
+		return err
+	}
+	if err := applyGovernance(cfg, y, defaults); err != nil {
+		return err
+	}
+	return applyStorage(cfg, y, defaults, data)
+}
+
+// applyStorage maps the storage section (schema v3) onto cfg and keeps the
+// raw YAML of every section the schema does not define.
+func applyStorage(cfg *domain.Config, y configYAML, defaults domain.Config, data []byte) error {
+	cfg.Storage = defaults.Storage
+	if st := y.Storage; st != nil {
+		if st.Backend != "" {
+			cfg.Storage.Backend = st.Backend
+		}
+		cfg.Storage.SumDBCache = st.SumDBCache
+	}
+	sections, err := otherSections(data)
+	if err != nil {
+		return err
+	}
+	cfg.Sections = sections
+	return nil
+}
+
+// wireSections is the set of top-level keys configYAML parses.
+var wireSections = func() map[string]bool {
+	t := reflect.TypeFor[configYAML]()
+	out := make(map[string]bool, t.NumField())
+	for i := range t.NumField() {
+		out[t.Field(i).Tag.Get("yaml")] = true
+	}
+	return out
+}()
+
+// otherSections re-marshals each top-level section the schema does not define,
+// so the backend that owns it parses it into its own type. A section written
+// with nothing under it is absent.
+func otherSections(data []byte) (map[string][]byte, error) {
+	var doc map[string]yaml.Node
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return nil, fmt.Errorf("invalid YAML: %w", err)
+	}
+	var out map[string][]byte
+	for _, name := range slices.Sorted(maps.Keys(doc)) {
+		node := doc[name]
+		if wireSections[name] || node.Tag == "!!null" {
+			continue
+		}
+		raw, err := yaml.Marshal(&node)
+		if err != nil {
+			return nil, fmt.Errorf("section %s: %w", name, err)
+		}
+		if out == nil {
+			out = map[string][]byte{}
+		}
+		out[name] = raw
+	}
+	return out, nil
 }
 
 // applyOptionalDefaults fills each optional field the file left unset.

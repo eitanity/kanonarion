@@ -101,6 +101,7 @@ func newRootCmd(stdout, stderr io.Writer) *cobra.Command {
 	root.SetErr(stderr)
 	root.SetVersionTemplate("kanonarion {{.Version}}\n")
 	root.PersistentFlags().StringVar(&storeRoot, "store-root", defaultStoreRoot(), "root directory for blobs and SQLite")
+	root.PersistentFlags().StringVar(&configFlag, "config", "", "configuration file (default <store-root>/config.yaml; env KANONARION_CONFIG)")
 	root.PersistentFlags().StringVar(&logLevel, "log-level", defaultLogLevel, "log level: debug|info|warn|error")
 	root.PersistentFlags().BoolVar(&jsonOut, "json", false, "emit output as JSON")
 

@@ -3,6 +3,7 @@ package domain
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -17,7 +18,11 @@ import (
 // is additive: a v1 config has no governance blocks, they resolve to their
 // zero value (implicit allow), so v1 files continue to load unchanged. See
 // docs/schema/MIGRATIONS.md and.
-const SupportedSchemaVersion = "2"
+//
+// v3 adds the storage section (storage.backend, storage.sumdb_cache) and keeps
+// every other top-level section's raw YAML in Config.Sections. Both are
+// additive: a v1 or v2 file has neither and resolves to the SQLite backend.
+const SupportedSchemaVersion = "3"
 
 // PolicyOutcome is the result of evaluating a license against a policy rule.
 type PolicyOutcome string
@@ -86,6 +91,40 @@ type Config struct {
 	VendorPolicy    VendorPolicy
 	FIPSPolicy      FIPSPolicy
 	FetchPolicy     FetchPolicy
+
+	// Storage selects the storage backend and the checksum-database cache.
+	Storage StorageConfig
+	// Sections holds the raw YAML of every top-level section this schema does
+	// not define, keyed by section name, so a backend registered by the binary
+	// reads its own section without the loader knowing its shape. Nil when the
+	// file has none.
+	Sections map[string][]byte
+}
+
+// DefaultStorageBackend is the backend a configuration that names none uses.
+const DefaultStorageBackend = "sqlite"
+
+// StorageConfig is the storage section of config.yaml.
+type StorageConfig struct {
+	// Backend is the name of the registered storage backend that holds the
+	// store's records.
+	Backend string
+	// SumDBCache is the checksum-database tile cache directory. Empty means
+	// <store-root>/sumdb; a relative path is resolved against the store root.
+	SumDBCache string
+}
+
+// SumDBCacheDir is the checksum-database cache directory for the store under
+// storeRoot.
+func (c StorageConfig) SumDBCacheDir(storeRoot string) string {
+	switch {
+	case c.SumDBCache == "":
+		return filepath.Join(storeRoot, "sumdb")
+	case filepath.IsAbs(c.SumDBCache):
+		return c.SumDBCache
+	default:
+		return filepath.Join(storeRoot, c.SumDBCache)
+	}
 }
 
 // FetchPolicy governs the fetch stage's cross-verification posture.
@@ -397,5 +436,6 @@ func DefaultConfig() Config {
 			Required:    false,
 			OnDeviation: PolicyOutcomeWarn,
 		},
+		Storage: StorageConfig{Backend: DefaultStorageBackend},
 	}
 }

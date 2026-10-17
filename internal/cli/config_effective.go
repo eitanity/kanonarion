@@ -185,7 +185,19 @@ func effectiveSettings(cfg domain.Config, raw rawConfigDoc) []effectiveSetting {
 	}
 	add("fetch_policy.allowed_vcs_hosts", hosts, raw.isSet("fetch_policy", "allowed_vcs_hosts"))
 
+	add("storage.backend", cfg.Storage.Backend, raw.isSet("storage", "backend"))
+	add("storage.sumdb_cache", sumdbCacheDisplay(cfg.Storage.SumDBCache), raw.isSet("storage", "sumdb_cache"))
+
 	return out
+}
+
+// sumdbCacheDisplay renders storage.sumdb_cache, naming where an unset value
+// puts the cache rather than printing a blank.
+func sumdbCacheDisplay(v string) string {
+	if v == "" {
+		return "(unset: sumdb under the store root)"
+	}
+	return v
 }
 
 // callgraphToolchainDisplay renders the stored toolchain preference for a

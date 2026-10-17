@@ -124,8 +124,9 @@ type LocalWalkExtractResult = driver.LocalWalkExtractResult
 type Driver = composition.Driver
 
 // OpenDriver builds the write/serving surface against the kanonarion store
-// rooted at storeRoot (the directory holding mirror.db and blobs; the standard
-// default is ~/.kanonarion). It wires the fetch pipeline — proxy, VCS, sumdb,
+// rooted at storeRoot (the standard default is ~/.kanonarion). The backend is
+// selected as Open selects it: storage.backend in <storeRoot>/config.yaml among
+// the registered backends, the SQLite backend when none is named. It wires the fetch pipeline — proxy, VCS, sumdb,
 // blob store, fact store — with the OSS no-op Signer, and returns the
 // constructed Driver together with a cleanup function that closes the store.
 // Callers MUST invoke cleanup when finished.

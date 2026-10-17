@@ -938,6 +938,12 @@ type StageStatus = extractdomain.StageStatus
 // may be added within a major version (§4).
 type StalenessConfig = configdomain.StalenessConfig
 
+// StorageConfig is the storage section of config.yaml.
+//
+// Stability: supporting type of the ConfigStore port; unstable pre-v1. Fields
+// may be added within a major version (§4).
+type StorageConfig = configdomain.StorageConfig
+
 // StalenessDeprecation is the module's own deprecation notice — the `//
 // Deprecated:` comment on the `module` directive in its go.mod, which the go
 // command reports alongside the latest-version answer.

@@ -861,6 +861,8 @@ func resetInvocationState() {
 	// The built-in defaults, which is what a store with no config file loads —
 	// never the previous store's policy.
 	activeConfig, activeConfigErr = domain.DefaultConfig(), nil
+	// The next invocation names its own configuration file, or none.
+	configFlag = ""
 	// The safe default, so an invocation that never reaches PersistentPreRunE
 	// cannot inherit the last one's permission to create a store.
 	storeIntent = StoreIntentRead
@@ -1543,8 +1545,9 @@ func goEnvGOMODCACHE(ctx context.Context) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
-// loadStoreConfig loads and returns the parsed Config from
-// <storeRoot>/config.yaml. It never creates or modifies that file: an absent
+// loadStoreConfig loads and returns the parsed Config from the file
+// configFilePath names: <storeRoot>/config.yaml unless --config or
+// KANONARION_CONFIG names another. It never creates or modifies that file: an absent
 // file resolves to DefaultConfig, and any key the user has not explicitly
 // written resolves to its live built-in default at parse time. This keeps
 // read-only commands side-effect-free and ensures built-in default changes
@@ -1558,13 +1561,40 @@ func goEnvGOMODCACHE(ctx context.Context) (string, error) {
 // absent file is not a rejection: the store adapter resolves it to
 // DefaultConfig with no error, and that path is unchanged.
 func loadStoreConfig(root string) (domain.Config, error) {
-	configPath := filepath.Join(root, "config.yaml")
+	configPath := configFilePath(root)
 	store := configstore.New(configPath)
 	cfg, err := store.LoadConfig(context.Background())
 	if err != nil {
 		return domain.DefaultConfig(), &rejectedConfigError{path: configPath, cause: err}
 	}
 	return cfg, nil
+}
+
+// configFlag is --config.
+var configFlag string
+
+// configEnv names the configuration file when --config is not given.
+const configEnv = "KANONARION_CONFIG"
+
+// configFilePath is the configuration file in force: --config, else
+// KANONARION_CONFIG, else <root>/config.yaml.
+func configFilePath(root string) string {
+	if path, ok := explicitConfigPath(); ok {
+		return path
+	}
+	return filepath.Join(root, "config.yaml")
+}
+
+// explicitConfigPath is the configuration file named by --config or
+// KANONARION_CONFIG, if either names one.
+func explicitConfigPath() (string, bool) {
+	if configFlag != "" {
+		return configFlag, true
+	}
+	if env := os.Getenv(configEnv); env != "" {
+		return env, true
+	}
+	return "", false
 }
 
 // defaultStoreRoot returns the default store root path (~/.kanonarion).

@@ -31,6 +31,20 @@ kanonarion. This command is the exception, because it opens the store without
 applying migrations and never writes — so it still answers for a store the rest
 of the CLI will not touch.
 
+`store info` asks the storage backend that `storage.backend` in `config.yaml`
+selects (see [`config`](config.md#choosing-the-storage-backend)). A backend
+that keeps no schema version answers with:
+
+```
+store schema: the storage backend reports no schema state
+```
+
+and `--json` reports `"status": "unreported"` with no counts. The exit code is
+`0`.
+
+The files this page names under the store root — `mirror.db`, `blobs/`,
+`audit.jsonl` — are the layout of the default (SQLite) backend.
+
 ### `kanonarion store clean`
 
 Remove orphaned temporary files left behind by interrupted operations (e.g. a
@@ -66,6 +80,10 @@ directory kanonarion does not own and the sweep passed over. `warnings` carries
 the failures the sweep reported and carried on past; in the plain-text form
 those are printed on stdout where they happen.
 
+On a store whose `config.yaml` selects a backend other than `sqlite`, the
+command refuses with exit `20` and changes nothing: `store clean cleans the
+sqlite backend's blob directory; this store is configured for backend "<name>"`.
+
 ### `kanonarion store ledger`
 
 List the events in the store's append-only assurance log (`audit.jsonl`), in
@@ -76,6 +94,10 @@ kanonarion store ledger [--since <RFC3339>] [--until <RFC3339>]
                         [--module <path>] [--event-type <type>]
                         [--limit <n>] [--offset <n>] [--store-root <dir>] [--json]
 ```
+
+On a store whose `config.yaml` selects a backend other than `sqlite`, the
+command refuses with exit `20` and reads nothing: `store ledger reads the sqlite
+backend's ledger; this store is configured for backend "<name>"`.
 
 Every reading states three things besides the events themselves:
 

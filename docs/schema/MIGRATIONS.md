@@ -14,6 +14,32 @@ output-schema stability contract and the store-migration policy.
 
 ## Config schema
 
+### v2 → v3
+
+**Additive, backward-compatible.** v3 adds the `storage` section to
+`config.yaml`:
+
+- `storage.backend` - the storage backend that holds the store's records,
+  default `sqlite`
+- `storage.sumdb_cache` - the checksum-database tile cache directory, default
+  empty (`<store-root>/sumdb`)
+
+It also lets a file carry one more top-level section per storage backend the
+binary registered, named after the backend; `config init` writes the `sqlite`
+section, which has no settings. Top-level sections the schema does not define
+were already ignored and still are; a registered backend now reads its own.
+
+`config init` and `config set` stamp `version: "3"` on a new file, and append
+the `storage` section and each registered backend's section, commented out, to
+an existing one. `config show --json` gains a `storage` object and, when the
+file carries backend sections, a `sections` object; `config show` lists
+`storage.backend` and `storage.sumdb_cache`.
+
+Migration for existing configs: **none required.** A `version: "1"` or
+`version: "2"` file has no `storage` section and opens the SQLite store under
+the store root exactly as before. A v3 file is refused by a binary that
+supports only v2, as every newer config version is.
+
 ### v1 → v2
 
 **Additive, backward-compatible.** v2 adds four unified supply-chain

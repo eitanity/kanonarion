@@ -26,6 +26,9 @@ import (
 	cgapp "github.com/eitanity/kanonarion/internal/callgraph/application"
 	"github.com/eitanity/kanonarion/internal/composition/storage"
 	sqlitestorage "github.com/eitanity/kanonarion/internal/composition/storage/sqlite"
+	"github.com/eitanity/kanonarion/internal/config"
+	configyaml "github.com/eitanity/kanonarion/internal/config/adapters/store/yaml"
+	configdomain "github.com/eitanity/kanonarion/internal/config/domain"
 	dirapp "github.com/eitanity/kanonarion/internal/directive/application"
 	"github.com/eitanity/kanonarion/internal/driver"
 	exgoast "github.com/eitanity/kanonarion/internal/example/adapters/parser/goast"
@@ -64,6 +67,44 @@ import (
 // The SQLite backend owns the list; it is re-exported here for the callers that
 // read it beside a composition root.
 func Migrations() []sqlitestore.Migration { return sqlitestorage.Migrations() }
+
+// OpenStorage opens the backend req.Config selects. The SQLite backend is in
+// force whether or not it was registered, so a consumer that registers
+// nothing opens the store it always did.
+func OpenStorage(ctx context.Context, req storage.Request) (*storage.Storage, error) {
+	return storage.OpenConfigured(ctx, req, sqlitestorage.Backend()) //nolint:wrapcheck // the backend's text is what the roots have always returned
+}
+
+// ConfiguredBackend names the backend cfg selects among those in force,
+// without opening it.
+func ConfiguredBackend(cfg configdomain.Config) (string, error) {
+	b, err := storage.Select(cfg, sqlitestorage.Backend())
+	if err != nil {
+		return "", err //nolint:wrapcheck // the resolver's text is the refusal
+	}
+	return b.Name, nil
+}
+
+// BackendConfigSpecs is the config.yaml section of every backend in force:
+// the registered ones, then the SQLite backend when it was not registered.
+func BackendConfigSpecs() []config.ConfigSpec {
+	specs := storage.ConfigSpecs()
+	if _, ok := storage.Lookup(sqlitestorage.Name); !ok {
+		b := sqlitestorage.Backend()
+		specs = append(specs, config.ConfigSpec{Section: b.Section, Defaults: b.Defaults})
+	}
+	return specs
+}
+
+// loadStoreConfig reads <storeRoot>/config.yaml; an absent file is the
+// built-in defaults.
+func loadStoreConfig(storeRoot string) (configdomain.Config, error) {
+	cfg, err := configyaml.New(filepath.Join(storeRoot, "config.yaml")).LoadConfig(context.Background())
+	if err != nil {
+		return configdomain.Config{}, fmt.Errorf("loading store configuration: %w", err)
+	}
+	return cfg, nil
+}
 
 // ErrStoreSchemaNewer is storage.ErrStoreSchemaNewer, kept under this name so
 // every errors.Is caller and the CLI's exit-code mapping read it unchanged.
@@ -150,8 +191,9 @@ type Queries struct {
 	FIPS       *fipsapp.QueryFIPSUseCase
 }
 
-// NewQueries opens the SQLite store under storeRoot with all migrations
-// applied and builds every Query* use case over it. It returns the populated
+// NewQueries opens the store under storeRoot through the backend its
+// config.yaml selects (SQLite unless it names another) and builds every Query*
+// use case over it. It returns the populated
 // Queries together with a cleanup function that closes the DB.
 //
 // A store root that does not exist is refused, not created. Every use case
@@ -162,7 +204,11 @@ type Queries struct {
 // the read surface stays independent of the pipeline-construction machinery.
 func NewQueries(storeRoot string, opts ...Option) (*Queries, func() error, error) {
 	o := applyOptions(opts)
-	st, err := sqlitestorage.Open(storage.Request{StoreRoot: storeRoot, Intent: storage.IntentRead, SetAside: o.setAside})
+	cfg, err := loadStoreConfig(storeRoot)
+	if err != nil {
+		return nil, nil, err
+	}
+	st, err := OpenStorage(context.Background(), storage.Request{StoreRoot: storeRoot, Intent: storage.IntentRead, SetAside: o.setAside, Config: cfg})
 	if err != nil {
 		return nil, nil, err //nolint:wrapcheck // the backend's text is what this root has always returned
 	}
@@ -225,7 +271,8 @@ type Driver struct {
 	ValidateIngest *fetchapp.ValidateAndIngestUseCase
 }
 
-// NewDriver opens the SQLite store under storeRoot with all migrations applied,
+// NewDriver opens the store under storeRoot through the backend its
+// config.yaml selects (SQLite unless it names another),
 // wires the fetch pipeline (proxy, VCS, sumdb, blob store, fact store) with the
 // OSS no-op signer, and constructs the verified fetch/serve driver. It returns
 // the populated Driver together with a cleanup function that closes the DB. The
@@ -254,7 +301,11 @@ func NewDriverFrom(st *storage.Storage, storeRoot string, opts ...Option) (*Driv
 	if err != nil {
 		return nil, nil, errors.Join(err, closeStorage(st))
 	}
-	return newDriverFrom(st, storeRoot, exec)
+	cfg, err := loadStoreConfig(storeRoot)
+	if err != nil {
+		return nil, nil, errors.Join(err, closeStorage(st))
+	}
+	return newDriverFrom(st, storeRoot, cfg, exec)
 }
 
 func osSubprocessExecutor() (extextractor.SubprocessExecutor, error) {
@@ -274,15 +325,20 @@ func newDriver(storeRoot string, cgSubprocessExec extextractor.SubprocessExecuto
 	// This surface writes, so it creates the root it writes into: a first fetch
 	// or walk on a clean machine must not need a preparatory step. NewQueries,
 	// which only reads, deliberately does the opposite.
-	st, err := sqlitestorage.Open(storage.Request{StoreRoot: storeRoot, Intent: storage.IntentCreate, SetAside: o.setAside})
+	cfg, err := loadStoreConfig(storeRoot)
 	if err != nil {
-		return nil, nil, err //nolint:wrapcheck // the backend's text is what this root has always returned
+		return nil, nil, err
 	}
-	return newDriverFrom(st, storeRoot, cgSubprocessExec)
+	st, err := OpenStorage(context.Background(), storage.Request{StoreRoot: storeRoot, Intent: storage.IntentCreate, SetAside: o.setAside, Config: cfg})
+	if err != nil {
+		return nil, nil, err
+	}
+	return newDriverFrom(st, storeRoot, cfg, cgSubprocessExec)
 }
 
-// newDriverFrom is NewDriverFrom with the callgraph child's executor injected.
-func newDriverFrom(st *storage.Storage, storeRoot string, cgSubprocessExec extextractor.SubprocessExecutor) (*Driver, func() error, error) {
+// newDriverFrom is NewDriverFrom with the callgraph child's executor injected;
+// cfg is the configuration under storeRoot.
+func newDriverFrom(st *storage.Storage, storeRoot string, cfg configdomain.Config, cgSubprocessExec extextractor.SubprocessExecutor) (*Driver, func() error, error) {
 	if err := st.Validate(); err != nil {
 		return nil, nil, errors.Join(err, closeStorage(st))
 	}
@@ -323,7 +379,7 @@ func newDriverFrom(st *storage.Storage, storeRoot string, cgSubprocessExec extex
 	stopwatch := clock.Monotonic{}
 	fetchUC := fetchapp.NewFetchModuleUseCase(
 		proxy, fetchvcs.New(), st.Blobs, st.Facts,
-		fetchsumdb.New(filepath.Join(storeRoot, "sumdb")),
+		fetchsumdb.New(cfg.Storage.SumDBCacheDir(storeRoot)),
 		clk, stopwatch, "", logger,
 	).WithSigner(signer, st.Attestations).
 		// The write side emits a refused demotion (or a permitted downgrade) into

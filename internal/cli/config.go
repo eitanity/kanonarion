@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -13,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
+	"github.com/eitanity/kanonarion/internal/composition"
 	"github.com/eitanity/kanonarion/internal/config"
 	"github.com/eitanity/kanonarion/internal/config/domain"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
@@ -85,7 +85,7 @@ type configInitResult struct {
 }
 
 func runConfigInit(root string, asJSON bool, stdout io.Writer) error {
-	configPath := filepath.Join(root, "config.yaml")
+	configPath := configFilePath(root)
 	// Read rather than stat: the bytes are what says whether the template
 	// completed an existing file or left it exactly as it was, and they are
 	// only readable before the write. A file that exists and cannot be read
@@ -93,7 +93,7 @@ func runConfigInit(root string, asJSON bool, stdout io.Writer) error {
 	before, readErr := os.ReadFile(configPath) // #nosec G304 -- operator-supplied store-root path
 	existed := readErr == nil
 
-	if err := config.EnsureConfig(configPath); err != nil {
+	if err := config.EnsureConfig(configPath, composition.BackendConfigSpecs()...); err != nil {
 		return fmt.Errorf("writing config template: %w", err)
 	}
 
@@ -266,6 +266,8 @@ func configKeyPath(key string) ([]string, bool) {
 		return []string{"staleness", strings.TrimPrefix(key, "staleness.")}, true
 	case key == "fetch_policy.allowed_vcs_hosts":
 		return []string{"fetch_policy", "allowed_vcs_hosts"}, true
+	case key == "storage.backend", key == "storage.sumdb_cache":
+		return []string{"storage", strings.TrimPrefix(key, "storage.")}, true
 	default:
 		return nil, false
 	}
@@ -298,6 +300,10 @@ func configGetValue(cfg domain.Config, key string) (string, error) {
 			return "(unset: the built-in VCS host set applies, advisory — off-list hosts are reported, not refused)", nil
 		}
 		return marshalConfigYAML(cfg.FetchPolicy.AllowedVCSHosts)
+	case "storage.backend":
+		return cfg.Storage.Backend, nil
+	case "storage.sumdb_cache":
+		return sumdbCacheDisplay(cfg.Storage.SumDBCache), nil
 	default:
 		return configGetPolicyValue(cfg, key)
 	}
@@ -409,7 +415,8 @@ func newConfigSetCmd(stdout io.Writer) *cobra.Command {
   kanonarion config set license_overrides.golang.org/x/mod MIT
   kanonarion config set callgraph.exclude '[]'
   kanonarion config set callgraph.toolchain go1.26.6
-  kanonarion config set staleness.ttl 6h`,
+  kanonarion config set staleness.ttl 6h
+  kanonarion config set storage.backend sqlite`,
 		// Exempt from the rejected-config refusal: it is the repair. It edits
 		// the YAML document directly and never consults the loaded
 		// configuration, so refusing it would make a rejected file unfixable by
@@ -449,8 +456,8 @@ func runConfigSet(root, key, value string, asJSON bool, stdout io.Writer) error 
 		return err
 	}
 
-	configPath := filepath.Join(root, "config.yaml")
-	if eerr := config.EnsureConfig(configPath); eerr != nil {
+	configPath := configFilePath(root)
+	if eerr := config.EnsureConfig(configPath, composition.BackendConfigSpecs()...); eerr != nil {
 		return fmt.Errorf("ensuring config file: %w", eerr)
 	}
 
@@ -616,6 +623,10 @@ func configSetPath(key string) ([]string, error) {
 		return []string{"staleness", "probe_concurrency"}, nil
 	case key == "fetch_policy.allowed_vcs_hosts":
 		return []string{"fetch_policy", "allowed_vcs_hosts"}, nil
+	case key == "storage.backend":
+		return []string{"storage", "backend"}, nil
+	case key == "storage.sumdb_cache":
+		return []string{"storage", "sumdb_cache"}, nil
 	default:
 		return nil, &exitError{code: ExitConfig, msg: fmt.Sprintf("unknown config key %q", key)}
 	}
@@ -637,6 +648,9 @@ func parseConfigValue(key, value string) (*yaml.Node, error) {
 		return nil, err
 	}
 	if err := validateStalenessNode(key, value, node); err != nil {
+		return nil, err
+	}
+	if err := validateStorageNode(key, value, node); err != nil {
 		return nil, err
 	}
 	switch {
@@ -682,6 +696,18 @@ func validatePreferenceNode(key, value string, node *yaml.Node) error {
 		default:
 			return &exitError{code: ExitConfig, msg: fmt.Sprintf("preferences.log_level must be one of: debug, info, warn, error; got %q", value)}
 		}
+	}
+	return nil
+}
+
+// validateStorageNode checks the value given for a storage key: a string, and
+// for storage.backend a non-empty one.
+func validateStorageNode(key, value string, node *yaml.Node) error {
+	if key != "storage.backend" && key != "storage.sumdb_cache" {
+		return nil
+	}
+	if node.Kind != yaml.ScalarNode || (key == "storage.backend" && node.Value == "") {
+		return &exitError{code: ExitConfig, msg: fmt.Sprintf("%s requires a string, got %q", key, value)}
 	}
 	return nil
 }

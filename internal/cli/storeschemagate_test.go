@@ -194,7 +194,7 @@ func TestStoreSchemaGate_DoesNotRefuseAStoreThisBinaryKnows(t *testing.T) {
 
 			// And it really was brought up to date, so "did not refuse" is not being
 			// confused with "did not migrate either".
-			st, err := sqlitestorage.Inspect(storage.Request{StoreRoot: root})
+			st, err := sqlitestorage.Open(storage.Request{StoreRoot: root, Intent: storage.IntentInspect})
 			if err != nil {
 				t.Fatalf("reopening store: %v", err)
 			}

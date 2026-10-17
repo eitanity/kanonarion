@@ -156,6 +156,9 @@ type ledgerResult struct {
 }
 
 func runStoreLedger(root string, f storeLedgerFlags, asJSON bool, stdout io.Writer) error {
+	if err := requireSQLiteBackend("store ledger", "reads the sqlite backend's ledger"); err != nil {
+		return err
+	}
 	since, until, err := parseLedgerWindow(f)
 	if err != nil {
 		return err

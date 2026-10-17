@@ -8,7 +8,7 @@ Per-command pages link back here instead of restating these rules.
 
 - All commands write logs to **stderr** and data to **stdout**.
 - Pass `--json` to get machine-readable output on stdout. Log lines remain on stderr.
-- `--store-root` defaults to `~/.kanonarion`. It holds the SQLite database, blob store, sumdb cache, audit log, and `config.yaml`.
+- `--store-root` defaults to `~/.kanonarion`. With the default (SQLite) backend it holds the SQLite database, blob store, sumdb cache, audit log, and `config.yaml`.
 - The `<module@version>` argument follows standard Go module coordinate syntax, e.g. `github.com/spf13/cobra@v1.8.1`.
 - `--gomod` takes the path of an existing `go.mod`. A path that is not there is refused before any work is done - see [A `--gomod` path that does not exist](#a---gomod-path-that-does-not-exist).
 
@@ -19,6 +19,19 @@ Flag values take precedence over store config, which in turn takes precedence ov
 ```
 flag > <store-root>/config.yaml > built-in default
 ```
+
+Where the store and its configuration are found is resolved first, in this order:
+
+| What | Resolved from |
+|---|---|
+| Store root | `--store-root`, else `KANONARION_STORE`, else `~/.kanonarion` |
+| Configuration file | `--config`, else `KANONARION_CONFIG`, else `<store-root>/config.yaml` |
+| Storage backend | `storage.backend` in that file, else `sqlite` |
+
+The backend has no flag and no environment variable: it is chosen only in the
+configuration file, together with any settings of its own, and a backend the
+binary did not register is refused with exit `20`. See
+[`config`](config.md#choosing-the-storage-backend).
 
 On first run kanonarion writes a fully commented `config.yaml` to your store root with all defaults populated. Edit it to set sticky preferences. When a new binary version adds sections, they are appended non-destructively on the next invocation - existing content and comments are preserved.
 
@@ -707,7 +720,8 @@ the offset stepped over.
 
 ## Store layout
 
-All state lives under `--store-root` (default `~/.kanonarion`):
+With the default (SQLite) backend, all state lives under `--store-root`
+(default `~/.kanonarion`):
 
 ```
 ~/.kanonarion/

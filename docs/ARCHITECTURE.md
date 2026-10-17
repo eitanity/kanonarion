@@ -363,6 +363,16 @@ cross-context import ban because their whole job is composition:
   `NewQueries(storeRoot)` (wires the read stores and every `Query*` use case),
   and `NewDriver(storeRoot)` (wires the fetch/verify, local walk-extract, and
   validate-and-ingest pipelines).
+- **`internal/composition/storage`** - the `Storage` value every root builds
+  from: one field per record store, plus the blob store, audit sink,
+  attestation store and signer. A backend produces it. Backends are registered
+  by the binary's `main` (`storage.Register`, never from `init`) as a
+  `Backend`: a name, its own `config.yaml` section and that section's defaults,
+  and an `Open` function. `storage.backend` in `config.yaml` selects one, and
+  `OpenConfigured` opens it with its section; every CLI command and both library
+  roots open their store this way. The SQLite backend
+  (`storage/sqlite`) is always available and is the default. `config init`
+  writes each registered backend's section, commented out.
 - **`internal/driver`** - cross-context use cases that sit above the contexts,
   such as `LocalWalkExtractUseCase` (walk a local working tree, then run its
   extraction stages). It depends on narrow runner interfaces so it unit-tests

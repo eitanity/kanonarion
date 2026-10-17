@@ -25,6 +25,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/eitanity/kanonarion/pkg/kanonarion"
@@ -555,4 +556,145 @@ func mustCoord(t *testing.T, path, version string) kanonarion.ModuleCoordinate {
 		t.Fatalf("NewModuleCoordinate(%q, %q): %v", path, version, err)
 	}
 	return c
+}
+
+// memoryWalks is the one store the in-memory backend answers from; every
+// other field is a stub the read below never calls.
+type memoryWalks struct {
+	kanonarion.WalkStore
+	summaries []kanonarion.WalkSummary
+}
+
+func (m memoryWalks) ListWalks(context.Context, kanonarion.WalkFilter) ([]kanonarion.WalkSummary, error) {
+	return m.summaries, nil
+}
+
+type (
+	stubAttestations struct{ kanonarion.AttestationStore }
+	stubAudit        struct{ kanonarion.AuditSink }
+	stubPresence     struct{ kanonarion.WalkPresence }
+	stubLicences     struct{ kanonarion.LicenseStore }
+	stubInterfaces   struct{ kanonarion.InterfaceStore }
+	stubCallGraphs   struct{ kanonarion.CallGraphStore }
+	stubOutcomes     struct {
+		kanonarion.CallGraphOutcomeReader
+	}
+	stubExamples    struct{ kanonarion.ExampleStore }
+	stubExtractions struct{ kanonarion.ExtractionStore }
+	stubVulns       struct{ kanonarion.VulnerabilityStore }
+	stubSBOMs       struct{ kanonarion.SBOMStore }
+	stubDirectives  struct{ kanonarion.DirectiveStore }
+	stubGoDebug     struct{ kanonarion.GoDebugStore }
+	stubVendor      struct{ kanonarion.VendorStore }
+	stubFIPS        struct{ kanonarion.FIPSStore }
+	stubStdlib      struct{ kanonarion.StdlibStore }
+	stubStaleness   struct{ kanonarion.StalenessLedger }
+	stubNative      struct{ kanonarion.NativeStore }
+)
+
+// memoryBackend opens a Storage held entirely in this process; the walk it
+// holds is named by its own config.yaml section, so the section is shown to
+// reach the backend.
+func memoryBackend() kanonarion.Backend {
+	type settings struct {
+		WalkID string `yaml:"walk_id"`
+	}
+	return kanonarion.Backend{
+		Name:     "memory",
+		Section:  "memory",
+		Defaults: settings{},
+		Open: func(_ context.Context, req kanonarion.StorageRequest) (*kanonarion.Storage, error) {
+			id := strings.TrimSpace(strings.TrimPrefix(string(req.Section), "walk_id:"))
+			return &kanonarion.Storage{
+				Facts: newFakePostgresFactStore(), Attestations: stubAttestations{}, Audit: stubAudit{},
+				Blobs: newFakeS3BlobStore(), Walks: memoryWalks{summaries: []kanonarion.WalkSummary{{ID: id}}},
+				WalkPresence: stubPresence{}, Licenses: stubLicences{}, Interfaces: stubInterfaces{},
+				CallGraphs: stubCallGraphs{}, CallGraphOutcomes: stubOutcomes{}, Examples: stubExamples{},
+				Extractions: stubExtractions{}, Vulnerabilities: stubVulns{}, SBOMs: stubSBOMs{},
+				Directives: stubDirectives{}, GoDebug: stubGoDebug{}, Vendor: stubVendor{}, FIPS: stubFIPS{},
+				Stdlib: stubStdlib{}, Staleness: stubStaleness{}, Native: stubNative{},
+			}, nil
+		},
+	}
+}
+
+var registerMemory sync.Once
+
+// registerMemoryBackend registers the in-memory backend once for this
+// process, as a consumer's main would, and checks a second registration is
+// refused.
+func registerMemoryBackend(t *testing.T) {
+	t.Helper()
+	registerMemory.Do(func() {
+		if err := kanonarion.RegisterBackend(memoryBackend()); err != nil {
+			t.Fatalf("RegisterBackend: %v", err)
+		}
+	})
+	if err := kanonarion.RegisterBackend(memoryBackend()); err == nil {
+		t.Error("a second registration of the same name was accepted")
+	}
+	if got := kanonarion.BackendNames(); len(got) != 1 || got[0] != "memory" {
+		t.Errorf("BackendNames() = %v, want [memory]", got)
+	}
+}
+
+func writeConfig(t *testing.T, root, content string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(root, "config.yaml"), []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A backend registered from another module is selected by config.yaml and
+// answers kanonarion.Open's queries, and nothing but the config is created.
+func TestConsumer_ARegisteredBackendIsSelectedByConfiguration(t *testing.T) {
+	registerMemoryBackend(t)
+	root := t.TempDir()
+	writeConfig(t, root, "version: \"3\"\nstorage:\n  backend: memory\nmemory:\n  walk_id: from-the-memory-backend\n")
+	queries, cleanup, err := kanonarion.Open(root)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	walks, err := queries.Walks.ListWalks(context.Background(), kanonarion.WalkFilter{})
+	if cerr := cleanup(); cerr != nil {
+		t.Errorf("cleanup: %v", cerr)
+	}
+	if err != nil || len(walks) != 1 || walks[0].ID != "from-the-memory-backend" {
+		t.Fatalf("ListWalks = %v, %v; want the memory backend's one walk", walks, err)
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "config.yaml" {
+		t.Errorf("the root holds %v, want only config.yaml", entries)
+	}
+}
+
+// Registering a backend does not take the SQLite default away from a root
+// with no config.
+func TestConsumer_ARootWithNoConfigStillOpensSQLite(t *testing.T) {
+	registerMemoryBackend(t)
+	root := t.TempDir()
+	_, cleanup, err := kanonarion.Open(root)
+	if err != nil {
+		t.Fatalf("Open with no config: %v", err)
+	}
+	if cerr := cleanup(); cerr != nil {
+		t.Errorf("cleanup: %v", cerr)
+	}
+	if _, serr := os.Stat(filepath.Join(root, "mirror.db")); serr != nil {
+		t.Errorf("Open with no config did not open SQLite: %v", serr)
+	}
+}
+
+func TestConsumer_AnUnregisteredBackendIsRefused(t *testing.T) {
+	registerMemoryBackend(t)
+	root := t.TempDir()
+	writeConfig(t, root, "version: \"3\"\nstorage:\n  backend: postgres\n")
+	_, _, err := kanonarion.Open(root)
+	if !errors.Is(err, kanonarion.ErrBackendNotRegistered) ||
+		!strings.Contains(err.Error(), `backend "postgres" is not registered in this binary (registered: memory, sqlite)`) {
+		t.Errorf("Open naming an unregistered backend = %v", err)
+	}
 }

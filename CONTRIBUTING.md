@@ -126,7 +126,9 @@ passes CI mechanically. See `docs/ARCHITECTURE.md` for the rationale.
 external consumers may import (everything else lives under `internal/`). Every
 exported identifier needs a doc comment and a `Stability:` line; CI rejects
 undocumented exports. Grow published ports only by adding a new optional
-interface, never by widening an existing one.
+interface, never by widening an existing one. `Storage` and `Backend` are
+structs a consumer fills by field name: they grow by adding a field, while the
+ports their fields hold never widen.
 
 ## Pull Requests
 

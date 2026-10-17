@@ -20,8 +20,9 @@ import (
 type Storage = storage.Storage
 
 // StorageRequest is what a storage backend is asked to open: the store root,
-// whether it may create the store, where set-aside records are reported, and
-// the backend's logger.
+// whether it may create the store, where set-aside records are reported, the
+// backend's logger, the store's configuration and the backend's own section of
+// it.
 //
 // Stability: request struct (passed to backends); unstable pre-v1. Fields may
 // be added within a major version (§4).
@@ -35,12 +36,59 @@ type StorageIntent = storage.Intent
 
 // StorageIntentRead never creates anything: an absent store is refused.
 // StorageIntentCreate may create the store, for a caller about to write.
+// StorageIntentInspect opens for reporting only and refuses a store that was
+// never initialised with a *StoreNotFoundError.
 //
 // Stability: request-enumeration constants; unstable pre-v1 (§4).
 const (
-	StorageIntentRead   = storage.IntentRead
-	StorageIntentCreate = storage.IntentCreate
+	StorageIntentRead    = storage.IntentRead
+	StorageIntentCreate  = storage.IntentCreate
+	StorageIntentInspect = storage.IntentInspect
 )
+
+// StoreNotFoundError is a backend's answer to StorageIntentInspect on a store
+// that was never initialised; Location names where it looked.
+//
+// Stability: error type (returned by backends); unstable pre-v1. Fields may be
+// added within a major version (§4).
+type StoreNotFoundError = storage.NotFoundError
+
+// Backend is a storage implementation a binary registers: the storage.backend
+// name that selects it, its own config.yaml section and that section's
+// defaults, and the function that opens it. Open receives the section's raw
+// YAML in StorageRequest.Section.
+//
+// Stability: registration value (filled by consumers); unstable pre-v1. It is
+// a struct that may gain fields within a major version, so set fields by name.
+// Registration happens in main, never from init (§4).
+type Backend = storage.Backend
+
+// ErrBackendNotRegistered matches the refusal to open a store whose
+// config.yaml names a backend this process did not register.
+//
+// Stability: error sentinel (matched by consumers); unstable pre-v1 (§4).
+var ErrBackendNotRegistered = storage.ErrBackendNotRegistered
+
+// RegisterBackend adds b to the backends Open and OpenDriver can select, beside
+// the SQLite backend, which is always available. It
+// refuses an empty Name, a nil Open, a Name already registered, and a Section
+// another backend or the configuration schema already uses.
+//
+// Stability: public registration entrypoint; unstable pre-v1. Call it from
+// main, before the first Open, never from init (§4).
+func RegisterBackend(b Backend) error {
+	if err := storage.Register(b); err != nil {
+		return fmt.Errorf("kanonarion: %w", err)
+	}
+	return nil
+}
+
+// BackendNames lists the registered backends, sorted. The SQLite backend,
+// named sqlite, is available whether or not it is listed here.
+//
+// Stability: public registration query; unstable pre-v1. Registration happens
+// in main (§4).
+func BackendNames() []string { return storage.Names() }
 
 // SchemaState is what a backend's schema bookkeeping reports: applied and
 // expected migration counts and the applied migrations this build does not

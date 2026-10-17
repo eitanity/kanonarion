@@ -148,7 +148,7 @@ func runUse(ctx context.Context, f useFlags, targetArg string, stdout, stderr io
 	// `use` rewrites the caller's go.mod from a stored walk; it records nothing,
 	// so it reads the store and does not bring one into existence.
 	st, err := openStorage(storage.Request{
-		StoreRoot: storeRoot, Intent: storage.IntentRead, SetAside: storeSetAside.report, Logger: logger,
+		StoreRoot: storeRoot, Intent: storage.IntentRead, SetAside: storeSetAside.report, Logger: logger, Config: activeConfig,
 	})
 	if err != nil {
 		return fmt.Errorf("opening store: %w", err)

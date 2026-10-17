@@ -234,9 +234,20 @@ func releaseStore(closeStore func() error) {
 	_ = closeStore() //nolint:errcheck // nothing committed is lost; see above
 }
 
-// openStorage is the backend NewContainer opens; a test swaps it to run the CLI
-// over a supplied backend.
-var openStorage = sqlitestorage.Open
+// openStorage opens the backend req.Config selects; a test swaps it to run
+// the CLI over a supplied backend.
+var openStorage = openConfiguredStorage
+
+// openConfiguredStorage is the one resolver every command opens its store
+// through. A configuration naming a backend this binary did not register is a
+// precondition failure.
+func openConfiguredStorage(req storage.Request) (*storage.Storage, error) {
+	st, err := composition.OpenStorage(context.Background(), req)
+	if errors.Is(err, storage.ErrBackendNotRegistered) {
+		return nil, &exitError{code: ExitConfig, msg: err.Error()}
+	}
+	return st, err //nolint:wrapcheck // the backend's text is the refusal
+}
 
 // NewContainer opens the store under storeRoot and returns the populated
 // Container together with a cleanup function that closes the store.
@@ -254,6 +265,7 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 		Intent:    storeOpenIntent(),
 		SetAside:  storeSetAside.report,
 		Logger:    logger,
+		Config:    cfg,
 	})
 	if err != nil {
 		return nil, nil, err
@@ -294,7 +306,7 @@ func NewContainerFrom(st *storage.Storage, storeRoot, goproxy, goBinary string, 
 	signer := storageSigner(st)
 	vcs := fetchvcs.New()
 
-	blobs, sumdb, proxyAdapter, err := selectFetchAdapters(storeRoot, goproxy, goBinary, st.Blobs, closeStore, logger)
+	blobs, sumdb, proxyAdapter, err := selectFetchAdapters(cfg.Storage.SumDBCacheDir(storeRoot), goproxy, goBinary, st.Blobs, closeStore, logger)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -456,6 +468,11 @@ func NewContainerFrom(st *storage.Storage, storeRoot, goproxy, goBinary string, 
 		cgModcacheDir = modcacheDir
 	}
 	cgExtraArgs := extextractor.CallGraphSubprocessArgs(storeRoot, cgModcacheDir)
+	// The child selects its backend from the same file, or it would write its
+	// records into a different store from the one this process reads.
+	if path, ok := explicitConfigPath(); ok {
+		cgExtraArgs = append(cgExtraArgs, "--config="+absOrSelf(path))
+	}
 	adapterExtractor := extextractor.NewAdapterExtractor(licExtractUC, ifaceExtractUC, cgSubprocessExec, st.CallGraphOutcomes, cgapp.PipelineVersion, cgExtraArgs, exExtractUC).
 		WithLogger(logger).
 		WithCallgraphConcurrency(callgraphBound.Workers).
@@ -743,10 +760,33 @@ func NewContainerFrom(st *storage.Storage, storeRoot, goproxy, goBinary string, 
 	return ctr, cleanup, nil
 }
 
+// requireSQLiteBackend refuses a command that reads the SQLite backend's files
+// under the store root directly when the store is configured for another
+// backend; does says what the command does to those files.
+func requireSQLiteBackend(command, does string) error {
+	name, err := composition.ConfiguredBackend(activeConfig)
+	if err != nil {
+		return &exitError{code: ExitConfig, msg: err.Error()}
+	}
+	if name != sqlitestorage.Name {
+		return &exitError{code: ExitConfig, msg: fmt.Sprintf(
+			"%s %s; this store is configured for backend %q", command, does, name)}
+	}
+	return nil
+}
+
+// absOrSelf is path made absolute, or path itself when that fails.
+func absOrSelf(path string) string {
+	if abs, err := filepath.Abs(path); err == nil {
+		return abs
+	}
+	return path
+}
+
 // selectFetchAdapters wires the blob store, checksum client and module proxy
 // for the network path, or their module-cache equivalents under
-// --from-modcache.
-func selectFetchAdapters(storeRoot, goproxy, goBinary string, localBlobs fetchports.BlobStore, closeStore func() error, logger *slog.Logger) (fetchports.BlobStore, fetchports.SumDBClient, fetchports.ModuleProxy, error) {
+// --from-modcache. sumdbDir is the checksum-database cache.
+func selectFetchAdapters(sumdbDir, goproxy, goBinary string, localBlobs fetchports.BlobStore, closeStore func() error, logger *slog.Logger) (fetchports.BlobStore, fetchports.SumDBClient, fetchports.ModuleProxy, error) {
 	// Adapter selection. In the default path the network proxy, the network
 	// checksum-database client, and the content-addressed blob store are wired.
 	// In --from-modcache mode three adapters are swapped for module-cache-backed
@@ -782,7 +822,7 @@ func selectFetchAdapters(storeRoot, goproxy, goBinary string, localBlobs fetchpo
 		// a policy answer (GOSUMDB=off, GOPRIVATE, no hash line) returns on the first
 		// attempt. In --from-modcache mode the go.sum adapter above reads a local
 		// file with no network to flake, so it is left undecorated.
-		sumdb = sumdbretry.New(fetchsumdb.New(filepath.Join(storeRoot, "sumdb")), logger)
+		sumdb = sumdbretry.New(fetchsumdb.New(sumdbDir), logger)
 		dp, perr := fetchproxy.New(goproxy, false)
 		switch {
 		case fetchproxy.IsRefusal(perr):

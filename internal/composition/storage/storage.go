@@ -13,6 +13,7 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
 	callgraphports "github.com/eitanity/kanonarion/internal/callgraph/ports"
+	"github.com/eitanity/kanonarion/internal/config/domain"
 	directiveports "github.com/eitanity/kanonarion/internal/directive/ports"
 	exampleports "github.com/eitanity/kanonarion/internal/example/ports"
 	extractports "github.com/eitanity/kanonarion/internal/extract/ports"
@@ -38,7 +39,19 @@ const (
 	IntentRead Intent = iota
 	// IntentCreate may create the store, for a caller about to write into it.
 	IntentCreate
+	// IntentInspect opens for reporting only: nothing is created, migrated or
+	// maintained, and a store that was never initialised is refused with a
+	// *NotFoundError.
+	IntentInspect
 )
+
+// NotFoundError is a backend's refusal to inspect a store that was never
+// initialised. Location names where it looked, in the backend's own terms.
+type NotFoundError struct {
+	Location string
+}
+
+func (e *NotFoundError) Error() string { return "no store at " + e.Location }
 
 // Request is what a backend is asked to open.
 type Request struct {
@@ -50,6 +63,12 @@ type Request struct {
 	// Logger is the backend's diagnostics; nil means discard. Kept for the
 	// blob-adoption warnings the CLI container's backend will log.
 	Logger *slog.Logger
+	// Config is the store's resolved configuration; its storage.backend
+	// selects the backend OpenConfigured opens.
+	Config domain.Config
+	// Section is the raw YAML of the selected backend's own config.yaml
+	// section, nil when absent; the backend unmarshals it into its own type.
+	Section []byte
 }
 
 // Storage is everything the pipeline persists through, supplied as one value.

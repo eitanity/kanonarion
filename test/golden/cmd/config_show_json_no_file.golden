@@ -8,7 +8,7 @@ exit 0
     "present": false,
     "rejected": false
   },
-  "version": "2",
+  "version": "3",
   "preferences": {
     "json": false,
     "log_level": "warn",
@@ -109,10 +109,14 @@ exit 0
     "allowed_vcs_hosts": null,
     "enforcing": false
   },
+  "storage": {
+    "backend": "sqlite",
+    "sumdb_cache": ""
+  },
   "settings": [
     {
       "key": "version",
-      "value": "2",
+      "value": "3",
       "source": "default"
     },
     {
@@ -293,6 +297,16 @@ exit 0
     {
       "key": "fetch_policy.allowed_vcs_hosts",
       "value": "(unset: built-in host set, advisory)",
+      "source": "default"
+    },
+    {
+      "key": "storage.backend",
+      "value": "sqlite",
+      "source": "default"
+    },
+    {
+      "key": "storage.sumdb_cache",
+      "value": "(unset: sumdb under the store root)",
       "source": "default"
     }
   ]

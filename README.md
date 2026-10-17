@@ -197,6 +197,8 @@ All query commands support `--json` for machine-readable output, making them eas
 
 ## Store layout
 
+The default (SQLite) backend's layout:
+
 ```
 ~/.kanonarion/
   mirror.db          # SQLite - all metadata (walks, interfaces, vulns, licences, …)

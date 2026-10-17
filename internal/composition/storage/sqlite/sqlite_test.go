@@ -309,7 +309,7 @@ func entries(t *testing.T, root string) []string {
 }
 
 // An inspection reports a store behind this build as it is, and leaves it so.
-func TestInspect_ReportsAStoreAsFoundAndWritesNothing(t *testing.T) {
+func TestOpen_InspectIntentReportsAStoreAsFoundAndWritesNothing(t *testing.T) {
 	root := t.TempDir()
 	db, err := sqlitestore.Open(filepath.Join(root, "mirror.db"), nil, sqlitestore.IntentCreate)
 	if err != nil {
@@ -319,9 +319,9 @@ func TestInspect_ReportsAStoreAsFoundAndWritesNothing(t *testing.T) {
 	before := entries(t, root)
 
 	for range 2 {
-		st, err := sqlitestorage.Inspect(storage.Request{StoreRoot: root, Intent: storage.IntentCreate})
+		st, err := sqlitestorage.Open(storage.Request{StoreRoot: root, Intent: storage.IntentInspect})
 		if err != nil {
-			t.Fatalf("Inspect: %v", err)
+			t.Fatalf("Open: %v", err)
 		}
 		state, err := st.Schema.SchemaState(context.Background())
 		if err != nil {

@@ -223,7 +223,7 @@ func fetchOne(ctx context.Context, arg string, f fetchFlags, stdout, stderr io.W
 	}
 	// A writable open through the backend, so the store has a ledger from here on.
 	st, err := openStorage(storage.Request{
-		StoreRoot: storeRoot, Intent: storage.IntentCreate, SetAside: storeSetAside.report, Logger: logger,
+		StoreRoot: storeRoot, Intent: storage.IntentCreate, SetAside: storeSetAside.report, Logger: logger, Config: activeConfig,
 	})
 	if err != nil {
 		return fmt.Errorf("opening fact store: %w", err)
@@ -239,7 +239,7 @@ func fetchOne(ctx context.Context, arg string, f fetchFlags, stdout, stderr io.W
 	}()
 	// Retry transient checksum-database failures before they can downgrade the
 	// module's verification status, matching the walk path's wiring.
-	sumdbClient := sumdbretry.New(gosum.New(storeRoot+"/sumdb"), logger)
+	sumdbClient := sumdbretry.New(gosum.New(activeConfig.Storage.SumDBCacheDir(storeRoot)), logger)
 	clk := clock.System{}
 
 	uc := application.NewFetchModuleUseCase(

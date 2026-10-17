@@ -4,6 +4,7 @@
 package sqlite
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -11,6 +12,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 
 	"github.com/eitanity/kanonarion/internal/adapters/blobstore/localfs"
 	fetchsqlite "github.com/eitanity/kanonarion/internal/adapters/factstore/sqlite"
@@ -76,6 +79,49 @@ func Exists(root string) bool {
 	return !os.IsNotExist(err)
 }
 
+// Name is the storage.backend value that selects this backend.
+const Name = "sqlite"
+
+// Settings is the sqlite section of config.yaml. It has no keys: every path
+// the backend uses derives from the store root.
+type Settings struct{}
+
+// ConfigComment is the explanation `config init` writes under the section.
+func (Settings) ConfigComment() string {
+	return "The SQLite backend keeps mirror.db, blobs/ and audit.jsonl under the\n" +
+		"store root. Its paths derive from the store root; it has no settings."
+}
+
+// Backend is the SQLite backend as a registered value.
+func Backend() storage.Backend {
+	return storage.Backend{
+		Name:     Name,
+		Section:  Name,
+		Defaults: Settings{},
+		Open: func(_ context.Context, req storage.Request) (*storage.Storage, error) {
+			if err := parseSettings(req.Section); err != nil {
+				return nil, err
+			}
+			return Open(req)
+		},
+	}
+}
+
+// parseSettings refuses a sqlite section that sets anything, so a key meant
+// for another backend is not silently ignored.
+func parseSettings(section []byte) error {
+	if len(section) == 0 {
+		return nil
+	}
+	dec := yaml.NewDecoder(bytes.NewReader(section))
+	dec.KnownFields(true)
+	var s Settings
+	if err := dec.Decode(&s); err != nil {
+		return fmt.Errorf("config.yaml section %s: %w", Name, err)
+	}
+	return nil
+}
+
 // Open opens the store under req.StoreRoot and returns every store over it.
 //
 // The database is opened without migrations, judged, then migrated, because
@@ -83,15 +129,18 @@ func Exists(root string) bool {
 // reads as fully applied, so its unknown rows are the only signal. A write
 // intent applies nothing to such a store and Writable refuses it; a read
 // intent still opens it, so an operator can diagnose the refusal.
+//
+// IntentInspect applies no migration, creates no ledger and runs no
+// maintenance, so the schema state it reports is the store as found; it
+// refuses a root with no database.
 func Open(req storage.Request) (*storage.Storage, error) {
+	if req.Intent == storage.IntentInspect {
+		if !Exists(req.StoreRoot) {
+			return nil, &storage.NotFoundError{Location: DatabasePath(req.StoreRoot)}
+		}
+		return open(req, true)
+	}
 	return open(req, false)
-}
-
-// Inspect opens the store under req.StoreRoot for reporting only: it applies no
-// migration, creates no ledger and runs no maintenance, so the schema state it
-// reports is the store as found.
-func Inspect(req storage.Request) (*storage.Storage, error) {
-	return open(req, true)
 }
 
 func open(req storage.Request, inspect bool) (*storage.Storage, error) {

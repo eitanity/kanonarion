@@ -1,7 +1,8 @@
 # `kanonarion config` - Read and write configuration values
 
 `config` reads and writes the operator configuration file
-(`<store-root>/config.yaml`) using a git-config style interface: dotted key
+(`<store-root>/config.yaml`, or the file `--config` or `KANONARION_CONFIG`
+names) using a git-config style interface: dotted key
 paths, `get` reads a single value, `set` writes it. Writes are non-destructive
 - only the targeted key is modified, comments and unrelated keys are preserved.
 
@@ -223,6 +224,46 @@ query) never create or modify `config.yaml`. The file is materialised only by
 `config init` or `config set`. An empty store with no `config.yaml` resolves
 entirely to built-in defaults.
 
+## Which file is read
+
+Every command reads one configuration file:
+
+1. the path given with `--config <path>`, if any;
+2. otherwise the path in the `KANONARION_CONFIG` environment variable, if set;
+3. otherwise `<store-root>/config.yaml`.
+
+`config init`, `config set`, `config get` and `config show` read and write the
+same file. The store root still decides where the store lives; `--config` only
+moves the configuration.
+
+## Choosing the storage backend
+
+The `storage` section says where the store keeps its records:
+
+```yaml
+storage:
+  backend: sqlite      # default
+  sumdb_cache: ""      # default: <store-root>/sumdb
+```
+
+`storage.backend` names a storage backend the running kanonarion binary
+registered. The standard binary registers `sqlite`, which keeps `mirror.db`,
+`blobs/` and `audit.jsonl` under the store root. A file that names a backend the
+binary does not have is refused with exit `20`:
+
+```
+error: execute root command: backend "postgres" is not registered in this binary (registered: sqlite)
+```
+
+`storage.sumdb_cache` is the checksum-database tile cache directory. Empty
+means `<store-root>/sumdb`; a relative path is resolved against the store root.
+
+A backend with settings of its own reads them from a top-level section named
+after it. `config init` writes that section, commented out, for every backend
+the binary registered, after the sections above; the `sqlite` section has no
+settings. Backend sections are edited by hand, not with `config set`, and
+`config show --json` lists them under `sections` as written.
+
 ## When the config file is rejected
 
 A `config.yaml` that exists and cannot be loaded — unreadable, unparseable
@@ -277,7 +318,7 @@ Keys follow the dotted-path structure of `config.yaml`.
 
 | Key | Type | Example value |
 |-----|------|---------------|
-| `version` | string (read-only) | `"1"` |
+| `version` | string (read-only) | `"3"` |
 | `preferences.json` | bool | `true` |
 | `preferences.log_level` | string | `debug` / `info` / `warn` / `error` |
 | `preferences.progress` | bool | `false` (default `true`) - throttled stderr fetch heartbeat on long `walk`/`inspect`/`audit`/`sbom` runs, the traversal lines a `callers`/`callees` `--transitive` walk writes, and the staleness re-ask lines on `latest`, `fetch` and `audit`; never affects stdout/`--json`. Equivalent to `--no-progress` when `false`. |
@@ -291,6 +332,8 @@ Keys follow the dotted-path structure of `config.yaml`.
 | `staleness.ttl` | duration | `1h` |
 | `staleness.probe_concurrency` | int | `16` - newer-major probe requests in flight at once. A probe the proxy has not finished is re-asked after each round, whatever the width. `0` is serial. |
 | `fetch_policy.allowed_vcs_hosts` | sequence | `[github.com, git.example.org]` - absent leaves the built-in host set advisory; naming it switches to enforcing |
+| `storage.backend` | string | `sqlite` - the storage backend that holds the store's records; see [Choosing the storage backend](#choosing-the-storage-backend) |
+| `storage.sumdb_cache` | string | `/var/cache/kanonarion/sumdb` - empty means `<store-root>/sumdb` |
 
 The unified governance blocks (`directive_policy`, `godebug_policy`,
 `vendor_policy`, `fips_policy`) are edited in the file rather than through
@@ -433,6 +476,7 @@ whether it is the default.
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--store-root` | `~/.kanonarion` | Root directory for blobs and SQLite |
+| `--config` | `<store-root>/config.yaml` | Configuration file to read and write; `KANONARION_CONFIG` names it when the flag is not given |
 | `--json` | `false` | Emit output as JSON (every `config` subcommand) |
 
 ## Exit codes
@@ -440,7 +484,7 @@ whether it is the default.
 | Code | Meaning |
 |------|---------|
 | `0` | Success |
-| `20` | Unknown key, read-only key, wrong value type, I/O error, or a `config.yaml` the loader rejected (every command except those listed under [When the config file is rejected](#when-the-config-file-is-rejected)) |
+| `20` | Unknown key, read-only key, wrong value type, I/O error, a `storage.backend` this binary did not register, or a `config.yaml` the loader rejected (every command except those listed under [When the config file is rejected](#when-the-config-file-is-rejected)) |
 
 ## Examples
 
@@ -465,6 +509,10 @@ kanonarion config set license_overrides.golang.org/x/mod MIT
 kanonarion config set callgraph.exclude '[]'
 kanonarion config set callgraph.toolchain go1.26.6
 kanonarion config set staleness.ttl 6h
+kanonarion config set storage.backend sqlite
+
+# Use a configuration file kept outside the store
+kanonarion walk-list --config /etc/kanonarion/config.yaml
 ```
 
 ## See also
