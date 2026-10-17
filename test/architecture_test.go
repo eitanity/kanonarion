@@ -3,6 +3,7 @@ package cmd_test
 import (
 	"fmt"
 	"go/ast"
+	"go/constant"
 	"go/parser"
 	"go/token"
 	"go/types"
@@ -912,6 +913,181 @@ func TestConsumerCapstoneImportsPublicSurfaceOnly(t *testing.T) {
 	}
 	if !importsPublic {
 		t.Errorf("no file under %s imports %q — the capstone must exercise the public façade", dir, publicPkg)
+	}
+}
+
+// TestPublishedPortsNameOnlyPublishedTypes holds the façade's substitution
+// contract implementable from another module: every type a published port names,
+// followed through exported struct fields and interface methods, must itself be
+// exported from pkg/kanonarion, or an external implementer cannot spell it.
+func TestPublishedPortsNameOnlyPublishedTypes(t *testing.T) {
+	cfg := &packages.Config{
+		Mode: packages.NeedName | packages.NeedTypes | packages.NeedDeps | packages.NeedImports,
+		Dir:  "..",
+	}
+	pkgs, err := packages.Load(cfg, "./pkg/kanonarion")
+	if err != nil {
+		t.Fatalf("packages.Load: %v", err)
+	}
+	if packages.PrintErrors(pkgs) > 0 || len(pkgs) != 1 {
+		t.Fatalf("packages.Load reported errors or %d packages", len(pkgs))
+	}
+	for _, v := range unpublishedPortTypes(pkgs[0].Types) {
+		t.Error(v)
+	}
+	for _, v := range unpublishedEnumConstants(pkgs[0].Types) {
+		t.Error(v)
+	}
+}
+
+// unpublishedEnumConstants returns one message per exported constant of a
+// published basic-kinded type that pkg/kanonarion does not re-export with the
+// same type and value: a consumer decoding into the type needs its values.
+func unpublishedEnumConstants(pkg *types.Package) []string {
+	scope := pkg.Scope()
+	var published []*types.Const
+	for _, name := range scope.Names() {
+		if c, ok := scope.Lookup(name).(*types.Const); ok && c.Exported() {
+			published = append(published, c)
+		}
+	}
+	isPublished := func(c *types.Const) bool {
+		for _, p := range published {
+			if types.Identical(p.Type(), c.Type()) && constant.Compare(p.Val(), token.EQL, c.Val()) {
+				return true
+			}
+		}
+		return false
+	}
+
+	var out []string
+	for _, name := range scope.Names() {
+		tn, ok := scope.Lookup(name).(*types.TypeName)
+		if !ok {
+			continue
+		}
+		named, ok := publishedEnumType(tn)
+		if !ok {
+			continue
+		}
+		origin := named.Obj().Pkg().Scope()
+		for _, cname := range origin.Names() {
+			c, ok := origin.Lookup(cname).(*types.Const)
+			if !ok || !c.Exported() || !types.Identical(c.Type(), named) || isPublished(c) {
+				continue
+			}
+			out = append(out, fmt.Sprintf("%s.%s (%s) is a value of published type %s but is not exported from pkg/kanonarion — alias it there",
+				strings.TrimPrefix(c.Pkg().Path(), modulePath+"/"), c.Name(), c.Val().ExactString(), tn.Name()))
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// unpublishedPortTypes walks the closure of module-owned named types reachable
+// from every interface alias the package exports and returns one message per
+// type the package does not itself export, naming the ports that need it.
+func unpublishedPortTypes(pkg *types.Package) []string {
+	scope := pkg.Scope()
+	published := map[*types.TypeName]bool{}
+	var ports []*types.TypeName
+	for _, name := range scope.Names() {
+		tn, ok := scope.Lookup(name).(*types.TypeName)
+		if !ok || !tn.Exported() {
+			continue
+		}
+		if named, ok := types.Unalias(tn.Type()).(*types.Named); ok {
+			published[named.Origin().Obj()] = true
+		}
+		if tn.IsAlias() && types.IsInterface(tn.Type()) {
+			ports = append(ports, tn)
+		}
+	}
+
+	needed := map[string][]string{}
+	for _, port := range ports {
+		w := portTypeWalk{seen: map[*types.TypeName]bool{}}
+		w.visit(port.Type())
+		for _, obj := range w.order {
+			if !published[obj] {
+				key := strings.TrimPrefix(obj.Pkg().Path(), modulePath+"/") + "." + obj.Name()
+				needed[key] = append(needed[key], port.Name())
+			}
+		}
+	}
+
+	out := make([]string, 0, len(needed))
+	for typ, by := range needed {
+		sort.Strings(by)
+		out = append(out, fmt.Sprintf("%s is named by published port(s) %s but is not exported from pkg/kanonarion — alias it there",
+			typ, strings.Join(by, ", ")))
+	}
+	sort.Strings(out)
+	return out
+}
+
+// publishedEnumType reports the module-owned basic-kinded named type an
+// exported alias stands for.
+func publishedEnumType(tn *types.TypeName) (*types.Named, bool) {
+	if !tn.Exported() || !tn.IsAlias() {
+		return nil, false
+	}
+	named, ok := types.Unalias(tn.Type()).(*types.Named)
+	if !ok || named.Obj().Pkg() == nil || !strings.HasPrefix(named.Obj().Pkg().Path(), modulePath+"/") {
+		return nil, false
+	}
+	_, basic := named.Underlying().(*types.Basic)
+	return named, basic
+}
+
+// portTypeWalk collects the module-owned named types one port reaches, through
+// signatures, composite types, exported struct fields and interface methods.
+type portTypeWalk struct {
+	seen  map[*types.TypeName]bool
+	order []*types.TypeName
+}
+
+func (w *portTypeWalk) visit(typ types.Type) {
+	switch tt := types.Unalias(typ).(type) {
+	case *types.Named:
+		w.visitNamed(tt)
+	case *types.Struct:
+		for i := 0; i < tt.NumFields(); i++ {
+			if f := tt.Field(i); f.Exported() {
+				w.visit(f.Type())
+			}
+		}
+	case *types.Interface:
+		for i := 0; i < tt.NumMethods(); i++ {
+			w.visit(tt.Method(i).Type())
+		}
+	case *types.Signature:
+		w.visitTuple(tt.Params())
+		w.visitTuple(tt.Results())
+	case *types.Map:
+		w.visit(tt.Key())
+		w.visit(tt.Elem())
+	case interface{ Elem() types.Type }: // pointer, slice, array, chan
+		w.visit(tt.Elem())
+	}
+}
+
+func (w *portTypeWalk) visitNamed(n *types.Named) {
+	obj := n.Origin().Obj()
+	if obj.Pkg() == nil || !strings.HasPrefix(obj.Pkg().Path(), modulePath+"/") || w.seen[obj] {
+		return
+	}
+	w.seen[obj] = true
+	w.order = append(w.order, obj)
+	for i := 0; i < n.TypeArgs().Len(); i++ {
+		w.visit(n.TypeArgs().At(i))
+	}
+	w.visit(n.Underlying())
+}
+
+func (w *portTypeWalk) visitTuple(tuple *types.Tuple) {
+	for i := 0; i < tuple.Len(); i++ {
+		w.visit(tuple.At(i).Type())
 	}
 }
 

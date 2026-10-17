@@ -27,11 +27,11 @@ import (
 	"github.com/eitanity/kanonarion/internal/adapters/goenv"
 	proxyadapter "github.com/eitanity/kanonarion/internal/adapters/proxy/direct"
 	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
+	"github.com/eitanity/kanonarion/internal/composition/storage"
 	configstore "github.com/eitanity/kanonarion/internal/config/adapters/store/yaml"
 	"github.com/eitanity/kanonarion/internal/config/domain"
 	fetchapp "github.com/eitanity/kanonarion/internal/fetch/application"
 
-	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
 	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
 	exampleports "github.com/eitanity/kanonarion/internal/example/ports"
 	extractports "github.com/eitanity/kanonarion/internal/extract/ports"
@@ -1228,13 +1228,13 @@ func storeIntentOf(cmd *cobra.Command) string {
 // disagree with itself.
 var storeIntent = StoreIntentRead
 
-// storeOpenIntent maps this invocation's declared intent onto what the sqlite
-// layer is allowed to do about a missing directory.
-func storeOpenIntent() sqlitestore.Intent {
+// storeOpenIntent maps this invocation's declared intent onto what the storage
+// backend is allowed to do about a missing store.
+func storeOpenIntent() storage.Intent {
 	if storeIntent == StoreIntentCreate {
-		return sqlitestore.IntentCreate
+		return storage.IntentCreate
 	}
-	return sqlitestore.IntentRead
+	return storage.IntentRead
 }
 
 // missingStoreError is a read aimed at a store root that is not there. It names

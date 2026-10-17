@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -182,9 +181,8 @@ func snippetRoot(gomodPath string) string {
 func runNotice(ctx context.Context, f noticeFlags, stdout, stderr io.Writer) error {
 	logger := buildLogger(logLevel, stderr)
 
-	dbPath := filepath.Join(storeRoot, "mirror.db")
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
-		return fmt.Errorf("store not found at %s: run a kanonarion command to initialise it", dbPath)
+	if err := requireExistingStore(storeRoot); err != nil {
+		return err
 	}
 
 	ctr, cleanup, err := NewContainer(storeRoot, "", "", false, activeConfig, logger)

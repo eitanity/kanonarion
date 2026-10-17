@@ -3,15 +3,23 @@ package kanonarion
 import (
 	"fmt"
 
+	"github.com/eitanity/kanonarion/internal/audit"
 	callgraphports "github.com/eitanity/kanonarion/internal/callgraph/ports"
 	configports "github.com/eitanity/kanonarion/internal/config/ports"
+	directiveports "github.com/eitanity/kanonarion/internal/directive/ports"
 	exampleports "github.com/eitanity/kanonarion/internal/example/ports"
 	extractports "github.com/eitanity/kanonarion/internal/extract/ports"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
+	fipsports "github.com/eitanity/kanonarion/internal/fips/ports"
+	godebugports "github.com/eitanity/kanonarion/internal/godebug/ports"
 	ifaceports "github.com/eitanity/kanonarion/internal/iface/ports"
 	licenseports "github.com/eitanity/kanonarion/internal/license/ports"
+	nativeports "github.com/eitanity/kanonarion/internal/native/ports"
 	sbomports "github.com/eitanity/kanonarion/internal/sbom/ports"
+	stalenessports "github.com/eitanity/kanonarion/internal/staleness/ports"
+	stdlibports "github.com/eitanity/kanonarion/internal/stdlib/ports"
+	vendorports "github.com/eitanity/kanonarion/internal/vendortree/ports"
 	vulnports "github.com/eitanity/kanonarion/internal/vuln/ports"
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
 )
@@ -115,6 +123,15 @@ func ComposeFetchRecords(records []FactRecord) (CompositeRecord, error) {
 // Grows only by a new optional interface, never by adding a method (§4).
 type WalkStore = walkports.WalkStore
 
+// WalkPresence reports whether the walks a stored scan run names are still
+// held, so a scan run whose walk is gone is reported as unresolved. The walk
+// store usually implements it; Storage names it separately because WalkStore
+// does not carry the method.
+//
+// Stability: substitution port (implemented by consumers); unstable pre-v1.
+// Grows only by a new optional interface, never by adding a method (§4).
+type WalkPresence = vulnports.WalkPresence
+
 // LicenseStore persists and retrieves LicenseRecords — the license persistence
 // seam the enterprise build replaces with its own backend.
 //
@@ -135,6 +152,15 @@ type InterfaceStore = ifaceports.InterfaceStore
 // Stability: substitution port (implemented by consumers); unstable pre-v1.
 // Grows only by a new optional interface, never by adding a method (§4).
 type CallGraphStore = callgraphports.CallGraphStore
+
+// CallGraphOutcomeReader reads what the newest call-graph generation at a
+// coordinate states about itself without rebuilding its edges. The call-graph
+// stage asks it after each analysis; the call-graph store usually implements
+// it, and Storage names it separately because CallGraphStore does not.
+//
+// Stability: substitution port (implemented by consumers); unstable pre-v1.
+// Grows only by a new optional interface, never by adding a method (§4).
+type CallGraphOutcomeReader = callgraphports.CallGraphOutcomeReader
 
 // ExampleStore persists and retrieves ExampleRecords — the example-harvest
 // persistence seam the enterprise build replaces with its own backend.
@@ -164,6 +190,79 @@ type VulnerabilityStore = vulnports.VulnerabilityStore
 // Stability: substitution port (implemented by consumers); unstable pre-v1.
 // Grows only by a new optional interface, never by adding a method (§4).
 type SBOMStore = sbomports.SBOMStore
+
+// AttestationStore persists the attestations a Signer produces, separately
+// from the records they attest so an attested record's serialisation is
+// unchanged. The SQLite fact store is also the attestation store; a backend
+// that splits them supplies both.
+//
+// Stability: substitution port (implemented by consumers); unstable pre-v1.
+// Grows only by a new optional interface, never by adding a method (§4).
+type AttestationStore = fetchports.AttestationStore
+
+// AuditSink appends an event to the append-only assurance log. One value
+// serves every stage that emits: fetch, walk, extract and the stdlib custody
+// acquirer all take this method set.
+//
+// Stability: substitution port (implemented by consumers); unstable pre-v1.
+// Grows only by a new optional interface, never by adding a method (§4).
+type AuditSink = fetchports.AuditSink
+
+// AuditEvent is one entry an AuditSink appends.
+//
+// Stability: supporting type of the AuditSink port; unstable pre-v1. Fields may
+// be added within a major version (§4).
+type AuditEvent = audit.Event
+
+// DirectiveStore persists and retrieves project directive scan records — the
+// replace/exclude persistence seam a backend replaces.
+//
+// Stability: substitution port (implemented by consumers); unstable pre-v1.
+// Grows only by a new optional interface, never by adding a method (§4).
+type DirectiveStore = directiveports.DirectiveStore
+
+// GoDebugStore persists and retrieves project godebug records — the godebug
+// persistence seam a backend replaces.
+//
+// Stability: substitution port (implemented by consumers); unstable pre-v1.
+// Grows only by a new optional interface, never by adding a method (§4).
+type GoDebugStore = godebugports.GoDebugStore
+
+// VendorStore persists and retrieves project vendored-closure scan records —
+// the vendor-tree persistence seam a backend replaces.
+//
+// Stability: substitution port (implemented by consumers); unstable pre-v1.
+// Grows only by a new optional interface, never by adding a method (§4).
+type VendorStore = vendorports.VendorStore
+
+// FIPSStore persists and retrieves project FIPS records — the FIPS
+// persistence seam a backend replaces.
+//
+// Stability: substitution port (implemented by consumers); unstable pre-v1.
+// Grows only by a new optional interface, never by adding a method (§4).
+type FIPSStore = fipsports.FIPSStore
+
+// StdlibStore persists and retrieves acquired standard-library facts, keyed by
+// the canonical Go version — the stdlib chain-of-custody persistence seam a
+// backend replaces.
+//
+// Stability: substitution port (implemented by consumers); unstable pre-v1.
+// Grows only by a new optional interface, never by adding a method (§4).
+type StdlibStore = stdlibports.Store
+
+// StalenessLedger persists resolved staleness rows, keyed on module path — the
+// staleness persistence seam a backend replaces.
+//
+// Stability: substitution port (implemented by consumers); unstable pre-v1.
+// Grows only by a new optional interface, never by adding a method (§4).
+type StalenessLedger = stalenessports.Ledger
+
+// NativeStore persists and retrieves per-module native-component records — the
+// native-code persistence seam a backend replaces.
+//
+// Stability: substitution port (implemented by consumers); unstable pre-v1.
+// Grows only by a new optional interface, never by adding a method (§4).
+type NativeStore = nativeports.NativeStore
 
 // BlobStore persists binary artefacts (module zips and go.mod files) under an
 // address chosen by their content. Its core is Put/Get/Exists, with the

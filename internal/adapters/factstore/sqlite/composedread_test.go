@@ -154,10 +154,7 @@ func openAuditingStore(t *testing.T) *sqlite.AuditingStore {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	store, err := sqlite.NewAuditingStore(inner, filepath.Join(dir, "audit.jsonl"))
-	if err != nil {
-		t.Fatalf("NewAuditingStore: %v", err)
-	}
+	store := sqlite.NewAuditingStore(inner, filepath.Join(dir, "audit.jsonl"))
 	t.Cleanup(func() {
 		if cerr := store.Close(); cerr != nil {
 			t.Errorf("store.Close: %v", cerr)

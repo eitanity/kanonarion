@@ -516,6 +516,18 @@ func digestOf(contentHash string) (kanonarion.SubjectDigest, error) {
 	return kanonarion.SubjectDigest{Algorithm: algorithm, Hex: hex}, nil
 }
 
+// A consumer fills the storage value by field name from its own backends,
+// with nothing but this package imported; Validate names what it left unset.
+func TestConsumer_StorageValueIsFillableFromAnotherModule(t *testing.T) {
+	st := kanonarion.Storage{Facts: newFakePostgresFactStore(), Blobs: newFakeS3BlobStore()}
+	err := st.Validate()
+	const want = "storage: Attestations, Audit, Walks, WalkPresence, Licenses, Interfaces, CallGraphs, " +
+		"CallGraphOutcomes, Examples, Extractions, Vulnerabilities, SBOMs, Directives, GoDebug, Vendor, FIPS, Stdlib, Staleness, Native are unset"
+	if err == nil || err.Error() != want {
+		t.Fatalf("Validate() = %v, want %q", err, want)
+	}
+}
+
 // writeLocalModule writes a minimal, dependency-free Go module into a temp dir
 // so the local walk→extract runs fully offline. A low go directive avoids
 // toolchain auto-download.

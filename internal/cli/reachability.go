@@ -1603,9 +1603,8 @@ func verdictSourceLabel(src string) string {
 // returning the serialisable output. Used by both the standalone reachability
 // command and the --reachability flag on context.
 func runLocalReachabilityInner(ctx context.Context, abs string, stderr io.Writer) (reachabilityOutput, error) {
-	dbPath := filepath.Join(storeRoot, "mirror.db")
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
-		return reachabilityOutput{}, fmt.Errorf("store not found at %s: run a kanonarion command to initialise it", dbPath)
+	if err := requireExistingStore(storeRoot); err != nil {
+		return reachabilityOutput{}, err
 	}
 
 	logger := buildLogger(logLevel, stderr)

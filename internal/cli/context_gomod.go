@@ -6,8 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
 
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
 )
@@ -58,9 +56,8 @@ func runContextGoMod(ctx context.Context, f contextFlags, scope depScope, stdout
 		return writeEmptyContextScope(f, scope, envelope, array, stream, stdout)
 	}
 
-	dbPath := filepath.Join(storeRoot, "mirror.db")
-	if _, serr := os.Stat(dbPath); os.IsNotExist(serr) {
-		return fmt.Errorf("store not found at %s: run a kanonarion command to initialise it", dbPath)
+	if serr := requireExistingStore(storeRoot); serr != nil {
+		return serr
 	}
 
 	ctr, cleanup, err := NewContainer(storeRoot, "", "", false, activeConfig, logger)

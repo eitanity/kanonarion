@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,18 +16,10 @@ import (
 	blobstore "github.com/eitanity/kanonarion/internal/adapters/blobstore/localfs"
 	"github.com/eitanity/kanonarion/internal/adapters/childproc"
 	"github.com/eitanity/kanonarion/internal/adapters/modcache"
-	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
-	"github.com/eitanity/kanonarion/internal/composition"
+	"github.com/eitanity/kanonarion/internal/composition/storage"
+	sqlitestorage "github.com/eitanity/kanonarion/internal/composition/storage/sqlite"
 	"github.com/eitanity/kanonarion/internal/config/domain"
 )
-
-// allMigrations returns every migration the binary knows about.
-// Its length is the binary's expected schema version. The aggregation lives in
-// the neutral composition root so the CLI and the public façade open mirror.db
-// against an identical schema.
-func allMigrations() []sqlitestore.Migration {
-	return composition.Migrations()
-}
 
 func newStoreCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
@@ -164,7 +157,7 @@ func dirSize(path string) int64 {
 // called os.TempDir() would do exactly that to a concurrent scan, and did.
 func runStoreClean(root, tmpDir string, asJSON bool, stdout io.Writer) error {
 	result := storeCleanResult{
-		BlobTemps:   storeCleanBlobTempsResult{Dir: filepath.Join(root, "blobs")},
+		BlobTemps:   storeCleanBlobTempsResult{Dir: sqlitestorage.BlobsDir(root)},
 		TempEntries: storeCleanTempEntriesResult{Dir: tmpDir, Paths: []string{}},
 		Warnings:    []string{},
 	}
@@ -736,6 +729,9 @@ type storeSchemaState struct {
 // binary knows is simply one this binary is about to bring up to date.
 func (s storeSchemaState) isNewer() bool { return len(s.unknown) > 0 }
 
+// storeSchemaUnreported is the status of a backend that keeps no schema state.
+const storeSchemaUnreported = "unreported"
+
 func (s storeSchemaState) status() string {
 	switch {
 	case s.isNewer():
@@ -747,27 +743,19 @@ func (s storeSchemaState) status() string {
 	}
 }
 
-// readStoreSchemaState asks the store what it holds and pairs the answer with what
-// this binary expects. The comparison itself lives in sqlitestore, beside migrate,
-// because the public driver surface opens the store to write to it too and must
-// reach the same verdict this does.
-//
-// The handle must have been opened WITHOUT migrations, or the comparison would be
-// against a table this call had just written to.
-//
-// It takes no context. It runs on the path that opens the store — before any
-// command's context exists — and reads one bounded local table, so a cancellation
-// hook here would buy nothing and cost every NewContainer caller a parameter.
-func readStoreSchemaState(dbHandle sqlitestore.DB) (storeSchemaState, error) {
-	state, err := sqlitestore.ReadMigrationState(dbHandle, allMigrations())
-	if err != nil {
-		return storeSchemaState{}, fmt.Errorf("reading store schema state: %w", err)
+// requireExistingStore refuses a command that answers only from a store that
+// already exists, before anything opens one.
+func requireExistingStore(storeRoot string) error {
+	if sqlitestorage.Exists(storeRoot) {
+		return nil
 	}
-	return storeSchemaState{
-		applied:  state.Applied,
-		expected: len(allMigrations()),
-		unknown:  state.Unknown,
-	}, nil
+	return fmt.Errorf("store not found at %s: run a kanonarion command to initialise it", sqlitestorage.DatabasePath(storeRoot))
+}
+
+// schemaStateOf pairs the backend's schema report with the comparison the
+// report and the gate share.
+func schemaStateOf(st storage.SchemaState) storeSchemaState {
+	return storeSchemaState{applied: st.Applied, expected: st.Expected, unknown: st.Unknown}
 }
 
 // newerStoreError is the refusal an older binary owes a newer store, in the shape
@@ -790,28 +778,39 @@ func runStoreInfo(storeRoot string, jsonOut bool, stdout, _ io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("resolving store root: %w", err)
 	}
-	dbPath := filepath.Join(absStore, "mirror.db")
-
-	if _, serr := os.Stat(dbPath); os.IsNotExist(serr) {
-		return fmt.Errorf("store not found at %s: run a kanonarion command to initialise it", dbPath)
+	if rerr := requireExistingStore(absStore); rerr != nil {
+		return rerr
 	}
+	dbPath := sqlitestorage.DatabasePath(absStore)
 
-	// Open with no migrations — only initialises the infrastructure tables
-	// (schema_migrations, _store_meta) without applying any domain migrations.
-	// This keeps store info read-only with respect to domain schema changes, and
-	// is what lets it still answer for a store this binary refuses to operate on:
-	// the command an operator reaches for to diagnose the refusal must not be
-	// subject to it.
-	dbHandle, err := sqlitestore.Open(dbPath, nil, sqlitestore.IntentRead)
+	// Inspect applies no migration and writes nothing, so a store this binary
+	// refuses to operate on is still reported: the command an operator reaches
+	// for to diagnose the refusal must not be subject to it.
+	st, err := sqlitestorage.Inspect(storage.Request{StoreRoot: absStore, Intent: storage.IntentRead})
 	if err != nil {
 		return fmt.Errorf("opening store at %s: %w", dbPath, err)
 	}
-	defer func() { _ = dbHandle.Close() }()
+	defer func() { _ = storageCloser(st)() }() //nolint:errcheck // a read-only inspection loses nothing on close
+	return writeStoreInfo(context.Background(), st, absStore, dbPath, jsonOut, stdout)
+}
 
-	state, err := readStoreSchemaState(dbHandle)
-	if err != nil {
-		return err
+// writeStoreInfo reports st's schema state; a backend that keeps none is told
+// apart from one that is up to date.
+func writeStoreInfo(ctx context.Context, st *storage.Storage, absStore, dbPath string, jsonOut bool, stdout io.Writer) error {
+	if st.Schema == nil {
+		if jsonOut {
+			return encodeJSON(stdout, storeInfoResult{StoreRoot: absStore, DBPath: dbPath, Status: storeSchemaUnreported})
+		}
+		if _, err := fmt.Fprintln(stdout, "store schema: the storage backend reports no schema state"); err != nil {
+			return fmt.Errorf("writing store info: %w", err)
+		}
+		return nil
 	}
+	report, err := st.Schema.SchemaState(ctx)
+	if err != nil {
+		return fmt.Errorf("reading store schema state: %w", err)
+	}
+	state := schemaStateOf(report)
 	unknown := state.unknown
 	appliedCount := state.applied
 	expected := state.expected

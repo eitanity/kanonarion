@@ -1,4 +1,4 @@
-package cli
+package sqlite
 
 import (
 	"fmt"
@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	blobstore "github.com/eitanity/kanonarion/internal/adapters/blobstore/localfs"
+	"github.com/eitanity/kanonarion/internal/adapters/blobstore/localfs"
 	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
@@ -37,7 +37,7 @@ const blobAdoptionMarker = ".blobs-adopted"
 // failing the command: the artefact reads as absent and is re-acquired, which is
 // ordinary behaviour, whereas refusing to start would make an unreadable store
 // unusable rather than merely slower.
-func adoptLegacyBlobs(db sqlitestore.DB, blobs *blobstore.Store, storeRoot string, logger *slog.Logger) error {
+func adoptLegacyBlobs(db sqlitestore.DB, blobs *localfs.Store, storeRoot string, logger *slog.Logger) error {
 	marker := filepath.Join(storeRoot, blobAdoptionMarker)
 	if _, err := os.Stat(marker); err == nil {
 		return nil
@@ -78,7 +78,7 @@ func adoptLegacyBlobs(db sqlitestore.DB, blobs *blobstore.Store, storeRoot strin
 
 // adoptRowBlobs re-addresses one fetch record's zip and go.mod blobs by
 // artefact identity, returning how many it adopted and how many it skipped.
-func adoptRowBlobs(blobs *blobstore.Store, logger *slog.Logger, moduleHash, goModHash, contentLocation, goModLocation string) (int, int) {
+func adoptRowBlobs(blobs *localfs.Store, logger *slog.Logger, moduleHash, goModHash, contentLocation, goModLocation string) (int, int) {
 	var adopted, skipped int
 	for _, artefact := range []struct {
 		kind   fetchports.BlobKind
@@ -102,16 +102,10 @@ func adoptRowBlobs(blobs *blobstore.Store, logger *slog.Logger, moduleHash, goMo
 			skipped++
 			continue
 		}
-		if h.IsZero() {
-			continue
-		}
+		// Both kinds are the constants above, so the only refusal is a zero hash:
+		// a recorded absence, with nothing to re-address.
 		identity, ierr := fetchports.NewBlobIdentity(artefact.kind, h)
 		if ierr != nil {
-			logger.Warn("blob_readdress_failed",
-				slog.String("legacy_handle", artefact.legacy),
-				slog.String("error", ierr.Error()),
-			)
-			skipped++
 			continue
 		}
 		ok, aerr := blobs.AdoptLegacyBlob(identity, artefact.legacy)
@@ -127,4 +121,14 @@ func adoptRowBlobs(blobs *blobstore.Store, logger *slog.Logger, moduleHash, goMo
 		}
 	}
 	return adopted, skipped
+}
+
+// cleanOrphanedBlobTemps removes temp files a killed write left in the blob
+// store, logging rather than failing.
+func cleanOrphanedBlobTemps(localBlobs *localfs.Store, logger *slog.Logger) {
+	if n, freed, cleanErr := localBlobs.CleanOrphanedTemps(); cleanErr != nil {
+		logger.Warn("failed to clean orphaned blob temp files", "error", cleanErr)
+	} else if n > 0 {
+		logger.Debug("cleaned orphaned blob temp files", "count", n, "bytes", freed)
+	}
 }

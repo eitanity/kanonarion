@@ -6,8 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
 
 	"github.com/spf13/cobra"
 
@@ -693,9 +691,8 @@ func runContext(ctx context.Context, arg string, f contextFlags, stdout, stderr 
 		return fmt.Errorf("invalid coordinate %q: %w", arg, err)
 	}
 
-	dbPath := filepath.Join(storeRoot, "mirror.db")
-	if _, serr := os.Stat(dbPath); os.IsNotExist(serr) {
-		return fmt.Errorf("store not found at %s: run a kanonarion command to initialise it", dbPath)
+	if serr := requireExistingStore(storeRoot); serr != nil {
+		return serr
 	}
 
 	ctr, cleanup, err := NewContainer(storeRoot, "", "", false, activeConfig, logger)

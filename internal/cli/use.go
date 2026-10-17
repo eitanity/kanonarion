@@ -13,15 +13,12 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
-	"github.com/eitanity/kanonarion/internal/adapters/blobstore/localfs"
-	factstoresqlite "github.com/eitanity/kanonarion/internal/adapters/factstore/sqlite"
 	"github.com/eitanity/kanonarion/internal/adapters/interrupt"
 
 	"github.com/eitanity/kanonarion/internal/adapters/goenv"
-	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
+	"github.com/eitanity/kanonarion/internal/composition/storage"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/fetch/ports"
-	walksqlite "github.com/eitanity/kanonarion/internal/walk/adapters/walks/sqlite"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
 	"github.com/spf13/cobra"
@@ -148,20 +145,17 @@ func runUse(ctx context.Context, f useFlags, targetArg string, stdout, stderr io
 		return err
 	}
 
-	dbPath := filepath.Join(storeRoot, "mirror.db")
 	// `use` rewrites the caller's go.mod from a stored walk; it records nothing,
 	// so it reads the store and does not bring one into existence.
-	dbHandle, err := sqlitestore.Open(dbPath, nil, sqlitestore.IntentRead)
+	st, err := openStorage(storage.Request{
+		StoreRoot: storeRoot, Intent: storage.IntentRead, SetAside: storeSetAside.report, Logger: logger,
+	})
 	if err != nil {
 		return fmt.Errorf("opening store: %w", err)
 	}
-	defer func() { _ = dbHandle.Close() }()
+	defer func() { _ = storageCloser(st)() }() //nolint:errcheck // use records nothing, so a close loses nothing
 
-	walkStore := walksqlite.New(dbHandle)
-	walkStore.ReportSetAside(storeSetAside.report)
-	factStore := factstoresqlite.New(dbHandle)
-	factStore.ReportSetAside(storeSetAside.report)
-	blobStore := localfs.New(storeRoot)
+	walkStore, factStore, blobStore := st.Walks, st.Facts, st.Blobs
 
 	// 1. Find the walk whose version set is copied.
 	walk, err := useTargetWalk(ctx, walkStore, coord, f.walkID, stderr)

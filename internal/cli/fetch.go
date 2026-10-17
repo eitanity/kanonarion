@@ -3,18 +3,17 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 
-	"github.com/eitanity/kanonarion/internal/adapters/blobstore/localfs"
 	"github.com/eitanity/kanonarion/internal/adapters/clock"
-	sqlite2 "github.com/eitanity/kanonarion/internal/adapters/factstore/sqlite"
 	proxyadapter "github.com/eitanity/kanonarion/internal/adapters/proxy/direct"
-	noopsigner "github.com/eitanity/kanonarion/internal/adapters/signer/noop"
 	"github.com/eitanity/kanonarion/internal/adapters/sumdb/gosum"
 	sumdbretry "github.com/eitanity/kanonarion/internal/adapters/sumdb/retrying"
 	"github.com/eitanity/kanonarion/internal/adapters/vcs/gitexec"
+	"github.com/eitanity/kanonarion/internal/composition/storage"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/fetch/application"
 	"github.com/eitanity/kanonarion/internal/fetch/domain"
@@ -218,37 +217,36 @@ func fetchOne(ctx context.Context, arg string, f fetchFlags, stdout, stderr io.W
 	}
 
 	vcsClient := gitexec.New()
-	blobStore := localfs.New(storeRoot)
 
-	dbPath := storeRoot + "/mirror.db"
 	if merr := os.MkdirAll(storeRoot, 0o750); merr != nil {
 		return fmt.Errorf("creating store root: %w", merr)
 	}
-	rawStore, err := sqlite2.Open(dbPath)
+	// A writable open through the backend, so the store has a ledger from here on.
+	st, err := openStorage(storage.Request{
+		StoreRoot: storeRoot, Intent: storage.IntentCreate, SetAside: storeSetAside.report, Logger: logger,
+	})
 	if err != nil {
 		return fmt.Errorf("opening fact store: %w", err)
 	}
-	rawStore.ReportSetAside(storeSetAside.report)
-	factStore, err := sqlite2.NewAuditingStore(rawStore, storeRoot+"/audit.jsonl")
-	if err != nil {
-		return fmt.Errorf("creating auditing store: %w", err)
+	// The container's refusal, so fetch cannot write into a store from a newer build.
+	if aerr := admitStorage(st, storeRoot); aerr != nil {
+		return errors.Join(aerr, storageCloser(st)())
 	}
 	defer func() {
-		if cerr := factStore.Close(); cerr != nil && err == nil {
+		if cerr := storageCloser(st)(); cerr != nil && err == nil {
 			err = fmt.Errorf("closing fact store: %w", cerr)
 		}
 	}()
-
 	// Retry transient checksum-database failures before they can downgrade the
 	// module's verification status, matching the walk path's wiring.
 	sumdbClient := sumdbretry.New(gosum.New(storeRoot+"/sumdb"), logger)
 	clk := clock.System{}
 
 	uc := application.NewFetchModuleUseCase(
-		proxyAdapter, vcsClient, blobStore, factStore,
+		proxyAdapter, vcsClient, st.Blobs, st.Facts,
 		sumdbClient, clk, clock.Monotonic{}, "", logger,
-	).WithSigner(noopsigner.New(), factStore).
-		WithAudit(factStore).
+	).WithSigner(storageSigner(st), st.Attestations).
+		WithAudit(st.Audit).
 		WithAllowVerificationDowngrade(allowVerificationDowngrade)
 
 	result, err := uc.Execute(ctx, application.FetchRequest{

@@ -12,10 +12,10 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/adapters/interrupt"
 	proxyadapter "github.com/eitanity/kanonarion/internal/adapters/proxy/direct"
+	"github.com/eitanity/kanonarion/internal/composition/storage"
 	stalegolist "github.com/eitanity/kanonarion/internal/staleness/adapters/golist"
 	staleproxy "github.com/eitanity/kanonarion/internal/staleness/adapters/proxy"
 	staleretry "github.com/eitanity/kanonarion/internal/staleness/adapters/proxy/retrying"
-	stalesqlite "github.com/eitanity/kanonarion/internal/staleness/adapters/store/sqlite"
 	staleapp "github.com/eitanity/kanonarion/internal/staleness/application"
 	staledomain "github.com/eitanity/kanonarion/internal/staleness/domain"
 	staleports "github.com/eitanity/kanonarion/internal/staleness/ports"
@@ -289,17 +289,15 @@ var errStalenessBatchReported = errors.New("latest unmeasured: the batched resol
 // the same migrated-and-gated door as every other write path, so an older binary
 // still refuses a newer store here.
 func openStalenessLedger(storeRoot string) (staleports.Ledger, func() error, error) {
-	dbHandle, err := openMigratedStore(filepath.Join(storeRoot, "mirror.db"), storeOpenIntent())
+	st, err := openStorage(storage.Request{StoreRoot: storeRoot, Intent: storeOpenIntent(), SetAside: storeSetAside.report})
 	if err != nil {
 		return nil, nil, err
 	}
-	cleanup := func() error {
-		if cerr := dbHandle.Close(); cerr != nil {
-			return fmt.Errorf("closing database: %w", cerr)
-		}
-		return nil
+	closeStore := storageCloser(st)
+	if err := admitStorage(st, storeRoot); err != nil {
+		return nil, nil, errors.Join(err, closeStore())
 	}
-	return stalesqlite.New(dbHandle), cleanup, nil
+	return st.Staleness, closeStore, nil
 }
 
 // stalenessAsOf renders the lookup time a staleness answer came from.

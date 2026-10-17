@@ -20,7 +20,7 @@ package childproc
 // would pay for a second regime. A reason has to say why the default cannot
 // apply at all.
 var DirectSpawns = map[string]string{
-	"internal/adapters/factstore/sqlite NewAuditLog": "chattr is not a Go or git child and has nothing to harden: " +
+	"internal/adapters/factstore/sqlite createAuditLog": "chattr is not a Go or git child and has nothing to harden: " +
 		"one ioctl on a path this process just created, no context in scope, no grandchildren, " +
 		"no working set to strand, and its error is deliberately discarded because the attribute " +
 		"is unavailable on most filesystems. Setpgid would take it out of the terminal's group " +

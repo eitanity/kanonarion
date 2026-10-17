@@ -127,6 +127,22 @@ var allowedPortAliases = map[string]bool{
 	// The partial-result error the VulnerabilityStore port returns beside an
 	// answer: an implementer returns it and a caller matches it.
 	"UnreadableRows": true, "UnreadableRow": true,
+	// The storage value names every store, so each is a substitution port; the
+	// rest are the ports-package types their signatures name, which
+	// TestPublishedPortsNameOnlyPublishedTypes requires published.
+	"AttestationStore": true, "AuditSink": true, "DirectiveStore": true,
+	"GoDebugStore": true, "VendorStore": true, "FIPSStore": true,
+	"StdlibStore": true, "StalenessLedger": true, "NativeStore": true,
+	"BuildEnvFilter": true, "WalkFilter": true, "WalkSummary": true,
+	"CallEdgeRef": true, "CallGraphFilter": true, "CallGraphSummary": true, "EdgeQueryOptions": true,
+	"ExampleFilter": true, "ExampleRef": true, "ExampleSummary": true,
+	"ExtractionRunFilter": true, "ExtractionRunSummary": true,
+	"InterfaceFilter": true, "InterfaceSummary": true, "SymbolRef": true,
+	"LicenseFilter": true, "LicenseSummary": true,
+	"GoModDownload": true, "ModuleDownload": true, "ModuleInfo": true, "ModuleOrigin": true,
+	"SumDBResult": true, "SumDBUnavailability": true,
+	"VulnerabilityRecordGeneration": true,
+	"WalkPresence":                  true, "CallGraphOutcomeReader": true, "CallGraphOutcome": true,
 }
 
 // facadeAlias is one exported type-alias declaration in the façade package.
@@ -210,8 +226,12 @@ func TestPorts_StaysInternalNotReachable(t *testing.T) {
 		t.Fatal("no exported aliases found in façade; parser wiring is broken")
 	}
 	for _, a := range aliases {
+		// The internal name is matched against the port deny-list only out of a
+		// ports package: a domain value type may share a port's name
+		// (vuln/domain.ReachabilityAnalyser).
+		fromPorts := strings.HasSuffix(a.imports[a.pkg], "/ports")
 		for _, name := range []string{a.name, a.sel} {
-			if staysInternalPorts[name] {
+			if staysInternalPorts[name] && (name == a.name || fromPorts) {
 				t.Errorf("façade exposes stays-internal port %q (alias %q); it must remain internal", name, a.name)
 			}
 			if strings.Contains(name, "Hasher") {

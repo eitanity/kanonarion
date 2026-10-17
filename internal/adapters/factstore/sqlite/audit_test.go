@@ -19,10 +19,7 @@ func TestAuditingStore_AttestationDelegates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	store, err := sqlite2.NewAuditingStore(inner, filepath.Join(dir, "audit.jsonl"))
-	if err != nil {
-		t.Fatalf("NewAuditingStore: %v", err)
-	}
+	store := sqlite2.NewAuditingStore(inner, filepath.Join(dir, "audit.jsonl"))
 	defer func() {
 		if cerr := store.Close(); cerr != nil {
 			t.Errorf("store.Close: %v", cerr)
@@ -52,10 +49,7 @@ func TestAuditingStore_RecordsOnPut(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	store, err := sqlite2.NewAuditingStore(inner, auditPath)
-	if err != nil {
-		t.Fatalf("NewAuditingStore: %v", err)
-	}
+	store := sqlite2.NewAuditingStore(inner, auditPath)
 	defer func() {
 		if cerr := store.Close(); cerr != nil {
 			t.Errorf("store.Close: %v", cerr)
@@ -104,10 +98,7 @@ func TestAuditingStore_RecordsOnPut(t *testing.T) {
 // migration, and an unrecognised type must be rejected before it reaches disk.
 func TestAuditLog_RecordEvent_GenericEnvelope(t *testing.T) {
 	auditPath := filepath.Join(t.TempDir(), "audit.jsonl")
-	log, err := sqlite2.NewAuditLog(auditPath)
-	if err != nil {
-		t.Fatalf("NewAuditLog: %v", err)
-	}
+	log := sqlite2.NewAuditLog(auditPath)
 
 	if rerr := log.RecordEvent(audit.Event{
 		Type:    audit.EventReplaceDirectiveObserved,
@@ -157,10 +148,7 @@ func TestAuditingStore_GetDelegates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	store, err := sqlite2.NewAuditingStore(inner, filepath.Join(dir, "audit.jsonl"))
-	if err != nil {
-		t.Fatalf("NewAuditingStore: %v", err)
-	}
+	store := sqlite2.NewAuditingStore(inner, filepath.Join(dir, "audit.jsonl"))
 	defer func() {
 		if cerr := store.Close(); cerr != nil {
 			t.Errorf("store.Close: %v", cerr)
@@ -179,5 +167,77 @@ func TestAuditingStore_GetDelegates(t *testing.T) {
 	}
 	if got.ModulePath != r.ModulePath {
 		t.Errorf("ModulePath = %q", got.ModulePath)
+	}
+}
+
+// The log exists only once something is recorded: constructing it is what a
+// read or a refused open does, and neither may leave a file behind.
+func TestAuditLog_FirstEntryCreatesTheFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "store", "audit.jsonl")
+	log := sqlite2.NewAuditLog(path)
+	if _, serr := os.Stat(filepath.Dir(path)); !os.IsNotExist(serr) {
+		t.Fatalf("NewAuditLog touched the disk: stat %s = %v", filepath.Dir(path), serr)
+	}
+	for range 2 {
+		if rerr := log.RecordEvent(audit.Event{Type: audit.EventReplaceDirectiveObserved}); rerr != nil {
+			t.Fatalf("RecordEvent: %v", rerr)
+		}
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("the first entry did not create the log: %v", err)
+	}
+	if mode := info.Mode().Perm(); mode != 0o600 {
+		t.Errorf("audit log mode = %o, want 600", mode)
+	}
+	if lines := len(bytesLines(t, path)); lines != 2 {
+		t.Errorf("audit log holds %d lines, want 2", lines)
+	}
+}
+
+// TestAuditLog_UncreatableLogFailsTheFirstEntry: the creation error the
+// constructor used to return now reaches the write that needed the file.
+func TestAuditLog_UncreatableLogFailsTheFirstEntry(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "audit.jsonl")
+	if err := os.Mkdir(path, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	log := sqlite2.NewAuditLog(path)
+	if rerr := log.RecordEvent(audit.Event{Type: audit.EventReplaceDirectiveObserved}); rerr == nil {
+		t.Fatal("RecordEvent succeeded with a directory where the log belongs")
+	}
+}
+
+func bytesLines(t *testing.T, path string) []string {
+	t.Helper()
+	f, err := os.Open(filepath.Clean(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.Close() }()
+	var out []string
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		out = append(out, sc.Text())
+	}
+	return out
+}
+
+// Ensure creates the log at once, with the mode the first entry would give it,
+// and is idempotent.
+func TestAuditLog_EnsureCreatesTheFileNow(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "store", "audit.jsonl")
+	log := sqlite2.NewAuditLog(path)
+	for range 2 {
+		if err := log.Ensure(); err != nil {
+			t.Fatalf("Ensure: %v", err)
+		}
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("Ensure did not create the log: %v", err)
+	}
+	if mode := info.Mode().Perm(); mode != 0o600 || info.Size() != 0 {
+		t.Errorf("audit log mode %o size %d, want an empty 0600 file", mode, info.Size())
 	}
 }
