@@ -94,7 +94,8 @@ func runToolchainNamer(ctx context.Context) gotoolchain.Version {
 // capability itself, so the one command it needs the environment to answer lives
 // here.
 //
-// One command for all three values, not three. They are read as the roots a
+// One command for every value, not one each. The platform rides along so a
+// record's frame is measured from the loader's own go command at no extra child. They are read as the roots a
 // recorded path is rendered against, and three separate questions could be
 // answered by three different toolchains — a switch between them would spell one
 // record's paths against a GOROOT that never held the standard library it loaded.
@@ -102,7 +103,9 @@ func runToolchainNamer(ctx context.Context) gotoolchain.Version {
 // dir and env are the load's own, for the reason goToolchainVersionProbe states.
 func goSourceDirsProbe(ctx context.Context, dir string, env []string) (cganalyser.SourceDirs, error) {
 	// Through childproc, like every other child an analysis spawns.
-	cmd := childproc.CommandContext(ctx, "go", "env", "GOROOT", "GOCACHE", "GOMODCACHE") // #nosec G204 -- fixed command and arguments; the binary is resolved through the analysis PATH by design
+	// GOARM is not last: off arm it prints an empty line, which the trailing trim
+	// would otherwise drop.
+	cmd := childproc.CommandContext(ctx, "go", "env", "GOROOT", "GOCACHE", "GOMODCACHE", "GOARM", "GOOS", "GOARCH") // #nosec G204 -- fixed command and arguments; the binary is resolved through the analysis PATH by design
 	cmd.Dir = dir
 	if env != nil {
 		cmd.Env = env
@@ -118,16 +121,19 @@ func goSourceDirsProbe(ctx context.Context, dir string, env []string) (cganalyse
 	// answered the question, and guessing which of the three it dropped would put
 	// the build cache in the GOROOT slot.
 	lines := strings.Split(strings.TrimRight(string(out), "\n"), "\n")
-	if len(lines) != 3 {
+	if len(lines) != 6 {
 		return cganalyser.SourceDirs{}, fmt.Errorf("%w: got %d", errUnreadableSourceDirs, len(lines))
 	}
 	return cganalyser.SourceDirs{
 		GOROOT:      strings.TrimSpace(lines[0]),
 		BuildCache:  strings.TrimSpace(lines[1]),
 		ModuleCache: strings.TrimSpace(lines[2]),
+		GOARM:       strings.TrimSpace(lines[3]),
+		GOOS:        strings.TrimSpace(lines[4]),
+		GOARCH:      strings.TrimSpace(lines[5]),
 	}, nil
 }
 
 // errUnreadableSourceDirs is returned when the go command exits zero without
 // naming all three directories it was asked about.
-var errUnreadableSourceDirs = errors.New("go env GOROOT GOCACHE GOMODCACHE did not name three directories")
+var errUnreadableSourceDirs = errors.New("go env GOROOT GOCACHE GOMODCACHE GOARM GOOS GOARCH did not answer six lines")

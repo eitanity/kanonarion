@@ -51,6 +51,7 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/adapters/blobstore/localfs"
 	fetchsqlite "github.com/eitanity/kanonarion/internal/adapters/factstore/sqlite"
+	"github.com/eitanity/kanonarion/internal/adapters/goenv"
 	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
 	cgsqlite "github.com/eitanity/kanonarion/internal/callgraph/adapters/store/sqlite"
 	cgapp "github.com/eitanity/kanonarion/internal/callgraph/application"
@@ -453,6 +454,18 @@ func seedFixtureLicense(t *testing.T, store *licsqlite.Store, mod coordinate.Mod
 	}
 }
 
+// fixtureHost is the platform the golden run pins as this process's host. It is
+// fixed rather than measured so the recorded output is the same on every machine.
+var fixtureHost = mustTarget("linux", "amd64")
+
+func mustTarget(goos, goarch string) goenv.Target {
+	t, err := goenv.NewTarget(goos, goarch)
+	if err != nil {
+		panic(err)
+	}
+	return t
+}
+
 // seedFixtureCallGraph files one call-graph generation for mod. completeness and
 // extractedAt make each generation distinguishable; withEdges is false for the
 // metadata-only generation, which records the symbols a module declares without
@@ -505,6 +518,8 @@ func seedFixtureCallGraph(
 		Completeness:     completeness,
 		AnalysisSource:   cgdomain.AnalysisSourceModuleZip,
 		ArtefactIdentity: identity.String(),
+		// The pinned host's frame, so the undeclared reads serve it on every machine.
+		Frame: cgdomain.BuildFrame{GOOS: fixtureHost.GOOS(), GOARCH: fixtureHost.GOARCH()},
 	}
 	if withEdges {
 		rec.Edges = []cgdomain.CallEdge{

@@ -998,7 +998,7 @@ func TestLedger_WorktreeGenerationAnswersForTheNamedTree(t *testing.T) {
 		}
 	}
 
-	got, found, err := s.WorktreeGeneration(ctx, local, testPipeline, "/src/a", "scanned-sha256:a")
+	got, found, err := s.WorktreeGeneration(ctx, local, testPipeline, "/src/a", "scanned-sha256:a", domain2.BuildFrame{})
 	if err != nil || !found {
 		t.Fatalf("WorktreeGeneration: found=%v err=%v", found, err)
 	}
@@ -1010,14 +1010,14 @@ func TestLedger_WorktreeGenerationAnswersForTheNamedTree(t *testing.T) {
 	}
 	// The other checkout holds that same state under a different root, and does
 	// not answer for this one.
-	if _, found, err = s.WorktreeGeneration(ctx, local, testPipeline, "/src/b", "scanned-sha256:a"); err != nil || found {
+	if _, found, err = s.WorktreeGeneration(ctx, local, testPipeline, "/src/b", "scanned-sha256:a", domain2.BuildFrame{}); err != nil || found {
 		t.Fatalf("another checkout answered for this tree state: found=%v err=%v", found, err)
 	}
-	if _, found, err = s.WorktreeGeneration(ctx, local, testPipeline, "/src/never-analysed", "scanned-sha256:a"); err != nil || found {
+	if _, found, err = s.WorktreeGeneration(ctx, local, testPipeline, "/src/never-analysed", "scanned-sha256:a", domain2.BuildFrame{}); err != nil || found {
 		t.Fatalf("a tree the ledger has never seen reported found=%v err=%v", found, err)
 	}
 	// A generation that names no state matches nothing, however it is asked for.
-	if _, found, err = s.WorktreeGeneration(ctx, local, testPipeline, "/src/a", ""); err != nil || found {
+	if _, found, err = s.WorktreeGeneration(ctx, local, testPipeline, "/src/a", "", domain2.BuildFrame{}); err != nil || found {
 		t.Fatalf("an empty digest matched a stored generation: found=%v err=%v", found, err)
 	}
 }
@@ -1053,7 +1053,7 @@ func TestLedger_AnEarlierTreeStateStillAnswersForItself(t *testing.T) {
 		}
 	}
 
-	got, found, err := s.WorktreeGeneration(ctx, local, testPipeline, root, "scanned-sha256:before")
+	got, found, err := s.WorktreeGeneration(ctx, local, testPipeline, root, "scanned-sha256:before", domain2.BuildFrame{})
 	if err != nil || !found {
 		t.Fatalf("the reverted-to state has a graph in the ledger but did not answer: found=%v err=%v", found, err)
 	}
@@ -1463,7 +1463,7 @@ func TestLedger_IdenticalGenerationFindsTheMeasurementAlreadyHeld(t *testing.T) 
 // once is taken over the right record: a seal taken over a candidate, or reused
 // from a previous call, would match the wrong row or none.
 //
-// It also asserts what KN-704's rule is FOR, at the store: asking the question
+// It also asserts what the identical-generation rule is FOR, at the store: asking the question
 // appends nothing, and a record that differs is still not matched, so the caller
 // still appends it.
 func TestLedger_IdenticalGenerationWalksEveryCandidateAndAppendsNothing(t *testing.T) {

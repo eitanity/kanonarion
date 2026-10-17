@@ -44,7 +44,9 @@ exists.
 The `dependencies` section is drawn from the walk the rest of the document is
 based on - the walk the vulnerability section names as its `walk basis`, the
 walk `--walk-id` names, or the project walk `--gomod` anchors to - wherever that
-walk holds the module. One document therefore reports one build. Where the
+walk holds the module. One document therefore reports one build. A walk named
+with `--walk-id` also supplies the build frame the call-graph sections and the
+route classifications are read in. Where the
 document names no walk at all, the section falls back to the walks rooted at the
 module itself and picks the one the shared default rule picks. It reports
 `not_run` only when no walk in either route holds the module, and

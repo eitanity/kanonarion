@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/eitanity/kanonarion/internal/adapters/goenv"
 	"github.com/eitanity/kanonarion/internal/walk/adapters/buildlist/gotoolchain"
@@ -28,6 +29,38 @@ var declaredTarget goenv.Target
 // the zero value. When set, declaredTarget holds the pair TinyGo reported, and
 // every resolving child applies this frame after it.
 var declaredTinyGo goenv.TinyGo
+
+// liveContainers are the containers open in this process. A declaration
+// settled after one was built is re-adopted by each, so the order in which a
+// command opens its store and resolves its flags cannot leave a read in the
+// host frame.
+var (
+	liveMu         sync.Mutex
+	liveContainers = map[*Container]struct{}{}
+)
+
+// declare is the one setter of the invocation's declaration: it records it and
+// re-wires every open container's analyser and call-graph read frame.
+func declare(t goenv.Target, tg goenv.TinyGo) {
+	declaredTarget, declaredTinyGo = t, tg
+	liveMu.Lock()
+	defer liveMu.Unlock()
+	for c := range liveContainers {
+		c.adoptDeclaredFrame()
+	}
+}
+
+// trackContainer registers c as open until the returned release runs.
+func trackContainer(c *Container) (release func()) {
+	liveMu.Lock()
+	defer liveMu.Unlock()
+	liveContainers[c] = struct{}{}
+	return func() {
+		liveMu.Lock()
+		defer liveMu.Unlock()
+		delete(liveContainers, c)
+	}
+}
 
 // resolvingEnv is env as a resolving child must see it under this invocation's
 // declaration: the platform, then the TinyGo frame when one was declared.
@@ -132,8 +165,7 @@ func (f buildTargetFlags) parse() (goenv.Target, error) {
 // dir is the directory the toolchain is asked in, so a project pinning its own
 // toolchain is validated against the Go that will actually resolve it.
 func resolveBuildTarget(ctx context.Context, f buildTargetFlags, goBinary, dir string) error {
-	declaredTarget = goenv.Target{}
-	declaredTinyGo = goenv.TinyGo{}
+	declare(goenv.Target{}, goenv.TinyGo{})
 	if !f.declared() {
 		return nil
 	}
@@ -151,7 +183,7 @@ func resolveBuildTarget(ctx context.Context, f buildTargetFlags, goBinary, dir s
 	if !supported {
 		return unsupportedTargetError(t, offered)
 	}
-	declaredTarget = t
+	declare(t, goenv.TinyGo{})
 	return nil
 }
 
@@ -167,7 +199,7 @@ func resolveTinyGoTarget(ctx context.Context, name string) error {
 	if err != nil {
 		return &exitError{code: ExitConfig, msg: fmt.Sprintf("tinygo target %q: %v", name, err)}
 	}
-	declaredTarget, declaredTinyGo = pair, frame
+	declare(pair, frame)
 	return nil
 }
 

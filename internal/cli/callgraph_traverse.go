@@ -80,7 +80,7 @@ func newCallersCmd(stdout, stderr io.Writer) *cobra.Command {
 			if derr := checkDepthFlag(depth); derr != nil {
 				return derr
 			}
-			if berr := scopeFlags.bind(cmd); berr != nil {
+			if berr := scopeFlags.bindCallGraphRead(cmd); berr != nil {
 				return berr
 			}
 			logger := buildLogger(logLevel, stderr)
@@ -89,6 +89,9 @@ func newCallersCmd(stdout, stderr io.Writer) *cobra.Command {
 				return fmt.Errorf("initialising store: %w", err)
 			}
 			defer releaseStore(cleanup)
+			if aerr := adoptNamedWalkFrame(cmd.Context(), ctr.QueryWalks, scopeFlags.walkID); aerr != nil {
+				return aerr
+			}
 			sc, err := scopeFlags.resolve(cmd.Context(), ctr.QueryWalks)
 			if err != nil {
 				return err
@@ -229,7 +232,7 @@ func newCalleesCmd(stdout, stderr io.Writer) *cobra.Command {
 			if derr := checkDepthFlag(depth); derr != nil {
 				return derr
 			}
-			if berr := scopeFlags.bind(cmd); berr != nil {
+			if berr := scopeFlags.bindCallGraphRead(cmd); berr != nil {
 				return berr
 			}
 			logger := buildLogger(logLevel, stderr)
@@ -238,6 +241,9 @@ func newCalleesCmd(stdout, stderr io.Writer) *cobra.Command {
 				return fmt.Errorf("initialising store: %w", err)
 			}
 			defer releaseStore(cleanup)
+			if aerr := adoptNamedWalkFrame(cmd.Context(), ctr.QueryWalks, scopeFlags.walkID); aerr != nil {
+				return aerr
+			}
 			sc, err := scopeFlags.resolve(cmd.Context(), ctr.QueryWalks)
 			if err != nil {
 				return err

@@ -4,6 +4,7 @@
 
 ```
 kanonarion local [dir] [--force] [--go-binary <path>] [--json]
+                 [--target <GOOS/GOARCH> | --goos <GOOS> --goarch <GOARCH> | --tinygo <target>]
 ```
 
 ## Description
@@ -43,6 +44,16 @@ The directory is what a query routes on. A `callers` query run inside a checkout
 is answered from the generation analysed in THAT directory rather than from
 whichever checkout ran `local` most recently - see
 [`callgraph`](callgraph.md#which-working-tree-answered).
+
+## One record per frame
+
+The record names the **build frame** it was extracted under, measured from the
+loader's own go command: `linux/amd64` with no declaration, `wasip1/wasm` under
+`--target wasip1/wasm`, `tinygo/wasip1 (wasip1/wasm)` under `--tinygo wasip1`.
+Build constraints decide which files compile, so one tree can hold one record
+per frame, and every read selects the frame it declares (or this host's). The
+reuse below is per frame: `local .` and `local . --tinygo wasip1` on an unchanged
+tree are two records, and a later run of either reuses its own.
 
 ## Unchanged trees
 
@@ -179,6 +190,9 @@ graph at all, `3` for a cancelled run.
 | `--force` | false | Re-analyse even when the tree is unchanged since the stored record |
 | `--go-binary <path>` | _(PATH)_ | Path to the `go` binary if it is not on `PATH` |
 | `--json` | false | Emit this run's summary as a JSON document (the record's scalars, without `nodes` and `edges`) |
+| `--target <GOOS/GOARCH>` | _(this host's platform)_ | Analyse under this build target, e.g. `--target wasip1/wasm`. Refused when the toolchain does not build for it. See [The build frame](conventions.md#the-build-frame) |
+| `--goos` / `--goarch` | _(this host's)_ | The two halves of `--target`. Both are required, and neither combines with `--target` |
+| `--tinygo <target>` | _(none)_ | Analyse under a TinyGo target, e.g. `--tinygo wasip1`, as the `tinygo` command on `PATH` defines it: its platform, `GOROOT`, cgo and build tags. Mutually exclusive with `--target`, `--goos` and `--goarch` |
 | `--store-root <path>` | `~/.kanonarion` | Root directory for blobs and SQLite |
 
 ## Assurance log

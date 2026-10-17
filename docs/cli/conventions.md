@@ -121,15 +121,21 @@ which one a walk records. The two kinds of command behave differently:
 
 The platform comes from the invocation, never from the environment. The
 commands that RESOLVE a build — `walk`, `audit`, `sbom`, `vuln-scan`, `inspect`
-— and the commands that READ one by manifest — `context`, `callers`, `callees`,
-`implementers`, `examples-find`, `symbol-context`, `symbol-find`, `usage`,
-`vuln-show`, `reachability`, `dependents` — all take `--target GOOS/GOARCH` (or
-`--goos`/`--goarch`), and with no flag the platform is the measured host —
+— the commands that extract or show one call graph — `local`, `callgraph`,
+`callgraph-show` — the live probe `reachability --local`, which lists, seeds and
+builds in the declared frame — and the commands that READ one by manifest — `context`,
+`callers`, `callees`, `implementers`, `examples-find`, `symbol-context`,
+`symbol-find`, `usage`, `vuln-show`, `reachability`, `dependents` — all take
+`--target GOOS/GOARCH` (or `--goos`/`--goarch`), and with no flag the platform is the measured host —
 `GOOS` and `GOARCH` exported in the calling shell reach no resolution. See
 [Declaring the build target](walk.md#declaring-the-build-target---target). The
 toolchain is not declarable: it comes from the project's own directory, because
 only the go command knows how the `toolchain` directive and any `GOTOOLCHAIN`
 switch settled.
+
+Call-graph records carry their frame from pipeline `0.11.0`, and every call-graph
+read selects the frame its invocation declares, or this host's. Interface records
+are measured in the host frame, and examples records apply no build constraint.
 
 `--target` means the build target on every command that shows it. Two commands
 used it for something else and now spell those flags differently: `walk-list

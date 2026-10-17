@@ -167,12 +167,12 @@ func (s *fakeCallGraphStore) GetCallGraphRecord(_ context.Context, coord coordin
 
 // WorktreeGeneration lets fakeCallGraphStore answer the tree-scoped read the
 // working-tree route uses to decide whether it already holds this measurement.
-func (s *fakeCallGraphStore) WorktreeGeneration(_ context.Context, coord coordinate.ModuleCoordinate, pv, root, scanDigest string) (domain.CallGraphRecord, bool, error) {
+func (s *fakeCallGraphStore) WorktreeGeneration(_ context.Context, coord coordinate.ModuleCoordinate, pv, root, scanDigest string, frame domain.BuildFrame) (domain.CallGraphRecord, bool, error) {
 	if s.getErr != nil {
 		return domain.CallGraphRecord{}, false, s.getErr
 	}
 	r, ok := s.records[cgKey{coord.Path(), coord.Version(), pv}]
-	if !ok || r.AnalysisRoot != root || r.WorktreeScanDigest != scanDigest || scanDigest == "" {
+	if !ok || r.AnalysisRoot != root || r.WorktreeScanDigest != scanDigest || scanDigest == "" || !domain.SameFrame(r.Frame, frame) {
 		return domain.CallGraphRecord{}, false, nil
 	}
 	return r, true, nil

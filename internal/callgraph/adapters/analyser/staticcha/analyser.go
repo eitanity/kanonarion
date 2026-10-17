@@ -43,6 +43,10 @@ type Analyser struct {
 	// spawned this process reads those lines to tell a working subprocess from a stalled
 	// one, and shows them to the operator; nil narrates nothing.
 	progress io.Writer
+	// target and tinygo are the declared build frame; zero declares none. See
+	// frame.go.
+	target goenv.Target
+	tinygo goenv.TinyGo
 }
 
 // New constructs an Analyser.
@@ -95,6 +99,7 @@ func (a *Analyser) AnalyserMetadata() cgports.AnalyserMetadata {
 	return cgports.AnalyserMetadata{
 		Algorithm: domain.AlgorithmCHA,
 		Version:   analyserVersion,
+		Frame:     a.declaredFrame(),
 	}
 }
 
@@ -125,7 +130,7 @@ func (a *Analyser) Analyse(
 	// silently unnamed. A LoadFailed record needs it most: the library refusing to
 	// type-check a construct it predates is precisely the loud half of the failure
 	// this axis exists to explain.
-	defer func() { rec.Analyser = observedAnalyser() }()
+	defer func() { rec.Analyser = observedAnalyser(); rec.Frame = a.frameOr(rec.Frame) }()
 	a.logMem(ctx, "start")
 	a.step(coord, "unpacking the module")
 	tempDir, err := os.MkdirTemp("", "kanonarion-cg-*")
@@ -325,7 +330,7 @@ func (a *Analyser) sourced(
 // CallGraphRecord.AnalysisRoot.
 func (a *Analyser) AnalyseDir(ctx context.Context, dir string, coord coordinate.ModuleCoordinate) (rec domain.CallGraphRecord, err error) {
 	// Stamped on every return path, for the reason Analyse states.
-	defer func() { rec.Analyser = observedAnalyser() }()
+	defer func() { rec.Analyser = observedAnalyser(); rec.Frame = a.frameOr(rec.Frame) }()
 	a.logMem(ctx, "start")
 	root, err := analysisRoot(dir)
 	if err != nil {
@@ -381,7 +386,7 @@ func (a *Analyser) TreeIdentity(_ context.Context, dir string) (domain.WorktreeI
 	if err != nil {
 		return domain.WorktreeIdentity{}, fmt.Errorf("identifying working tree %s: %w", dir, err)
 	}
-	return domain.WorktreeIdentity{Root: root, ScanDigest: digest}, nil
+	return domain.WorktreeIdentity{Root: root, ScanDigest: digest, Frame: a.declaredFrame()}, nil
 }
 
 // analysisRoot resolves dir to the absolute, symlink-free path the record states
@@ -540,6 +545,11 @@ func (a *Analyser) analyseDirOnce(
 ) (rec domain.CallGraphRecord, err error) {
 	fset := token.NewFileSet()
 
+	// The frame is stamped on every record this returns, in the same breath as
+	// the toolchain: the declared one until the loader's own go command answers.
+	frame := a.declaredFrame()
+	defer func() { rec.Frame = frame }()
+
 	// The environment every Go child of this analysis is given. It is assigned
 	// after setupGoEnv below and captured by reference here, because both the
 	// classification and the toolchain stamp must ask about the environment the
@@ -593,7 +603,9 @@ func (a *Analyser) analyseDirOnce(
 	// thing this branch decides — an extracted zip's go.work is packaging and is
 	// disabled, a working tree's is the build and is honoured — and building both
 	// leaves a reader unable to tell which one the child was handed.
-	env = toolchains.Apply(childEnv(mode, tempDir, goModCache))
+	// The declared frame goes on last, after the toolchain, so a TinyGo GOROOT
+	// is the one the child sees.
+	env = a.applyFrame(toolchains.Apply(childEnv(mode, tempDir, goModCache)))
 	// A go command the cancellation kills cannot remove its own work directory,
 	// so every child of this analysis gets a temp root removed when it returns.
 	scratch, removeScratch := childproc.Scratch()
@@ -616,6 +628,7 @@ func (a *Analyser) analyseDirOnce(
 	// path is rendered against, and roots read off a different toolchain would
 	// render against directories the load never touched. See sourceRoots.
 	dirs := a.probeSourceDirs(ctx, tempDir, env)
+	frame = a.measuredFrame(dirs)
 	// Every failure detail returned from here on is rendered against the same
 	// roots as a position: the module cache is a per-run temp directory, and a
 	// record naming it differs on every run of one module. See relText.
@@ -627,11 +640,12 @@ func (a *Analyser) analyseDirOnce(
 	// Step 1: Discover ALL packages in the transitive dependency graph (metadata only).
 	// This ensures we know about every package that might be imported.
 	cfgMeta := &packages.Config{
-		Mode:    packages.NeedName | packages.NeedImports | packages.NeedDeps,
-		Dir:     tempDir,
-		Context: ctx,
-		Env:     env,
-		Tests:   false,
+		Mode:       packages.NeedName | packages.NeedImports | packages.NeedDeps,
+		Dir:        tempDir,
+		Context:    ctx,
+		Env:        env,
+		BuildFlags: a.buildFlags(),
+		Tests:      false,
 	}
 
 	a.step(coord, "loading package metadata")
@@ -655,7 +669,7 @@ func (a *Analyser) analyseDirOnce(
 	metaErrs := metaLoadErrors(pkgsMeta)
 
 	if len(pkgsMeta) == 0 {
-		detail := noPackagesDetail(metaErrs)
+		detail := noPackagesDetail(frame, metaErrs)
 		return a.failRecord(coord, domain.CallGraphStatusLoadFailed, domain.CompletenessFailed,
 			classifyLoad(detail), detail), nil
 	}
@@ -840,11 +854,11 @@ func (a *Analyser) newCallGraphRecord(coord coordinate.ModuleCoordinate, build s
 
 // noPackagesDetail is the failure detail for a metadata load that found no
 // packages, carrying the loader's own errors when it gave any.
-func noPackagesDetail(metaErrs []string) string {
+func noPackagesDetail(frame domain.BuildFrame, metaErrs []string) string {
 	// The loader ran and found nothing to analyse: a fact about what the module
-	// ships — unless the loader also said why, in which case that is the finding
-	// and the count is a symptom of it.
-	detail := "no packages found for " + platformFrame() +
+	// ships in this frame — unless the loader also said why, in which case that is
+	// the finding. The frame is the record's, which is what build constraints read.
+	detail := "no packages found for " + frame.String() +
 		" (the module ships no Go source, or build constraints exclude every file it does ship)"
 	if len(metaErrs) > 0 {
 		detail += "; the loader reported: " + joinFirst(metaErrs, 3)

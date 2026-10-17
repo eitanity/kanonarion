@@ -129,6 +129,13 @@ type AuditEventType = audit.EventType
 // may be added within a major version (§4).
 type BuildEnvFilter = walkports.BuildEnvFilter
 
+// BuildFrame is the platform a call graph was extracted under, which every
+// call-graph read selects on.
+//
+// Stability: supporting type of the CallGraphStore port; unstable pre-v1.
+// Fields may be added within a major version (§4).
+type BuildFrame = callgraphdomain.BuildFrame
+
 // CallEdge is a directed call relationship between two nodes.
 //
 // Stability: supporting type of the CallGraphStore port; unstable pre-v1.

@@ -39,6 +39,7 @@ var sealedCallGraphCollections = map[string]bool{
 	"StdlibPackages":            true,
 	"DependencyPackages":        true,
 	"SynthesisedGoMod.Requires": true,
+	"Frame.TinyGoTags":          true,
 }
 
 // TestCallGraphRecord_ContentHashIsIndependentOfInputOrder is the determinism
@@ -140,6 +141,10 @@ func makeTiedCallGraphRecord() domain.CallGraphRecord {
 				{Path: "example.com/dep", Version: "v1.1.0"},
 			},
 		},
+		Frame: domain.BuildFrame{
+			GOOS: "linux", GOARCH: "arm", GOARM: "6", TinyGoTarget: "pico", TinyGoVersion: "0.42.0",
+			TinyGoTags: []string{"tinygo", "baremetal", "cortexm"},
+		},
 		OverallStatus:   domain.CallGraphStatusExtracted,
 		NodeCount:       3,
 		EdgeCount:       2,
@@ -184,6 +189,8 @@ func shuffleCallGraphRecord(rng *rand.Rand, r *domain.CallGraphRecord) {
 	})
 	req := r.SynthesisedGoMod.Requires
 	rng.Shuffle(len(req), func(i, j int) { req[i], req[j] = req[j], req[i] })
+	tags := r.Frame.TinyGoTags
+	rng.Shuffle(len(tags), func(i, j int) { tags[i], tags[j] = tags[j], tags[i] })
 }
 
 // TestMemberChangeLess_IsKeyedOnEveryField exercises the generation-diff

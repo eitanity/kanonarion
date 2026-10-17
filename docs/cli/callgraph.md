@@ -330,11 +330,21 @@ kanonarion callgraph <module>@<version> [flags]
 | `--go-binary` | _(from `PATH`)_ | Path to the `go` binary if not on `PATH` |
 | `--no-progress` | `false` | Suppress the per-phase narration on stderr |
 | `--json` | `false` | Emit this run's summary as a JSON document (the record's scalars, without `nodes` and `edges`) |
+| `--target <GOOS/GOARCH>` | _(this host's platform)_ | Extract under this build target, e.g. `--target wasip1/wasm`. The analysis loads under it and the record names it. See [The build frame](conventions.md#the-build-frame) |
+| `--goos` / `--goarch` | _(this host's)_ | The two halves of `--target`, for a caller holding them separately. Both are required, and neither combines with `--target` |
+| `--tinygo <target>` | _(none)_ | Extract under a TinyGo target, e.g. `--tinygo wasip1`, as the `tinygo` command on `PATH` defines it: its platform, `GOROOT`, cgo and build tags. Mutually exclusive with `--target`, `--goos` and `--goarch`. Refused for the standard library, whose graph is read from a Go toolchain's own `GOROOT` |
 
 ```
 $ kanonarion callgraph golang.org/x/mod@v0.30.0
-golang.org/x/mod@v0.30.0: Extracted — 1039 nodes, 4201 edges [CHA]
+golang.org/x/mod@v0.30.0: Extracted — 1039 nodes, 4201 edges [CHA] frame linux/amd64
 ```
+
+The result line names the frame the analysis ran under. With `--from-walk`, the
+walk's frame is the extraction frame: a walk resolved for another platform is
+analysed under that platform, and stderr says so. A declaration that disagrees
+with the walk is refused naming both frames. Without `--from-walk`, only walks of
+the analysis frame are searched for a build list; walks of other frames are
+passed over and the notice counts them.
 
 The analysis narrates the phase it is in on stderr, so a run that takes minutes
 is visibly working rather than apparently wedged:
@@ -435,7 +445,7 @@ it. The causes that recur:
 |---|---|
 | `no go.mod was synthesised: … imports packages outside the standard library: …` | A module published before Go modules whose imports no build list in this store resolves. Name a build that does with `--from-walk`, or walk a project that uses it |
 | `no package under <path>: the loader resolved N package(s) (…)` | Nothing the loader returned belongs to the module. The named packages say what it found instead |
-| `no packages found for <goos>/<goarch> …` | The module ships no Go source this platform compiles. A Windows-only module has no graph on Linux, and that is a joint fact about the module and the frame |
+| `no packages found for <frame> …` | The module ships no Go source the record's frame compiles — `linux/amd64`, or `tinygo/pico (linux/arm)` under a TinyGo declaration. A Windows-only module has no graph on Linux, and that is a joint fact about the module and the frame |
 | `none of the N package(s) under <path> type-checked: …` | The packages were found and the type-check failed; the loader's own errors follow |
 | `the loader reported: … missing go.sum entry for module providing package …; to add: …` | The tree's `go.sum` does not cover a module the load needs. `go mod tidy`, then re-analyse. A local analysis is read-only: it reports the gap rather than closing it in the tree it was asked to measure |
 | `package requires newer Go version goX (application built with goY)`, or `This application uses version goY of the source-processing packages but runs version goX of 'go list'` | This kanonarion was built with goY and the code requires goX. It type-checks with the Go compiled into the binary, so the `go` on `PATH` and `GOTOOLCHAIN` do not change it. Use a kanonarion built with goX or newer — a newer release, or `go install github.com/eitanity/kanonarion@latest` run with that Go — and re-analyse. The cause is `environment`, the record is never served as a cache hit, and the run exits `20`. `callers`, `callees`, `usage`, `capability` and `interface-diff --used-by` say the package was not analysed, rather than that it did not typecheck |
@@ -510,11 +520,15 @@ kanonarion callgraph-show <module>@<version> [flags]
 | `--diff-to` | _(the most recent measurement)_ | With `--diff`: the generation on the right of the comparison. Takes a `record:` hash as `--history` prints it, or a unique prefix of one |
 | `--source` | _(default)_ | Restrict to graphs built from one source: `zip`, `worktree` or `toolchain-source` |
 | `--toolchain` | _(default)_ | Restrict to graphs built by one Go toolchain, in `go env GOVERSION` form (e.g. `go1.26.6`). A coordinate holding none of them reports no record |
+| `--target <GOOS/GOARCH>` | _(this host's platform)_ | Show the graph extracted under this build target. A coordinate holding none of that frame reports no record, naming the frames it does hold |
+| `--goos` / `--goarch` | _(this host's)_ | The two halves of `--target`. Both are required, and neither combines with `--target` |
+| `--tinygo <target>` | _(none)_ | Show the graph extracted under this TinyGo target. Mutually exclusive with `--target`, `--goos` and `--goarch` |
 
 ```
 $ kanonarion callgraph-show golang.org/x/mod@v0.30.0 --limit-nodes 2 --limit-edges 2
 golang.org/x/mod@v0.30.0  [CHA]  Extracted
   fidelity: BUILT_WITH_BODIES   source: zip   kind: Library   toolchain: go1.26.6
+  frame: linux/amd64
   analyser: golang.org/x/tools v0.49.0
   test scope: analysed — 290 of 1039 nodes are test declarations
   interfaces: 11 declared, 29 implementations recorded (query with 'kanonarion implementers')
@@ -976,6 +990,11 @@ differently. A generation under another **pipeline** version is outside the view
 entirely — the header names the pipeline version being listed — and is reported
 only when nothing at the served one answers.
 
+The `frame:` line names the build frame the graph was extracted under:
+`goos/goarch`, or `tinygo/<target> (goos/goarch)` followed by the TinyGo release
+and build tags. `--json` carries the same as `frame`. A record from before
+pipeline `0.11.0` names no frame and prints no line.
+
 #### Composition
 
 A read returns one answer composed from the generations, on a stated ordering:
@@ -1007,6 +1026,19 @@ generation of that one and leaves the other standing; the refusal names
 `--history` and `--toolchain` and nothing else, because there is nothing else to
 run. `kanonarion config set callgraph.toolchain go1.26.6` records the choice so it
 does not have to be typed on every later read.
+
+The **build frame is a dimension too, selected before the ladder**, as the
+toolchain is. Build constraints decide which files a package compiles, so a
+`linux/amd64` graph and a `wasip1/wasm` graph of one module are two answers and
+neither is a lesser measurement of the other. Every read selects the frame the
+invocation declares or, with no declaration, this host's. `callgraph-show`,
+`callers`, `callees`, `implementers` and `usage` take `--target`,
+`--goos`/`--goarch` and `--tinygo` for it; on the last four a walk named by
+`--walk-id` supplies the frame instead, and a declaration beside it is refused. A
+read that takes none, such as `capability`, reads this host's frame. A coordinate holding no graph of that
+frame has no answer, and `callgraph-show` names the frames it does hold and the
+command that produces this one. A record that names no frame is never read as
+the host's.
 
 The graph difference is what makes it a disagreement. Two toolchains that
 produced the **same** nodes and edges produced the same answer, so the read
@@ -1224,10 +1256,10 @@ kanonarion callers <symbol-id> [flags]
 | `--transitive` | `false` | Follow reachable edges transitively instead of only direct call sites |
 | `--depth` | `0` | Maximum traversal depth for `--transitive` (`0` = unlimited). A negative value is refused with exit `20` |
 | `--gomod <path>` | _(none; unrestricted)_ | Restrict results to the latest **code-scope** project walk for this `go.mod`, resolved for this platform. Takes a path, e.g. `--gomod ./go.mod`. Refuses, naming the scopes the store does hold, rather than answering from a walk of another scope or platform. The scope notice names that walk, its scope, the `GOOS/GOARCH` it resolved for, and that the `go.mod` was not re-resolved for the read (an edit made since that walk is not reflected; `walk --gomod` records the current resolution) |
-| `--target <GOOS/GOARCH>` | _(this host's platform)_ | Select the walk taken for this build target, e.g. `--target windows/amd64`. Applies to the `--gomod` route; refused by name on `--walk-id`, which names a walk that already recorded its platform. A refusal raised under a declared target prints a remedy carrying it. See [Declaring the build target](walk.md#declaring-the-build-target---target) |
+| `--target <GOOS/GOARCH>` | _(this host's platform)_ | Answer from the call graphs extracted under this build target, e.g. `--target wasip1/wasm`; on the `--gomod` route it also selects the walk taken for it. Refused by name beside `--walk-id`: the named walk's own frame is the read frame. A refusal raised under a declared target prints a remedy carrying it. See [Composition](#composition) and [Declaring the build target](walk.md#declaring-the-build-target---target) |
 | `--goos` / `--goarch` | _(this host's)_ | The two halves of `--target`, for a caller holding them separately. Both are required, and neither combines with `--target` |
-| `--tinygo <target>` | _(none)_ | Select the walk taken with `--tinygo <target>`, e.g. `--tinygo pico`; the `tinygo` command on `PATH` defines the target. Mutually exclusive with `--target`, `--goos` and `--goarch`. See [Declaring a TinyGo target](walk.md#declaring-a-tinygo-target---tinygo) |
-| `--walk-id` | _(none)_ | Restrict results to the resolved version set of this walk |
+| `--tinygo <target>` | _(none)_ | Answer from the call graphs extracted under this TinyGo target, e.g. `--tinygo wasip1`, and on the `--gomod` route select the walk taken with it; refused by name beside `--walk-id`. The `tinygo` command on `PATH` defines the target. Mutually exclusive with `--target`, `--goos` and `--goarch`. See [Declaring a TinyGo target](walk.md#declaring-a-tinygo-target---tinygo) |
+| `--walk-id` | _(none)_ | Restrict results to the resolved version set of this walk, and answer from the call graphs of the frame that walk was resolved for (the scope notice names it) |
 | `--no-progress` | `false` | Suppress the stderr progress lines a `--transitive` traversal writes |
 
 ```
@@ -1353,10 +1385,10 @@ method — an ID `callers` and `callees` also accept.
 |------|---------|-------------|
 | `--exclude-tests` | `false` | Omit implementations declared in `_test.go` files |
 | `--gomod <path>` | _(none; unrestricted)_ | Restrict results to the latest **code-scope** project walk for this `go.mod`, resolved for this platform. Takes a path, e.g. `--gomod ./go.mod`. Refuses, naming the scopes the store does hold, rather than answering from a walk of another scope or platform. The scope notice names that walk, its scope, the `GOOS/GOARCH` it resolved for, and that the `go.mod` was not re-resolved for the read (an edit made since that walk is not reflected; `walk --gomod` records the current resolution) |
-| `--target <GOOS/GOARCH>` | _(this host's platform)_ | Select the walk taken for this build target, e.g. `--target windows/amd64`. Applies to the `--gomod` route; refused by name on `--walk-id`, which names a walk that already recorded its platform. A refusal raised under a declared target prints a remedy carrying it. See [Declaring the build target](walk.md#declaring-the-build-target---target) |
+| `--target <GOOS/GOARCH>` | _(this host's platform)_ | Answer from the call graphs extracted under this build target, e.g. `--target wasip1/wasm`; on the `--gomod` route it also selects the walk taken for it. Refused by name beside `--walk-id`: the named walk's own frame is the read frame. A refusal raised under a declared target prints a remedy carrying it. See [Composition](#composition) and [Declaring the build target](walk.md#declaring-the-build-target---target) |
 | `--goos` / `--goarch` | _(this host's)_ | The two halves of `--target`, for a caller holding them separately. Both are required, and neither combines with `--target` |
-| `--tinygo <target>` | _(none)_ | Select the walk taken with `--tinygo <target>`, e.g. `--tinygo pico`; the `tinygo` command on `PATH` defines the target. Mutually exclusive with `--target`, `--goos` and `--goarch`. See [Declaring a TinyGo target](walk.md#declaring-a-tinygo-target---tinygo) |
-| `--walk-id` | _(none)_ | Restrict results to the resolved version set of this walk |
+| `--tinygo <target>` | _(none)_ | Answer from the call graphs extracted under this TinyGo target, e.g. `--tinygo wasip1`, and on the `--gomod` route select the walk taken with it; refused by name beside `--walk-id`. The `tinygo` command on `PATH` defines the target. Mutually exclusive with `--target`, `--goos` and `--goarch`. See [Declaring a TinyGo target](walk.md#declaring-a-tinygo-target---tinygo) |
+| `--walk-id` | _(none)_ | Restrict results to the resolved version set of this walk, and answer from the call graphs of the frame that walk was resolved for (the scope notice names it) |
 | `--json` | `false` | Emit the result, its `answer` and the scope as JSON |
 
 ```

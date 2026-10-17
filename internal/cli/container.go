@@ -25,6 +25,7 @@ import (
 	cganalyser "github.com/eitanity/kanonarion/internal/callgraph/adapters/analyser/staticcha"
 	cgmodulecache "github.com/eitanity/kanonarion/internal/callgraph/adapters/modulecache"
 	cgapp "github.com/eitanity/kanonarion/internal/callgraph/application"
+	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
 	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
 
 	"github.com/eitanity/kanonarion/internal/composition"
@@ -129,6 +130,12 @@ type Container struct {
 	// run is actually using — resolving it a second time reads the host again and
 	// can produce a different number from the one in force.
 	CallgraphBound extextractor.CallgraphBound
+
+	// cgAnalyser and cgFrames are where the invocation's build frame is wired:
+	// the frame analyses run under, and the frame reads select. See
+	// adoptDeclaredFrame.
+	cgAnalyser *cganalyser.Analyser
+	cgFrames   cgports.CallGraphFrameSelector
 
 	// license
 	ExtractLicense     ExtractLicenseUseCase
@@ -689,6 +696,7 @@ func NewContainerFrom(st *storage.Storage, storeRoot, goproxy, goBinary string, 
 	queryNativeUC := nativeapp.NewQueryNativeUseCase(nativeStore)
 
 	ctr := &Container{
+		cgAnalyser:  cgAnalyser,
 		Config:      cfg,
 		FetchModule: queryFetchUC,
 		QueryFetch:  queryFetchUC,
@@ -757,7 +765,12 @@ func NewContainerFrom(st *storage.Storage, storeRoot, goproxy, goBinary string, 
 		StalenessLedger: st.Staleness,
 	}
 
-	return ctr, cleanup, nil
+	if fs, ok := cgStore.(cgports.CallGraphFrameSelector); ok {
+		ctr.cgFrames = fs
+	}
+	ctr.adoptDeclaredFrame()
+	release := trackContainer(ctr)
+	return ctr, func() error { release(); return cleanup() }, nil
 }
 
 // requireSQLiteBackend refuses a command that reads the SQLite backend's files
@@ -990,4 +1003,23 @@ func admitStorage(st *storage.Storage, storeRoot string) error {
 		location = storeRoot
 	}
 	return newerStoreError(location, schemaStateOf(state))
+}
+
+// adoptDeclaredFrame wires the invocation's declared build frame into the
+// call-graph analyser and the frame every call-graph read selects: the
+// declaration, or this host when nothing was declared. It runs when the
+// container is built and again from declare whenever a declaration is settled
+// while the container is open.
+func (c *Container) adoptDeclaredFrame() {
+	if c.cgAnalyser != nil {
+		c.cgAnalyser.WithTarget(declaredTarget).WithTinyGo(declaredTinyGo)
+	}
+	if c.cgFrames != nil {
+		c.cgFrames.WithReadFrame(invocationFrame())
+	}
+}
+
+// invocationFrame is the build frame this invocation's call-graph reads select.
+func invocationFrame() cgdomain.BuildFrame {
+	return cganalyser.DeclaredFrame(declaredTarget, declaredTinyGo)
 }

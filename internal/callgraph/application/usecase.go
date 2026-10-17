@@ -120,7 +120,11 @@ import (
 // nested module onto an absent in-tree directory, and leading a failure with the
 // go command's error on a dependency. A 0.9.0 record of
 // go.opentelemetry.io/otel@v1.44.0 or later is LoadFailed for a module that builds.
-const PipelineVersion = "0.10.0"
+//
+// Bumped to "0.11.0" when a record started carrying the build frame it was
+// extracted under and every read started selecting by frame. A 0.10.0 record
+// names no frame, so it cannot be served to a read that names one.
+const PipelineVersion = "0.11.0"
 
 // ExtractCallGraphUseCase extracts the call graph of a module and persists a
 // CallGraphRecord.
@@ -491,7 +495,10 @@ func (uc *ExtractCallGraphUseCase) recordExclusion(
 	artefactIdentity string,
 	sourceContentHash string,
 ) (ExtractResult, error) {
-	record := domain2.NewExcludedRecord(req.Coordinate, uc.analyser.AnalyserMetadata().Algorithm, uc.exclusions)
+	meta := uc.analyser.AnalyserMetadata()
+	record := domain2.NewExcludedRecord(req.Coordinate, meta.Algorithm, uc.exclusions)
+	// No child ran, so the frame is the one the analysis would have run under.
+	record.Frame = meta.Frame
 	record.ExtractedAt = uc.clock.Now().UTC()
 	record.PipelineVersion = uc.pipelineVersion
 	// An excluded module is still a decision about a specific artefact: the

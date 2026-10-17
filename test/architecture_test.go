@@ -1770,3 +1770,35 @@ func calleeName(call *ast.CallExpr) (name, qualified string) {
 	}
 	return "", ""
 }
+
+// TestOverrideHostIsTestOnly holds goenv.OverrideHost to test harnesses. In a
+// production package it would let a process record and select a platform it is
+// not running on, which is the very thing the measured host exists to prevent.
+func TestOverrideHostIsTestOnly(t *testing.T) {
+	cfg := &packages.Config{
+		Mode: packages.NeedSyntax | packages.NeedTypes | packages.NeedTypesInfo | packages.NeedName | packages.NeedFiles | packages.NeedDeps | packages.NeedImports,
+		Dir:  "..",
+	}
+	pkgs, err := packages.Load(cfg, "./...")
+	if err != nil {
+		t.Fatalf("packages.Load: %v", err)
+	}
+	const target = modulePath + "/internal/adapters/goenv.OverrideHost"
+	seen := false
+	for _, pkg := range pkgs {
+		if pkg.PkgPath == modulePath+"/internal/adapters/goenv" {
+			seen = true
+		}
+		for id, obj := range pkg.TypesInfo.Uses {
+			fn, ok := obj.(*types.Func)
+			if !ok || fn.FullName() != target {
+				continue
+			}
+			pos := pkg.Fset.Position(id.Pos())
+			t.Errorf("%s:%d: %s calls goenv.OverrideHost, which is for test harnesses only", pos.Filename, pos.Line, pkg.PkgPath)
+		}
+	}
+	if !seen {
+		t.Fatal("goenv was not among the loaded packages: the guard would pass vacuously")
+	}
+}

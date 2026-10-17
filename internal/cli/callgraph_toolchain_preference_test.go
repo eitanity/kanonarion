@@ -90,6 +90,7 @@ func prefRecord(t *testing.T, spec prefSpec) cgdomain.CallGraphRecord {
 		ExtractedAt:      at,
 		PipelineVersion:  cgapp.PipelineVersion,
 		Toolchain:        spec.toolchain,
+		Frame:            hostFrame(),
 	}
 	var h cgdomain.CallGraphRecordHasher
 	sealed, err := h.SetContentHash(r)

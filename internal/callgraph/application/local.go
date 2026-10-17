@@ -210,7 +210,7 @@ func (uc *ExtractLocalCallGraphUseCase) heldRecord(
 	if !ok {
 		return domain2.CallGraphRecord{}, false, nil
 	}
-	rec, found, err := reader.WorktreeGeneration(ctx, coord, uc.pipelineVersion, identity.Root, identity.ScanDigest)
+	rec, found, err := reader.WorktreeGeneration(ctx, coord, uc.pipelineVersion, identity.Root, identity.ScanDigest, identity.Frame)
 	if err != nil {
 		// A record that cannot be read is not a reason to refuse to measure: the
 		// run holds the tree and can answer from it. It is a reason not to be

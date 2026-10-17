@@ -33,7 +33,8 @@ A record holds the public API of **one buildable configuration** — its build
 frame: `goos/goarch` plus cgo state, printed on every answer. `go/build`
 evaluates the constraints (`//go:build` lines and `_goos_goarch.go` filename
 suffixes); only the files that configuration contains are read. The frame is the
-extracting host's.
+extracting host's: interface extraction takes no `--target` or `--tinygo`, and a
+declared frame on a call-graph command does not reach it.
 
 It matters for any module with per-platform variants. `golang.org/x/sys`,
 `modernc.org/libc` and `github.com/mattn/go-isatty` declare one exported symbol

@@ -80,6 +80,9 @@ func canonicalOrder(r CallGraphRecord) CallGraphRecord {
 	sort.Slice(r.ForeignModulesBuilt, func(i, j int) bool {
 		return ForeignModuleLess(r.ForeignModulesBuilt[i], r.ForeignModulesBuilt[j])
 	})
+	// Build tags are a set to the go command, so the seal takes them sorted.
+	r.Frame.TinyGoTags = append([]string(nil), r.Frame.TinyGoTags...)
+	sort.Strings(r.Frame.TinyGoTags)
 	return r
 }
 
@@ -225,6 +228,7 @@ func (CallGraphRecordHasher) Unmarshal(data []byte) (CallGraphRecord, error) {
 		AnalysisRoot:             c.AnalysisRoot,
 		BuildListSource:          c.BuildListSource,
 		Toolchain:                gotoolchain.Version(c.Toolchain),
+		Frame:                    domainFrame(c.Frame),
 		DerivedBy: GenerationDerivation{
 			Gate:    ReuseGate(c.DerivedBy.Gate),
 			Outcome: GateOutcome(c.DerivedBy.Outcome),
@@ -498,6 +502,9 @@ type canonicalRecord struct {
 	// than checking the stored bytes, so a new key present on every record moves
 	// every record's digest.
 	ForeignModulesBuilt []canonicalForeignModule `json:"foreign_modules_built,omitzero"`
+	// Frame is omitted when zero, so every record sealed before it marshals to the
+	// bytes it was sealed over. It is inside the seal because reads select on it.
+	Frame *canonicalFrame `json:"frame,omitempty"`
 	// StdlibPackages is omitted when empty, on the terms every additive field on
 	// this shape has used: every record sealed before it marshals to exactly the
 	// bytes it always did and keeps its stored content hash verifiable, so the
@@ -578,6 +585,39 @@ type canonicalSynthesisedGoMod struct {
 	// sealed over. An absent list means the module needed none.
 	Requires          []canonicalRequire `json:"requires,omitzero"`
 	VendorTreePresent bool               `json:"vendor_tree_present"`
+}
+
+// canonicalFrame is the wire shape of domain.BuildFrame, keys in alphabetical
+// order, pinned separately so a field added there does not move stored bytes.
+type canonicalFrame struct {
+	GOARCH        string   `json:"goarch"`
+	GOARM         string   `json:"goarm,omitempty"`
+	GOOS          string   `json:"goos"`
+	TinyGoTags    []string `json:"tinygo_tags,omitempty"`
+	TinyGoTarget  string   `json:"tinygo_target,omitempty"`
+	TinyGoVersion string   `json:"tinygo_version,omitempty"`
+}
+
+// canonicalFrameOf renders a frame onto the wire, nil when zero.
+func canonicalFrameOf(f BuildFrame) *canonicalFrame {
+	if f.IsZero() {
+		return nil
+	}
+	return &canonicalFrame{
+		GOARCH: f.GOARCH, GOARM: f.GOARM, GOOS: f.GOOS,
+		TinyGoTags: f.TinyGoTags, TinyGoTarget: f.TinyGoTarget, TinyGoVersion: f.TinyGoVersion,
+	}
+}
+
+// domainFrame reads a frame back off the wire.
+func domainFrame(c *canonicalFrame) BuildFrame {
+	if c == nil {
+		return BuildFrame{}
+	}
+	return BuildFrame{
+		GOOS: c.GOOS, GOARCH: c.GOARCH, GOARM: c.GOARM,
+		TinyGoTarget: c.TinyGoTarget, TinyGoVersion: c.TinyGoVersion, TinyGoTags: c.TinyGoTags,
+	}
 }
 
 // canonicalDroppedReplace is the wire shape of domain.DroppedReplace, pinned
@@ -776,6 +816,7 @@ func canonicalShell(r CallGraphRecord) canonicalRecord {
 		WorktreeScanDigest: r.WorktreeScanDigest,
 		AnalysisRoot:       r.AnalysisRoot,
 		Toolchain:          string(r.Toolchain),
+		Frame:              canonicalFrameOf(r.Frame),
 	}
 	return c
 }

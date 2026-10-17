@@ -120,7 +120,7 @@ func refuseWalkIDRowFilters(cmd *cobra.Command) error {
 // store, and the tinygo command need not be on this host to read it.
 func walkListPlatform(ctx context.Context, f buildTargetFlags) (*walkports.BuildEnvFilter, error) {
 	if f.tinygo != "" {
-		declaredTarget, declaredTinyGo = goenv.Target{}, goenv.TinyGo{}
+		declare(goenv.Target{}, goenv.TinyGo{})
 		if _, err := (buildTargetFlags{goos: f.goos, goarch: f.goarch, tinygo: f.tinygo}).parse(); err != nil {
 			return nil, err
 		}

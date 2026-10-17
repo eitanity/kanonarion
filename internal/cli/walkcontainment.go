@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
@@ -52,6 +53,9 @@ type walkContainment struct {
 	// selfRootedPassedOver counts the walks rooted at the queried coordinate
 	// that a consumer build outranked.
 	selfRootedPassedOver int
+	// framePassedOver counts the walks resolved for another build frame that a
+	// frame-scoped search left out.
+	framePassedOver int
 
 	// manifest is the go.mod that named the build, and scope the dependency
 	// scope it was read in. Set only for walkHeldByGoMod.
@@ -193,6 +197,20 @@ func findWalkContaining(
 	coord coordinate.ModuleCoordinate,
 	remedy string,
 ) (walkContainment, error) {
+	return findWalkContainingIn(ctx, uc, coord, remedy, nil)
+}
+
+// findWalkContainingIn is findWalkContaining restricted to walks resolved for
+// one build frame, when frame is non-nil. A walk that resolved no platform is in
+// no frame and stays a candidate; one resolved for another frame is passed over
+// and counted, since its build list is a different build's.
+func findWalkContainingIn(
+	ctx context.Context,
+	uc QueryWalksUseCase,
+	coord coordinate.ModuleCoordinate,
+	remedy string,
+	frame *cgdomain.BuildFrame,
+) (walkContainment, error) {
 	summaries, err := uc.ListWalks(ctx, walkports.WalkFilter{Limit: truncationFetchLimit(walkSearchLimit)})
 	if err != nil {
 		return walkContainment{}, fmt.Errorf("listing walks: %w", err)
@@ -200,8 +218,14 @@ func findWalkContaining(
 	searched, bounded := truncateList(summaries, walkSearchLimit)
 
 	var consumers, selfRooted []walkports.WalkSummary
+	framePassedOver := 0
 	held := make(map[coordinate.ModuleCoordinate]bool, len(searched))
 	for _, s := range searched {
+		if frame != nil && s.GOOS != "" && !walkFrameMatches(
+			walkdomain.BuildEnv{GOOS: s.GOOS, GOARCH: s.GOARCH, TinyGoTarget: s.TinyGoTarget}, *frame) {
+			framePassedOver++
+			continue
+		}
 		if s.Target == coord {
 			// A walk's root is a node of its own graph, so a walk rooted at the
 			// coordinate holds it by construction — known from the summary, at no
@@ -235,9 +259,10 @@ func findWalkContaining(
 			rule:                 walkHeldByConsumer,
 			root:                 consumers[0].Target,
 			selfRootedPassedOver: len(selfRooted),
+			framePassedOver:      framePassedOver,
 		}, nil
 	case len(selfRooted) > 0:
-		return walkContainment{walkID: selfRooted[0].ID, rule: walkHeldSelfRootedOnly, root: coord}, nil
+		return walkContainment{walkID: selfRooted[0].ID, rule: walkHeldSelfRootedOnly, root: coord, framePassedOver: framePassedOver}, nil
 	}
 
 	if !bounded {

@@ -101,6 +101,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/eitanity/kanonarion/internal/adapters/goenv"
 	"github.com/eitanity/kanonarion/internal/cli"
 )
 
@@ -109,6 +110,9 @@ import (
 func TestCommandGolden(t *testing.T) {
 	restore := cli.SetClockForTest(fixtureNow)
 	t.Cleanup(restore)
+	// The host is pinned like the clock, so a read's frame and the fixture's
+	// seeds agree on every machine and no golden names the real platform.
+	t.Cleanup(goenv.OverrideHost(fixtureHost))
 
 	storeRoot := buildFixtureStore(t)
 	emptyStore := t.TempDir()

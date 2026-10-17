@@ -1054,7 +1054,9 @@ A stored record answers "what did this advisory do in **this** build", so the
 answer depends on which build you mean:
 
 - `--walk-id <id>` answers in the frame of that walk's scans, restricted to the
-  records that walk covered. A `notice:` line names the walk and its frame.
+  records that walk covered. A `notice:` line names the walk and its frame. The
+  walk's build frame is also the frame the call graphs behind the answer (the
+  route root, the negative search, the call sites) are read in.
 - `--gomod <path>` does the same for the newest succeeded **code-scope** project
   walk of that `go.mod`, resolved for **this platform**. The path is required and
   may be written either way round (`--gomod ./go.mod` or `--gomod=./go.mod`).
@@ -1787,7 +1789,7 @@ kanonarion vuln-by-id <finding-id> [flags]
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--walk-id` | *(none)* | Restrict results to the modules scanned under this walk |
+| `--walk-id` | *(none)* | Restrict results to the modules scanned under this walk; its build frame is the frame each route root is classified in |
 | `--store-root` | `~/.kanonarion` | Path to fact store root |
 | `--json` | `false` | Emit records as JSON |
 

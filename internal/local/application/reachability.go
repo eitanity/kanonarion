@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 
+	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
 	"github.com/eitanity/kanonarion/internal/local/domain"
@@ -21,6 +22,7 @@ type LocalReachabilityUseCase struct {
 	vulnLoader ports.VulnFindingLoader
 	prober     ports.SymbolTableProber
 	clock      ports.Clock
+	frame      cgdomain.BuildFrame
 }
 
 // NewLocalReachabilityUseCase constructs a LocalReachabilityUseCase.
@@ -43,6 +45,13 @@ func NewLocalReachabilityUseCase(
 		prober:     prober,
 		clock:      clk,
 	}
+}
+
+// WithFrame states the build frame the lister and prober were wired for, so
+// the result names the frame it was measured in.
+func (uc *LocalReachabilityUseCase) WithFrame(f cgdomain.BuildFrame) *LocalReachabilityUseCase {
+	uc.frame = f
+	return uc
 }
 
 // Execute runs the symbol table probe and returns per-CVE reachability verdicts.
@@ -115,6 +124,7 @@ func (uc *LocalReachabilityUseCase) Execute(ctx context.Context, root string) (d
 			ModulePath:      modulePath,
 			VersionID:       snap.VersionID,
 			ProbeKind:       "",
+			Frame:           uc.frame,
 			Modules:         nil,
 			Coverage:        coverage,
 			SeedRestriction: set.Restriction,
@@ -134,6 +144,7 @@ func (uc *LocalReachabilityUseCase) Execute(ctx context.Context, root string) (d
 		binaries      []ports.ProbedBinary
 		omitted       int
 		probeKind     = domain.ProbeKindSkipped
+		builder       string
 		notice        string
 	)
 	if anySymbols {
@@ -144,6 +155,7 @@ func (uc *LocalReachabilityUseCase) Execute(ctx context.Context, root string) (d
 		binarySymbols = probe.BinarySymbols
 		binaries = probe.Binaries
 		probeKind = probe.Kind
+		builder = probe.Builder
 		coverage.Binaries = coverageBinaries(binaries)
 		coverage.HarnessOmitted = probe.HarnessOmitted
 		omitted = len(probe.HarnessOmitted)
@@ -171,6 +183,8 @@ func (uc *LocalReachabilityUseCase) Execute(ctx context.Context, root string) (d
 		ModulePath:      modulePath,
 		VersionID:       snap.VersionID,
 		ProbeKind:       probeKind,
+		ProbeBuilder:    builder,
+		Frame:           uc.frame,
 		Modules:         modResults,
 		Coverage:        coverage,
 		SeedRestriction: set.Restriction,
@@ -234,7 +248,7 @@ func coverageBinaries(binaries []ports.ProbedBinary) []domain.ProbedBinary {
 	}
 	out := make([]domain.ProbedBinary, 0, len(binaries))
 	for _, b := range binaries {
-		out = append(out, domain.ProbedBinary{ImportPath: b.ImportPath, BuildError: b.BuildError})
+		out = append(out, domain.ProbedBinary{ImportPath: b.ImportPath, Builder: b.Builder, BuildError: b.BuildError})
 	}
 	domain.SortProbedBinaries(out)
 	return out

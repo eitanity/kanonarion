@@ -51,6 +51,10 @@ func runContextWalk(ctx context.Context, f contextFlags, stdout, stderr io.Write
 		return fmt.Errorf("initialising store: %w", err)
 	}
 	defer releaseStore(cleanup)
+	// The walk supplies the call-graph frame every section reads in.
+	if aerr := adoptNamedWalkFrame(ctx, ctr.QueryWalks, f.walkID); aerr != nil {
+		return aerr
+	}
 
 	rec, err := contextWalkRecord(ctx, ctr.QueryWalks, f.walkID, stderr)
 	if err != nil {

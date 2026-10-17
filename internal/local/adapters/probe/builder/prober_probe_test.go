@@ -45,7 +45,7 @@ func TestFindMainPackages_BinaryModule(t *testing.T) {
 		"go.mod":  goMod,
 		"main.go": "package main\n\nfunc main() {}\n",
 	})
-	mains, err := findMainPackages(context.Background(), goenv.NewToolchains(), root, "go")
+	mains, err := New("").findMainPackages(context.Background(), goenv.NewToolchains(), root)
 	if err != nil {
 		t.Fatalf("findMainPackages: %v", err)
 	}
@@ -59,7 +59,7 @@ func TestFindMainPackages_LibraryModuleHasNoMain(t *testing.T) {
 		"go.mod":     goMod,
 		"lib/lib.go": "package lib\n\nfunc Exported() {}\n",
 	})
-	mains, err := findMainPackages(context.Background(), goenv.NewToolchains(), root, "go")
+	mains, err := New("").findMainPackages(context.Background(), goenv.NewToolchains(), root)
 	if err != nil {
 		t.Fatalf("findMainPackages: %v", err)
 	}
@@ -70,7 +70,7 @@ func TestFindMainPackages_LibraryModuleHasNoMain(t *testing.T) {
 
 func TestFindMainPackages_NotAGoModule(t *testing.T) {
 	root := t.TempDir() // no go.mod
-	if _, err := findMainPackages(context.Background(), goenv.NewToolchains(), root, "go"); err == nil {
+	if _, err := New("").findMainPackages(context.Background(), goenv.NewToolchains(), root); err == nil {
 		t.Fatal("expected error for non-module directory")
 	}
 }

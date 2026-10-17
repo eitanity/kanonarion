@@ -118,6 +118,8 @@ type reachabilityUncovered struct {
 // the probe read its symbol table.
 type reachabilityProbedBinary struct {
 	ImportPath string `json:"import_path"`
+	// Builder is the command that built this binary: go build or tinygo build.
+	Builder string `json:"builder,omitempty"`
 	// BuildError is the failure that stopped this binary being probed, absent
 	// when it was probed. Its presence marks a binary this answer cannot speak
 	// about; the probe still answers from the ones that built.
@@ -176,6 +178,12 @@ type reachabilityOutput struct {
 	ModulePath string `json:"module_path"`
 	VersionID  string `json:"version_id"`
 	ProbeKind  string `json:"probe_kind"`
+	// ProbeBuilder is the command that built the probe artefacts, absent when
+	// the probe was skipped.
+	ProbeBuilder string `json:"probe_builder,omitempty"`
+	// Frame is the build frame the probe listed and built in, in the shape
+	// callgraph-show --json prints it.
+	Frame *frameJSON `json:"frame,omitempty"`
 	// SeedRestriction names the records the stored-findings seed was drawn from.
 	// It is on the JSON surface as well as the text one because the probe's
 	// consumers are scripts as often as people, and the restriction is part of
@@ -198,9 +206,9 @@ type reachabilityFlags struct {
 	vulnID    string
 	walkID    string
 	gomod     string
-	// target is the platform the --gomod frame selects its walk for. --local
-	// measures the tree in front of it and --walk-id names a walk that recorded
-	// its own platform, so neither can act on a declaration.
+	// target is the frame --gomod selects its walk for and --local lists, seeds
+	// and builds in. --walk-id names a walk that recorded its own platform, so
+	// a declaration beside it is refused.
 	target buildTargetFlags
 }
 
@@ -235,12 +243,16 @@ before.
 Local probe: 'reachability --local <dir>' analyses the working tree directly
 (a different, live analysis — not a query of stored facts). It seeds itself
 only from stored records measured in this tree's own frame or in the isolated
-frame — never another project's — and states that restriction in its output.`,
+frame — never another project's — and states that restriction in its output.
+It builds in the frame --target or --tinygo declares (this host's by default)
+and names it; a wasm frame is refused, since its artefact has no symbol table
+this build can read.`,
 		Example: `  kanonarion reachability golang.org/x/text@v0.3.7 --vuln GO-2021-0113
   kanonarion reachability golang.org/x/text@v0.3.7 --vuln GO-2021-0113 --json
   kanonarion reachability golang.org/x/text@v0.3.7 --vuln GO-2021-0113 --gomod ./go.mod
   kanonarion reachability golang.org/x/text@v0.3.7 --vuln GO-2021-0113 --walk-id 01KQDBVW092ER1HNXZ60X27CMD
-  kanonarion reachability --local .`,
+  kanonarion reachability --local .
+  kanonarion reachability --local . --tinygo pico`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			coordArg := ""
@@ -308,6 +320,11 @@ func runReachabilityStoredQuery(ctx context.Context, coordArg string, f reachabi
 		return fmt.Errorf("initialising store: %w", err)
 	}
 	defer releaseStore(cleanup)
+	// A named walk supplies the call-graph frame, so the negative search, the
+	// root classifier and the call-site reader read that build's graphs.
+	if aerr := adoptNamedWalkFrame(ctx, ctr.QueryWalks, f.walkID); aerr != nil {
+		return aerr
+	}
 	return runVulnReachability(ctx, coordArg, f.vulnID, f.walkID, f.gomod, gomodSet,
 		jsonOut, ctr.QueryVuln, ctr.QueryWalks, ctr.QueryCallGraph, stdout, stderr)
 }
@@ -321,12 +338,6 @@ func runReachabilityLocalProbe(ctx context.Context, coordArg string, f reachabil
 	if coordArg != "" {
 		return fmt.Errorf("reachability --local does not take a module argument; use '<module>@<version> --vuln <id>' to query a stored module")
 	}
-	// The probe measures the tree in front of it, in the frame that tree builds
-	// in. There is no stored walk for a declaration to select, so it is refused
-	// by name on the same terms as --walk-id and --gomod below.
-	if terr := resolveReadTarget(ctx, f.target, "reachability --local", false, ""); terr != nil {
-		return terr
-	}
 	// The local probe measures the working tree it was pointed at, so it
 	// already has a build: accepting a second name for one would invite the
 	// reader to think the probe was filtered by it. Both the value and cobra's
@@ -335,7 +346,33 @@ func runReachabilityLocalProbe(ctx context.Context, coordArg string, f reachabil
 	if f.walkID != "" || f.gomod != "" || gomodSet {
 		return fmt.Errorf("--walk-id and --gomod name a stored build and do not apply to --local, which measures the working tree it is given")
 	}
+	// The probe lists, seeds and builds in the declared frame, validated against
+	// the toolchain in the tree's own directory.
+	if terr := resolveBuildTarget(ctx, f.target, "", f.localPath); terr != nil {
+		return terr
+	}
+	if werr := refuseWasmProbe(); werr != nil {
+		return werr
+	}
 	return runLocalReachability(ctx, f.localPath, stdout, stderr)
+}
+
+// refuseWasmProbe refuses a frame whose artefact is a wasm module before any
+// child runs: the probe reads a symbol table, and building the host binary in
+// its place would answer about a build nobody declared.
+func refuseWasmProbe() error {
+	wasm := declaredTarget.OrHost().GOARCH() == "wasm"
+	if declaredTinyGo.Declared() {
+		wasm = declaredTinyGo.BuildsWasm()
+	}
+	if !wasm {
+		return nil
+	}
+	return refuseInapplicableFlags("reachability --local", []inapplicableFlag{{
+		flag: strings.TrimSpace(targetFlagHint()),
+		where: "a frame whose build output carries a symbol table this build can read (ELF, PE or Mach-O); " +
+			"the probe reads a symbol table, and this build has no reader for a wasm module",
+	}})
 }
 
 // runVulnReachability answers "is <vulnID> reachable in <arg>?" by reading the
@@ -1527,21 +1564,7 @@ func localVerdictLabel(f reachabilityFinding) string {
 // block tells the two apart.
 func printLocalReachability(stdout io.Writer, r reachabilityOutput) error {
 	w := &errWriter{w: stdout}
-	w.printf("local reachability probe of %s\n", r.Root)
-	w.printf("  module:    %s\n", r.ModulePath)
-	w.printf("  snapshot:  %s taken %s\n", r.VersionID, r.Coverage.SnapshotTakenAt)
-	if r.ProbeKind != "" {
-		w.printf("  probe:     %s\n", r.ProbeKind)
-	}
-	if r.SeedRestriction != "" {
-		w.printf("  seed:      %s\n", r.SeedRestriction)
-	}
-	for _, a := range r.SeedSetAside {
-		w.printf("  set aside: %s\n", a)
-	}
-	if r.Notice != "" {
-		w.printf("  notice:    %s\n", r.Notice)
-	}
+	printLocalHeader(w, r)
 	printLocalCoverage(w, r.Coverage)
 	if len(r.Modules) == 0 {
 		closing := "no affected modules in the analysed build"
@@ -1555,30 +1578,62 @@ func printLocalReachability(stdout io.Writer, r reachabilityOutput) error {
 	for _, m := range r.Modules {
 		w.printf("  %s@%s\n", m.Path, m.Version)
 		for _, f := range m.Findings {
-			aliases := ""
-			if len(f.Aliases) > 0 {
-				aliases = " (" + strings.Join(f.Aliases, ", ") + ")"
-			}
-			w.printf("    %s%s [%s, by: %s]: %s\n",
-				f.CVEID, aliases, localVerdictLabel(f), verdictSourceLabel(f.StateSource), f.Summary)
-			// The reason under the rung, for the reason printSoundness gives on the
-			// stored-query surface: a rung alone is a label, and a label is what
-			// turns a measurement into a verdict.
-			if f.SoundnessReason != "" {
-				w.printf("      soundness: %s — %s\n", f.Soundness, f.SoundnessReason)
-			}
-			if f.Reason != "" {
-				w.printf("      basis:     %s\n", f.Reason)
-			}
-			if len(f.MatchedSymbols) > 0 {
-				w.printf("      symbols:   %s\n", strings.Join(f.MatchedSymbols, ", "))
-			}
-			if len(f.MatchedBinaries) > 0 {
-				w.printf("      binaries:  %s\n", strings.Join(f.MatchedBinaries, ", "))
-			}
+			printLocalFinding(w, f)
 		}
 	}
 	return w.err
+}
+
+// printLocalHeader states what the answer was drawn from: the tree, its frame,
+// the snapshot, the probe and its builder, and the seed.
+func printLocalHeader(w *errWriter, r reachabilityOutput) {
+	w.printf("local reachability probe of %s\n", r.Root)
+	w.printf("  module:    %s\n", r.ModulePath)
+	if r.Frame != nil {
+		w.printf("  frame:     %s\n", r.Frame.Text)
+	}
+	w.printf("  snapshot:  %s taken %s\n", r.VersionID, r.Coverage.SnapshotTakenAt)
+	switch {
+	case r.ProbeKind != "" && r.ProbeBuilder != "":
+		w.printf("  probe:     %s, built by %s\n", r.ProbeKind, r.ProbeBuilder)
+	case r.ProbeKind != "":
+		w.printf("  probe:     %s\n", r.ProbeKind)
+	}
+	if r.SeedRestriction != "" {
+		w.printf("  seed:      %s\n", r.SeedRestriction)
+	}
+	for _, a := range r.SeedSetAside {
+		w.printf("  set aside: %s\n", a)
+	}
+	if r.Notice != "" {
+		w.printf("  notice:    %s\n", r.Notice)
+	}
+}
+
+// printLocalFinding prints one finding with the rung, reason and evidence
+// behind it.
+func printLocalFinding(w *errWriter, f reachabilityFinding) {
+	aliases := ""
+	if len(f.Aliases) > 0 {
+		aliases = " (" + strings.Join(f.Aliases, ", ") + ")"
+	}
+	w.printf("    %s%s [%s, by: %s]: %s\n",
+		f.CVEID, aliases, localVerdictLabel(f), verdictSourceLabel(f.StateSource), f.Summary)
+	// The reason under the rung, for the reason printSoundness gives on the
+	// stored-query surface: a rung alone is a label, and a label is what
+	// turns a measurement into a verdict.
+	if f.SoundnessReason != "" {
+		w.printf("      soundness: %s — %s\n", f.Soundness, f.SoundnessReason)
+	}
+	if f.Reason != "" {
+		w.printf("      basis:     %s\n", f.Reason)
+	}
+	if len(f.MatchedSymbols) > 0 {
+		w.printf("      symbols:   %s\n", strings.Join(f.MatchedSymbols, ", "))
+	}
+	if len(f.MatchedBinaries) > 0 {
+		w.printf("      binaries:  %s\n", strings.Join(f.MatchedBinaries, ", "))
+	}
 }
 
 // printLocalCoverage states what the probe covered: the build's modules, the
@@ -1645,13 +1700,15 @@ func runLocalReachabilityInner(ctx context.Context, abs string, stderr io.Writer
 	if anchored {
 		vulnLoader = vulnLoader.WithWalkAnchor(anchor)
 	}
+	// The lister and the prober resolve in the invocation's frame, as the seed
+	// anchor above selected the walk of that frame.
 	uc := localapp.NewLocalReachabilityUseCase(
 		localsnapshot.Builder{},
-		localimporter.New(""),
+		localimporter.New("").WithTarget(declaredTarget).WithTinyGo(declaredTinyGo),
 		vulnLoader,
-		localprober.New(""),
+		localprober.New("").WithTarget(declaredTarget).WithTinyGo(declaredTinyGo),
 		clock.System{},
-	)
+	).WithFrame(invocationFrame())
 
 	result, err := uc.Execute(ctx, abs)
 	if err != nil {
@@ -1787,6 +1844,8 @@ func reachabilityResultToOutput(r localdomain.LocalReachabilityResult) reachabil
 		ModulePath:      r.ModulePath,
 		VersionID:       r.VersionID,
 		ProbeKind:       r.ProbeKind,
+		ProbeBuilder:    r.ProbeBuilder,
+		Frame:           toFrameJSON(r.Frame),
 		SeedRestriction: r.SeedRestriction,
 		SeedSetAside:    r.SeedSetAside,
 		Notice:          r.Notice,
@@ -1819,7 +1878,7 @@ func coverageToOutput(c localdomain.ProbeCoverage) reachabilityCoverage {
 	}
 	for _, b := range c.Binaries {
 		out.ProbedBinaries = append(out.ProbedBinaries, reachabilityProbedBinary{
-			ImportPath: b.ImportPath, BuildError: b.BuildError,
+			ImportPath: b.ImportPath, Builder: b.Builder, BuildError: b.BuildError,
 		})
 	}
 	for _, o := range c.HarnessOmitted {

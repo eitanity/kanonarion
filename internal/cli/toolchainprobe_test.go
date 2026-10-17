@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -81,16 +82,20 @@ func TestGoSourceDirsProbe_AnswersOnThisBox(t *testing.T) {
 			t.Errorf("%s = %q, which is not a directory the loader could resolve from", name, got)
 		}
 	}
+	// Off arm, GOARM answers an empty line in the middle of the six.
+	if dirs.GOOS != runtime.GOOS || dirs.GOARCH != runtime.GOARCH {
+		t.Errorf("platform = %s/%s, want this host's %s/%s", dirs.GOOS, dirs.GOARCH, runtime.GOOS, runtime.GOARCH)
+	}
 }
 
 // TestGoSourceDirsProbe_ReadsTheValuesInTheOrderAsked pins the mapping between
-// the three lines `go env` prints and the three roots they become. Reading them
+// the lines `go env` prints and the roots and platform they become. Reading them
 // in the wrong order would spell stdlib files against the build cache and give
 // the standard library no position at all — silently, since every value is a
 // plausible directory.
 func TestGoSourceDirsProbe_ReadsTheValuesInTheOrderAsked(t *testing.T) {
 	binDir := t.TempDir()
-	script := "#!/bin/sh\necho /fake/goroot\necho /fake/gocache\necho /fake/gomodcache\n"
+	script := "#!/bin/sh\necho /fake/goroot\necho /fake/gocache\necho /fake/gomodcache\necho 6\necho linux\necho arm\n"
 	if err := os.WriteFile(filepath.Join(binDir, "go"), []byte(script), 0o700); err != nil { // #nosec G306 -- a test fixture that must be executable
 		t.Fatalf("writing the toolchain stand-in: %v", err)
 	}
@@ -101,7 +106,10 @@ func TestGoSourceDirsProbe_ReadsTheValuesInTheOrderAsked(t *testing.T) {
 		t.Fatalf("the probe failed against a stand-in that answered: %v", err)
 	}
 	if dirs.GOROOT != "/fake/goroot" || dirs.BuildCache != "/fake/gocache" || dirs.ModuleCache != "/fake/gomodcache" {
-		t.Errorf("probe = %+v, want the three values in the order they were asked for", dirs)
+		t.Errorf("probe = %+v, want the three roots in the order they were asked for", dirs)
+	}
+	if dirs.GOARM != "6" || dirs.GOOS != "linux" || dirs.GOARCH != "arm" {
+		t.Errorf("probe = %+v, want the platform the stand-in named", dirs)
 	}
 }
 

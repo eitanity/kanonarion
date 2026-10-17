@@ -18,7 +18,9 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/adapters/blobstore/localfs"
 	fetchsqlite "github.com/eitanity/kanonarion/internal/adapters/factstore/sqlite"
+	"github.com/eitanity/kanonarion/internal/adapters/goenv"
 	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
+	cganalyser "github.com/eitanity/kanonarion/internal/callgraph/adapters/analyser/staticcha"
 	cgsqlite "github.com/eitanity/kanonarion/internal/callgraph/adapters/store/sqlite"
 	cgapp "github.com/eitanity/kanonarion/internal/callgraph/application"
 	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
@@ -480,7 +482,9 @@ func cmdSeedCallGraph(args []string) {
 		EdgeCount:       3,
 		ExtractedAt:     time.Now(),
 		PipelineVersion: cgapp.PipelineVersion,
-		Completeness:    cgdomain.CompletenessBuiltWithBodies,
+		// The frame an undeclared read selects, so the fixture is served to one.
+		Frame:        cganalyser.DeclaredFrame(goenv.Target{}, goenv.TinyGo{}),
+		Completeness: cgdomain.CompletenessBuiltWithBodies,
 		// The fixture stands in for a graph built from the fetched zip seeded
 		// below, so it names that artefact. The store refuses a zip-sourced record
 		// that names none: composition groups records by which bytes they measured,

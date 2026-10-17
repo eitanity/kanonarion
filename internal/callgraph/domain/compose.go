@@ -101,6 +101,10 @@ type CallGraphConflict struct {
 	// they can act on. It is nil when the comparison could not be validated:
 	// an unverifiable record is not evidence, and a diff of one would read as one.
 	Difference *GenerationDiff
+
+	// Frames are the build frames a ConflictFieldFrame refusal found, in the
+	// order of Values, so the remedy can spell the flag that selects each.
+	Frames []BuildFrame
 }
 
 // The field names a CallGraphConflict can carry. They are constants rather than
@@ -124,6 +128,9 @@ const (
 	// carries the toolchain's stdlib and vendored trees, so two toolchains are two
 	// answers to two questions and there is no ladder between them.
 	ConflictFieldToolchain = "toolchain"
+	// ConflictFieldFrame is records of more than one build frame for a read that
+	// named none. A graph of one platform is no answer about another.
+	ConflictFieldFrame = "frame"
 )
 
 // ConflictFields lists every field a CallGraphConflict reports on.
@@ -133,6 +140,7 @@ func ConflictFields() []string {
 		ConflictFieldArtefactIdentity,
 		ConflictFieldCallGraph,
 		ConflictFieldToolchain,
+		ConflictFieldFrame,
 	}
 }
 
@@ -220,6 +228,21 @@ func (c CallGraphConflict) Remedy() Remedy {
 				"` records the choice for every later read"
 		}
 		return Remedy{Lead: lead, Lines: lines}
+	case ConflictFieldFrame:
+		// Re-analysis appends another generation of one of the frames and retires
+		// none, so the only route out is naming the frame.
+		lines := []string{"kanonarion callgraph-show " + coord + " --history"}
+		for _, f := range c.Frames {
+			if flag := f.FlagSpelling(); flag != "" {
+				lines = append(lines, "kanonarion callgraph-show "+coord+" "+flag)
+			}
+		}
+		return Remedy{
+			Lead: "This coordinate holds call graphs extracted under more than one build frame, and a graph of one " +
+				"platform is no answer about another. Name the frame you mean — --target or --tinygo, on this read " +
+				"or on callers, callees and implementers",
+			Lines: lines,
+		}
 	case ConflictFieldArtefactIdentity:
 		if !IsReFetchable(c.Coordinate) {
 			// Nothing published these bytes — a working tree, or the standard
@@ -344,6 +367,11 @@ type ComposeRequest struct {
 	// there is no such claim to make and the stated default stands. See
 	// defaultSourceGroup.
 	CallerRoot string
+
+	// Frame restricts composition to records extracted under one build frame
+	// (SameFrame), and a coordinate holding none of them has no answer. The zero
+	// value names none; records of more than one frame are then refused.
+	Frame BuildFrame
 }
 
 // Compose returns the call graph record a reader gets for one coordinate and
@@ -370,6 +398,17 @@ type ComposeRequest struct {
 func Compose(records []CallGraphRecord, req ComposeRequest) (CallGraphRecord, error) {
 	if len(records) == 0 {
 		return CallGraphRecord{}, ErrNoRecordsToCompose
+	}
+
+	// The frame is selected before anything is laddered, as the source is: two
+	// frames compile different files, so neither is a lesser measurement of the
+	// other.
+	if !req.Frame.IsZero() {
+		if records = withFrame(records, req.Frame); len(records) == 0 {
+			return CallGraphRecord{}, ErrNoRecordsToCompose
+		}
+	} else if c := frameConflict(records); c != nil {
+		return CallGraphRecord{}, *c
 	}
 
 	var candidates []CallGraphRecord

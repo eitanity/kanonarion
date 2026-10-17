@@ -934,13 +934,13 @@ func unresolvedSymbolMessage(symbolID, localModulePath string) string {
 			return fmt.Sprintf(
 				"symbol %q is not in the call-graph store: it belongs to the local "+
 					"module %q (author-mode code); ingest the working tree "+
-					"first:\n  kanonarion local .",
-				symbolID, localModulePath)
+					"first:\n  kanonarion local .%s",
+				symbolID, localModulePath, targetFlagHint())
 		}
 	}
 	return fmt.Sprintf(
 		"symbol %q is not in the call-graph store: its module has not been "+
 			"analysed (consumer-mode code). Analyse it first, e.g.:\n"+
-			"  kanonarion fetch <module>@<version> && kanonarion callgraph <module>@<version>",
-		symbolID)
+			"  kanonarion fetch <module>@<version> && kanonarion callgraph <module>@<version>%s",
+		symbolID, targetFlagHint())
 }

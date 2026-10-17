@@ -36,6 +36,7 @@ type callGraphShowFlags struct {
 	diffTo    string
 	source    string
 	toolchain string
+	target    buildTargetFlags
 }
 
 func newCallGraphShowCmd(stdout, stderr io.Writer) *cobra.Command {
@@ -56,20 +57,15 @@ func newCallGraphShowCmd(stdout, stderr io.Writer) *cobra.Command {
   kanonarion callgraph-show github.com/spf13/cobra@v1.8.1 --diff
   kanonarion callgraph-show github.com/spf13/cobra@v1.8.1 --diff --diff-to sha256:d951af94
   kanonarion callgraph-show example.com/mod@local --source worktree
-  kanonarion callgraph-show golang.org/x/tools@v0.49.0 --toolchain go1.26.6`,
+  kanonarion callgraph-show golang.org/x/tools@v0.49.0 --toolchain go1.26.6
+  kanonarion callgraph-show example.com/mod@local --tinygo wasip1`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) != 1 {
 				return usageErr(cmd)
 			}
 			f.limitNodesSet = cmd.Flags().Changed("limit-nodes")
 			f.limitEdgesSet = cmd.Flags().Changed("limit-edges")
-			logger := buildLogger(logLevel, stderr)
-			ctr, cleanup, err := NewContainer(storeRoot, "", "", false, activeConfig, logger)
-			if err != nil {
-				return fmt.Errorf("initialising store: %w", err)
-			}
-			defer releaseStore(cleanup)
-			return runCallGraphShow(cmd.Context(), args[0], f, jsonOut, ctr.QueryCallGraph, stdout)
+			return runCallGraphShowCmd(cmd.Context(), args[0], f, stdout, stderr)
 		},
 	}
 
@@ -82,8 +78,24 @@ func newCallGraphShowCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd.Flags().StringVar(&f.diffTo, "diff-to", "", "with --diff: compare to this stored generation, the newer side of the pair — a record `hash` as --history prints it, or a unique prefix of one")
 	cmd.Flags().StringVar(&f.source, "source", "", "restrict to graphs built from one source: zip or worktree")
 	cmd.Flags().StringVar(&f.toolchain, "toolchain", "", "restrict to graphs built by one Go toolchain, in `go env GOVERSION` form (e.g. go1.26.6)")
+	registerBuildTargetFlags(cmd, &f.target)
 
 	return cmd
+}
+
+// runCallGraphShowCmd settles the frame this read selects, opens the store with
+// it wired in, and answers.
+func runCallGraphShowCmd(ctx context.Context, moduleArg string, f callGraphShowFlags, stdout, stderr io.Writer) error {
+	if err := resolveBuildTarget(ctx, f.target, "", ""); err != nil {
+		return err
+	}
+	logger := buildLogger(logLevel, stderr)
+	ctr, cleanup, err := NewContainer(storeRoot, "", "", false, activeConfig, logger)
+	if err != nil {
+		return fmt.Errorf("initialising store: %w", err)
+	}
+	defer releaseStore(cleanup)
+	return runCallGraphShow(ctx, moduleArg, f, jsonOut, ctr.QueryCallGraph, stdout)
 }
 
 // parseAnalysisSource maps the --source flag onto the domain value, refusing a
@@ -206,6 +218,10 @@ func callGraphShowMiss(ctx context.Context, coord coordinate.ModuleCoordinate, r
 		return &exitError{code: ExitNotFound, msg: fmt.Sprintf(
 			"no %s-sourced callgraph record for %s — the ledger may hold one from another source; try --history",
 			source, coord)}
+	}
+	// The read's frame selected none of the generations held in other frames.
+	if miss := frameMiss(ctx, coord, uc); miss != nil {
+		return miss
 	}
 	// Nothing is served: composition answers not-found only where the reading
 	// leg decoded no generation at all, since neither source nor toolchain is
@@ -342,10 +358,10 @@ func runCallGraphHistory(ctx context.Context, coord coordinate.ModuleCoordinate,
 			marker = "*"
 		}
 		if _, werr := fmt.Fprintf(stdout,
-			"%s %s  %-16s %-17s %d node(s) / %d edge(s)\n    source:   %s\n    toolchain:%s\n    analyser: %s\n    from:     %s\n%s%s    graph:    %s\n    record:   %s\n",
+			"%s %s  %-16s %-17s %d node(s) / %d edge(s)\n    source:   %s\n    toolchain:%s\n%s    analyser: %s\n    from:     %s\n%s%s    graph:    %s\n    record:   %s\n",
 			marker, ledgerStamp(r.ExtractedAt), r.OverallStatus.String(),
 			r.Completeness.String(), r.NodeCount, r.EdgeCount,
-			r.AnalysisSource.String(), " "+domain.RecordToolchain(r).String(), r.Analyser.String(),
+			r.AnalysisSource.String(), " "+domain.RecordToolchain(r).String(), historyFrame(r), r.Analyser.String(),
 			historyOrigin(r), historyDerivation(r), historyFailure(r), domain.GraphDigest(r), r.ContentHash); werr != nil {
 			return fmt.Errorf("writing output: %w", werr)
 		}
@@ -616,7 +632,10 @@ type callGraphRecordJSON struct {
 	// toolchain the analysis named from one recovered out of the graph's own
 	// stdlib paths. Null when the record states none.
 	ToolchainStated *string `json:"toolchain_stated"`
-	WorktreeDigest  string  `json:"worktree_digest,omitempty"`
+	// Frame is the build frame the record was extracted under; absent on a
+	// record that states none, which predates the field.
+	Frame          *frameJSON `json:"frame,omitempty"`
+	WorktreeDigest string     `json:"worktree_digest,omitempty"`
 	// WorktreeScanDigest names the tree state this record was taken of, which is
 	// the key a later run reuses it by. It is here so a reader can check a reuse
 	// claim against the record rather than taking the run's word for it; absent on
@@ -906,6 +925,7 @@ func toCallGraphJSON(r domain.CallGraphRecord) callGraphRecordJSON {
 		ArtifactKind:       r.ArtifactKind.String(),
 		Toolchain:          orNotRecorded(domain.RecordToolchain(r).Key()),
 		ToolchainStated:    statedToolchain(r),
+		Frame:              toFrameJSON(r.Frame),
 		WorktreeDigest:     r.WorktreeDigest,
 		WorktreeScanDigest: r.WorktreeScanDigest,
 
@@ -1382,6 +1402,9 @@ func writeRecordQualifiers(stdout io.Writer, r domain.CallGraphRecord) error {
 	if err := writeFidelityLine(stdout, r); err != nil {
 		return err
 	}
+	if err := writeFrameLine(stdout, r); err != nil {
+		return err
+	}
 	if err := writeAnalyserLine(stdout, r); err != nil {
 		return err
 	}
@@ -1450,10 +1473,10 @@ func missingCallGraphRefusal(ctx context.Context, coord coordinate.ModuleCoordin
 	if note != "" {
 		return &exitError{code: ExitNotFound, msg: fmt.Sprintf(
 			"no callgraph record for %s at pipeline %s — %s. Re-analyse it:\n  %s",
-			coord, cgapp.PipelineVersion, note, domain.ReanalysisInstruction(coord, ""))}
+			coord, cgapp.PipelineVersion, note, frameReanalysis(coord, ""))}
 	}
 	return &exitError{code: ExitNotFound, msg: fmt.Sprintf(
-		"no callgraph record for %s — analyse it first:\n  %s", coord, domain.ReanalysisInstruction(coord, ""))}
+		"no callgraph record for %s — analyse it first:\n  %s", coord, frameReanalysis(coord, ""))}
 }
 
 // supersededGenerationsNote describes the generations the store holds for a

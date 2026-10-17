@@ -78,12 +78,13 @@ func (a *Analyser) loadAndBuildSSA(ctx context.Context, fset *token.FileSet, tem
 
 	load := func(withTests bool) ([]*packages.Package, error) {
 		cfg := &packages.Config{
-			Mode:    fullMode,
-			Dir:     tempDir,
-			Context: ctx,
-			Env:     env,
-			Fset:    fset,
-			Tests:   withTests,
+			Mode:       fullMode,
+			Dir:        tempDir,
+			Context:    ctx,
+			Env:        env,
+			BuildFlags: a.buildFlags(),
+			Fset:       fset,
+			Tests:      withTests,
 		}
 		pkgs, lErr := packages.Load(cfg, targetPkgPaths...)
 		if lErr != nil {

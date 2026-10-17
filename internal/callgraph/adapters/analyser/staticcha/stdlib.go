@@ -81,7 +81,7 @@ func (a *Analyser) AnalyseStdlib(
 	coord coordinate.ModuleCoordinate,
 ) (rec domain.CallGraphRecord, err error) {
 	// Stamped on every return path, for the reason Analyse states.
-	defer func() { rec.Analyser = observedAnalyser() }()
+	defer func() { rec.Analyser = observedAnalyser(); rec.Frame = a.frameOr(rec.Frame) }()
 	a.logMem(ctx, "start")
 
 	root, err := analysisRoot(filepath.Join(src.GoRoot, "src"))

@@ -203,10 +203,10 @@ count.
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--gomod` | `./go.mod` | Restrict to the latest code-scope project walk for this manifest |
-| `--target <GOOS/GOARCH>` | _(this host's platform)_ | Select the walk taken for this build target, e.g. `--target windows/amd64`. Applies to the `--gomod` route; refused by name on `--walk-id`, which names a walk that already recorded its platform. A refusal raised under a declared target prints a remedy carrying it. See [Declaring the build target](walk.md#declaring-the-build-target---target) |
+| `--target <GOOS/GOARCH>` | _(this host's platform)_ | Answer from the call graphs extracted under this build target, e.g. `--target wasip1/wasm`; on the `--gomod` route it also selects the walk taken for it. Refused by name beside `--walk-id`: the named walk's own frame is the read frame. A refusal raised under a declared target prints a remedy carrying it. See [Declaring the build target](walk.md#declaring-the-build-target---target) |
 | `--goos` / `--goarch` | _(this host's)_ | The two halves of `--target`, for a caller holding them separately. Both are required, and neither combines with `--target` |
-| `--tinygo <target>` | _(none)_ | Select the walk taken with `--tinygo <target>`, e.g. `--tinygo pico`; the `tinygo` command on `PATH` defines the target. Mutually exclusive with `--target`, `--goos` and `--goarch`. See [Declaring a TinyGo target](walk.md#declaring-a-tinygo-target---tinygo) |
-| `--walk-id` | _(none)_ | Restrict to the resolved version set of this walk |
+| `--tinygo <target>` | _(none)_ | Answer from the call graphs extracted under this TinyGo target, e.g. `--tinygo wasip1`, and on the `--gomod` route select the walk taken with it; refused by name beside `--walk-id`. The `tinygo` command on `PATH` defines the target. Mutually exclusive with `--target`, `--goos` and `--goarch`. See [Declaring a TinyGo target](walk.md#declaring-a-tinygo-target---tinygo) |
+| `--walk-id` | _(none)_ | Restrict to the resolved version set of this walk, and read the call graphs of the frame that walk was resolved for |
 | `--toolchain` | _(none)_ | Restrict to graphs built by one Go toolchain, in `go env GOVERSION` form |
 | `--store-root` | `~/.kanonarion` | Root directory for blobs and SQLite |
 | `--json` | `false` | Emit the report as JSON |

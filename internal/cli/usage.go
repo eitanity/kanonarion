@@ -127,7 +127,7 @@ the store already holds and refuses a module it has not fetched.`,
 			if len(args) != 1 {
 				return usageErr(cmd)
 			}
-			if berr := scopeFlags.bind(cmd); berr != nil {
+			if berr := scopeFlags.bindCallGraphRead(cmd); berr != nil {
 				return berr
 			}
 			return runUsage(cmd.Context(), args[0], scopeFlags, stdout, stderr)
@@ -153,6 +153,9 @@ func runUsage(ctx context.Context, arg string, f buildScopeFlags, stdout, stderr
 		return fmt.Errorf("initialising store: %w", err)
 	}
 	defer releaseStore(cleanup)
+	if aerr := adoptNamedWalkFrame(ctx, ctr.QueryWalks, f.walkID); aerr != nil {
+		return aerr
+	}
 
 	return usageWith(ctx, ctr, coord, f, stdout, stderr)
 }

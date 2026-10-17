@@ -164,3 +164,26 @@ func TestTinyGo_ResolutionClause(t *testing.T) {
 		t.Errorf("an undeclared frame's clause = %q, want empty", got)
 	}
 }
+
+// A wasm artefact is told by GOARCH or by TinyGo's own tag: tinygo reports
+// wasip2 and wasm-unknown as linux/arm.
+func TestTinyGoBuildsWasm(t *testing.T) {
+	for _, tc := range []struct {
+		target, goos, goarch string
+		tags                 []string
+		want                 bool
+	}{
+		{"wasip1", "wasip1", "wasm", []string{"tinygo.wasm"}, true},
+		{"wasip2", "linux", "arm", []string{"tinygo.wasm", "wasip2"}, true},
+		{"wasm-unknown", "linux", "arm", []string{"tinygo.wasm", "wasm_unknown"}, true},
+		{"pico", "linux", "arm", []string{"tinygo", "pico"}, false},
+	} {
+		f, err := goenv.NewTinyGo(tc.target, "0.42.0", "go1.27.2", tc.goos, tc.goarch, "", tinyGoRoot(t), tc.tags)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := f.BuildsWasm(); got != tc.want {
+			t.Errorf("%s: BuildsWasm = %v, want %v", tc.target, got, tc.want)
+		}
+	}
+}

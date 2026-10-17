@@ -121,6 +121,11 @@ func runContextLocal(ctx context.Context, dir string, f contextFlags, stdout, st
 	}
 
 	if f.reachability {
+		// The probe reads the invocation's frame; this form declares none, so the
+		// host's is settled here rather than inherited.
+		if terr := resolveBuildTarget(ctx, f.target, "", ""); terr != nil {
+			return terr
+		}
 		reach, rerr := runLocalReachabilityInner(ctx, abs, stderr)
 		if rerr != nil {
 			return fmt.Errorf("local reachability: %w", rerr)

@@ -165,6 +165,10 @@ For each `Example*` function found in a `_test.go` file:
   file import list).
 - **Doc**: the doc comment on the `Example*` function.
 
+Extraction takes no `--target` or `--tinygo`. It reads every `_test.go` file
+in the module zip and applies no build constraint, so an example record holds
+the examples of every platform at once and no build frame selects it.
+
 The database schema is versioned via the shared `schema_migrations` table
 (migration version 3).
 

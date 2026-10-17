@@ -43,6 +43,9 @@ type Store struct {
 	// setAside receives the stored generations a read or a write left out
 	// because this build cannot reproduce them; see ReportSetAside.
 	setAside recordseal.Reporter
+	// readFrame is the build frame a composing read selects when its request
+	// names none; zero leaves the read unrestricted. See WithReadFrame.
+	readFrame domain2.BuildFrame
 }
 
 // recordKind is how a set-aside call graph generation names its kind.
@@ -64,6 +67,21 @@ func New(db sqlitestore.DB) *Store {
 // edge one, because the caller's tree only matches a stored generation while it
 // is unedited.
 func (s *Store) PreferWorktree(p ports.WorktreePreference) { s.worktree = p }
+
+// WithReadFrame states the build frame every composing read selects when the
+// request names none. It is configuration of the read for the reason
+// PreferWorktree gives: the record read and the edge read must select alike.
+func (s *Store) WithReadFrame(f domain2.BuildFrame) { s.readFrame = f }
+
+// frameFilter is the predicate selecting rows of frame f, empty for the zero
+// frame, which selects nothing out.
+func frameFilter(f domain2.BuildFrame) (string, []any) {
+	if f.IsZero() {
+		return "", nil
+	}
+	return " AND goos = ? AND goarch = ? AND goarm = ? AND tinygo_target = ?",
+		[]any{f.GOOS, f.GOARCH, f.GOARM, f.TinyGoTarget}
+}
 
 // ReportSetAside states where the store names a generation it set aside. It is
 // configuration rather than a return value for the reason PreferWorktree gives:
@@ -548,6 +566,18 @@ ALTER TABLE callgraph_records ADD COLUMN analyser TEXT NOT NULL DEFAULT ''`,
 		{Module: "callgraph", Version: 16, SQL: `
 ALTER TABLE callgraph_records ADD COLUMN foreign_modules_built TEXT NOT NULL DEFAULT ''`,
 			Fn: backfillForeignModulesBuilt},
+		// Migration v17: the build frame a record was extracted under, so a read
+		// selects its own frame from columns. NO BACK-FILL: every existing row is at
+		// a pipeline before the frame existed, never served at the current one, and
+		// '' is "unrecorded", never the host.
+		{Module: "callgraph", Version: 17, SQL: `
+ALTER TABLE callgraph_records ADD COLUMN goos TEXT NOT NULL DEFAULT '';
+ALTER TABLE callgraph_records ADD COLUMN goarch TEXT NOT NULL DEFAULT '';
+ALTER TABLE callgraph_records ADD COLUMN goarm TEXT NOT NULL DEFAULT '';
+ALTER TABLE callgraph_records ADD COLUMN tinygo_target TEXT NOT NULL DEFAULT '';
+ALTER TABLE callgraph_records ADD COLUMN tinygo_version TEXT NOT NULL DEFAULT '';
+CREATE INDEX IF NOT EXISTS callgraph_records_frame_idx
+    ON callgraph_records (module_path, module_version, pipeline_version, goos, goarch, goarm, tinygo_target)`},
 	}
 }
 
@@ -926,9 +956,10 @@ INSERT INTO callgraph_records (
     algorithm, overall_status, completeness, analysis_source, worktree_digest,
     analysis_root, worktree_scan_digest,
     failure_cause, analyser, foreign_modules_built,
+    goos, goarch, goarm, tinygo_target, tinygo_version,
     node_count, edge_count,
     extracted_at, content_hash, serialised
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (module_path, module_version, pipeline_version, extracted_at, content_hash)
 DO NOTHING`
 
@@ -946,6 +977,7 @@ DO NOTHING`
 			// Written in the same statement as the blob it copies, so the derived column
 			// and the sealed record cannot diverge on any row this leg writes.
 			domain2.ForeignModulesColumn(r.ForeignModulesBuilt),
+			r.Frame.GOOS, r.Frame.GOARCH, r.Frame.GOARM, r.Frame.TinyGoTarget, r.Frame.TinyGoVersion,
 			r.NodeCount, r.EdgeCount,
 			recordstamp.Format(r.ExtractedAt),
 			r.ContentHash, blob,
@@ -1086,6 +1118,11 @@ func (s *Store) GetCallGraphRecordFrom(ctx context.Context, coord coordinate.Mod
 }
 
 func (s *Store) composeFor(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string, req domain2.ComposeRequest) (domain2.CallGraphRecord, bool, error) {
+	// The invocation's frame applies wherever the request names none, so every
+	// read through this store selects the same frame.
+	if req.Frame.IsZero() {
+		req.Frame = s.readFrame
+	}
 	// A working tree's generations are a SEQUENCE, so composition serves the last
 	// one and needs none of the others — see domain.Compose. Loading N generations
 	// to return the Nth is pure waste, and it is unbounded waste: `kanonarion
@@ -1101,7 +1138,7 @@ func (s *Store) composeFor(ctx context.Context, coord coordinate.ModuleCoordinat
 		return latest, ok, err
 	}
 
-	records, err := s.ListCallGraphRecordsFor(ctx, coord, pipelineVersion)
+	records, err := s.listRecordsFor(ctx, coord, pipelineVersion, req.Frame)
 	if err != nil {
 		return domain2.CallGraphRecord{}, false, err
 	}
@@ -1174,18 +1211,15 @@ func (s *Store) latestWorktreeGeneration(ctx context.Context, coord coordinate.M
 	if !coord.IsLocal() || req.Source == domain2.AnalysisSourceModuleZip {
 		return domain2.CallGraphRecord{}, false, nil
 	}
-	sources, err := s.analysisSources(ctx, coord, pipelineVersion)
-	if err != nil {
+	sources, err := s.sequenceSources(ctx, coord, pipelineVersion, req.Frame)
+	if err != nil || len(sources) == 0 {
 		return domain2.CallGraphRecord{}, false, err
-	}
-	if len(sources) == 0 {
-		return domain2.CallGraphRecord{}, false, nil
 	}
 	for _, src := range sources {
 		if domain2.AnalysisSource(src) != domain2.AnalysisSourceModuleZip {
 			continue
 		}
-		standing, serr := s.callerTreeIsAnalysed(ctx, coord, pipelineVersion)
+		standing, serr := s.callerTreeIsAnalysed(ctx, coord, pipelineVersion, req.Frame)
 		if serr != nil {
 			return domain2.CallGraphRecord{}, false, serr
 		}
@@ -1195,7 +1229,7 @@ func (s *Store) latestWorktreeGeneration(ctx context.Context, coord coordinate.M
 		break
 	}
 
-	row, found, qerr := s.latestGenerationRow(ctx, coord, pipelineVersion)
+	row, found, qerr := s.latestGenerationRow(ctx, coord, pipelineVersion, req.Frame)
 	if qerr != nil {
 		return domain2.CallGraphRecord{}, false, qerr
 	}
@@ -1206,7 +1240,7 @@ func (s *Store) latestWorktreeGeneration(ctx context.Context, coord coordinate.M
 	// completeness ladder decides which measurement of it does. See
 	// domain.LatestObservation, which is the same rule stated over whole records
 	// for the composing read.
-	row, qerr = s.bestGenerationOfTreeState(ctx, coord, pipelineVersion, row)
+	row, qerr = s.bestGenerationOfTreeState(ctx, coord, pipelineVersion, row, req.Frame)
 	if qerr != nil {
 		return domain2.CallGraphRecord{}, false, qerr
 	}
@@ -1223,12 +1257,28 @@ func (s *Store) latestWorktreeGeneration(ctx context.Context, coord coordinate.M
 	return rec, true, nil
 }
 
+// sequenceSources is analysisSources for the newest-row path, empty when that
+// path must stand aside: no generation of the frame, or a read naming no frame
+// over generations of several, which is composition's refusal to raise.
+func (s *Store) sequenceSources(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string, frame domain2.BuildFrame) ([]string, error) {
+	sources, err := s.analysisSources(ctx, coord, pipelineVersion, frame)
+	if err != nil || len(sources) == 0 || !frame.IsZero() {
+		return sources, err
+	}
+	many, err := s.holdsSeveralFrames(ctx, coord, pipelineVersion)
+	if err != nil || many {
+		return nil, err
+	}
+	return sources, nil
+}
+
 // analysisSources lists the analysis sources recorded for coord at
 // pipelineVersion.
-func (s *Store) analysisSources(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) ([]string, error) {
-	const qSources = `SELECT DISTINCT analysis_source FROM callgraph_records
-WHERE module_path = ? AND module_version = ? AND pipeline_version = ?`
-	rows, err := s.db.DB().QueryContext(ctx, qSources, coord.Path(), coord.Version(), pipelineVersion)
+func (s *Store) analysisSources(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string, frame domain2.BuildFrame) ([]string, error) {
+	pred, fargs := frameFilter(frame)
+	qSources := `SELECT DISTINCT analysis_source FROM callgraph_records
+WHERE module_path = ? AND module_version = ? AND pipeline_version = ?` + pred
+	rows, err := s.db.DB().QueryContext(ctx, qSources, append([]any{coord.Path(), coord.Version(), pipelineVersion}, fargs...)...)
 	if err != nil {
 		return nil, fmt.Errorf("querying analysis sources for %s: %w", coord, err)
 	}
@@ -1251,6 +1301,18 @@ WHERE module_path = ? AND module_version = ? AND pipeline_version = ?`
 	return sources, nil
 }
 
+// holdsSeveralFrames reports whether coord's generations at pipelineVersion
+// were extracted under more than one build frame.
+func (s *Store) holdsSeveralFrames(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (bool, error) {
+	const q = `SELECT COUNT(*) FROM (SELECT DISTINCT goos, goarch, goarm, tinygo_target FROM callgraph_records
+WHERE module_path = ? AND module_version = ? AND pipeline_version = ?)`
+	var n int
+	if err := s.db.DB().QueryRowContext(ctx, q, coord.Path(), coord.Version(), pipelineVersion).Scan(&n); err != nil {
+		return false, fmt.Errorf("counting the build frames of %s: %w", coord, err)
+	}
+	return n > 1, nil
+}
+
 // callerTreeIsAnalysed reports whether the ledger holds a worktree generation
 // analysed in the tree the reader is standing in.
 //
@@ -1263,19 +1325,20 @@ WHERE module_path = ? AND module_version = ? AND pipeline_version = ?`
 // latestGenerationRow does: the digest identifies a tree by its bytes, so a
 // caller with one uncommitted edit is standing in a tree no generation matches,
 // and that caller is exactly who this exists for.
-func (s *Store) callerTreeIsAnalysed(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (bool, error) {
+func (s *Store) callerTreeIsAnalysed(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string, frame domain2.BuildFrame) (bool, error) {
 	root, ok := s.preferredRoot(coord)
 	if !ok {
 		return false, nil
 	}
-	const q = `SELECT 1 FROM callgraph_records
+	pred, fargs := frameFilter(frame)
+	q := `SELECT 1 FROM callgraph_records
 WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
-  AND analysis_source = ? AND analysis_root = ?
+  AND analysis_source = ? AND analysis_root = ?` + pred + `
 LIMIT 1`
 	var one int
-	err := s.db.DB().QueryRowContext(ctx, q,
+	err := s.db.DB().QueryRowContext(ctx, q, append([]any{
 		coord.Path(), coord.Version(), pipelineVersion,
-		string(domain2.AnalysisSourceWorktree), root).Scan(&one)
+		string(domain2.AnalysisSourceWorktree), root}, fargs...)...).Scan(&one)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		return false, nil
@@ -1299,14 +1362,14 @@ LIMIT 1`
 // its CONTENT, so a caller with one uncommitted edit is standing in a tree no
 // stored generation matches; the root is what survives the edit, and it is what
 // this filters on.
-func (s *Store) latestGenerationRow(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (generationRow, bool, error) {
+func (s *Store) latestGenerationRow(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string, frame domain2.BuildFrame) (generationRow, bool, error) {
 	if root, ok := s.preferredRoot(coord); ok {
-		row, found, err := s.newestRow(ctx, coord, pipelineVersion, root)
+		row, found, err := s.newestRow(ctx, coord, pipelineVersion, root, frame)
 		if err != nil || found {
 			return row, found, err
 		}
 	}
-	return s.newestRow(ctx, coord, pipelineVersion, "")
+	return s.newestRow(ctx, coord, pipelineVersion, "", frame)
 }
 
 // generationRow is one stored generation as the COLUMNS describe it: the blob
@@ -1340,7 +1403,7 @@ type generationRow struct {
 // fast-fail analysis takes well under a second, and the column held whole
 // seconds before it was widened. The ledger is append-only, so the later append
 // is the later run.
-func (s *Store) newestRow(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion, root string) (generationRow, bool, error) {
+func (s *Store) newestRow(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion, root string, frame domain2.BuildFrame) (generationRow, bool, error) {
 	q := `SELECT serialised, content_hash, analysis_root, worktree_scan_digest,
                  overall_status, completeness, failure_cause, extracted_at, analyser, rowid
           FROM callgraph_records
@@ -1350,6 +1413,9 @@ func (s *Store) newestRow(ctx context.Context, coord coordinate.ModuleCoordinate
 		q += " AND analysis_root = ?"
 		args = append(args, root)
 	}
+	pred, fargs := frameFilter(frame)
+	q += pred
+	args = append(args, fargs...)
 	// Ordered on the PARSED time: the column holds a whole second on generations
 	// written before it was widened and a fixed-width fraction after, and TEXT
 	// order puts "…09.5Z" before "…09Z" because '.' precedes 'Z'.
@@ -1392,16 +1458,17 @@ LIMIT 1`
 // before the field existed carries none, an absent digest cannot show that two
 // runs were handed the same tree, and one extra query per read to discover that
 // is a cost paid on every query for nothing.
-func (s *Store) bestGenerationOfTreeState(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string, newest generationRow) (generationRow, error) {
+func (s *Store) bestGenerationOfTreeState(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string, newest generationRow, frame domain2.BuildFrame) (generationRow, error) {
 	if newest.scanDigest == "" {
 		return newest, nil
 	}
-	const q = `SELECT serialised, content_hash, overall_status, completeness, failure_cause, extracted_at, analyser, rowid
+	pred, fargs := frameFilter(frame)
+	q := `SELECT serialised, content_hash, overall_status, completeness, failure_cause, extracted_at, analyser, rowid
 FROM callgraph_records
 WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
-  AND analysis_root = ? AND worktree_scan_digest = ?`
-	rows, err := s.db.DB().QueryContext(ctx, q,
-		coord.Path(), coord.Version(), pipelineVersion, newest.root, newest.scanDigest)
+  AND analysis_root = ? AND worktree_scan_digest = ?` + pred
+	rows, err := s.db.DB().QueryContext(ctx, q, append([]any{
+		coord.Path(), coord.Version(), pipelineVersion, newest.root, newest.scanDigest}, fargs...)...)
 	if err != nil {
 		return generationRow{}, fmt.Errorf("querying generations of %s at %s: %w", coord, newest.root, err)
 	}
@@ -1467,20 +1534,21 @@ func rankOfColumns(overallStatus int, completeness, failureCause, extractedAt st
 // It is restricted to worktree records: a local coordinate can also hold a
 // zip-sourced record (a walk over a local-path replace target fetches and
 // analyses one), and that describes different bytes.
-func (s *Store) WorktreeGeneration(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion, root, scanDigest string) (domain2.CallGraphRecord, bool, error) {
+func (s *Store) WorktreeGeneration(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion, root, scanDigest string, frame domain2.BuildFrame) (domain2.CallGraphRecord, bool, error) {
 	if coord.IsZero() {
 		return domain2.CallGraphRecord{}, false, coordinate.ErrZeroCoordinate
 	}
 	if root == "" || scanDigest == "" {
 		return domain2.CallGraphRecord{}, false, nil
 	}
-	const q = `SELECT serialised, content_hash, overall_status, completeness, failure_cause, extracted_at, analyser, rowid
+	pred, fargs := frameFilter(frame)
+	q := `SELECT serialised, content_hash, overall_status, completeness, failure_cause, extracted_at, analyser, rowid
 FROM callgraph_records
 WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
-  AND analysis_root = ? AND worktree_scan_digest = ? AND analysis_source = ?`
-	rows, err := s.db.DB().QueryContext(ctx, q,
+  AND analysis_root = ? AND worktree_scan_digest = ? AND analysis_source = ?` + pred
+	rows, err := s.db.DB().QueryContext(ctx, q, append([]any{
 		coord.Path(), coord.Version(), pipelineVersion, root, scanDigest,
-		string(domain2.AnalysisSourceWorktree))
+		string(domain2.AnalysisSourceWorktree)}, fargs...)...)
 	if err != nil {
 		return domain2.CallGraphRecord{}, false, fmt.Errorf("querying worktree generation of %s at %s: %w", coord, root, err)
 	}
@@ -1576,6 +1644,7 @@ WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
   AND algorithm = ? AND overall_status = ? AND completeness = ?
   AND analysis_source = ? AND worktree_digest = ? AND analysis_root = ?
   AND worktree_scan_digest = ? AND failure_cause = ? AND analyser = ?
+  AND goos = ? AND goarch = ? AND goarm = ? AND tinygo_target = ?
   AND node_count = ? AND edge_count = ?
 ORDER BY julianday(extracted_at) DESC, content_hash DESC`
 	rows, err := s.db.DB().QueryContext(ctx, q,
@@ -1583,6 +1652,7 @@ ORDER BY julianday(extracted_at) DESC, content_hash DESC`
 		string(rec.Algorithm), int(rec.OverallStatus), string(rec.Completeness),
 		string(rec.AnalysisSource), rec.WorktreeDigest, rec.AnalysisRoot,
 		rec.WorktreeScanDigest, string(rec.FailureCause), rec.Analyser.Column(),
+		rec.Frame.GOOS, rec.Frame.GOARCH, rec.Frame.GOARM, rec.Frame.TinyGoTarget,
 		rec.NodeCount, rec.EdgeCount,
 	)
 	if err != nil {
@@ -1739,17 +1809,25 @@ WHERE module_path = ? AND module_version = ? AND pipeline_version = ? AND analys
 // insertion order is the sequence it actually has, and composition relies on it
 // both for a mutating working tree and for the ladder's own recency tiebreak.
 func (s *Store) ListCallGraphRecordsFor(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) ([]domain2.CallGraphRecord, error) {
+	return s.listRecordsFor(ctx, coord, pipelineVersion, domain2.BuildFrame{})
+}
+
+// listRecordsFor is ListCallGraphRecordsFor restricted to one build frame, the
+// zero frame restricting nothing. The history read lists every frame; the
+// composing read lists only its own.
+func (s *Store) listRecordsFor(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string, frame domain2.BuildFrame) ([]domain2.CallGraphRecord, error) {
 	// The zero coordinate names no module, so this is a question about nothing.
 	// Answering it with absence would report "no record here" for a module that
 	// was never asked about — see coordinate.ErrZeroCoordinate.
 	if coord.IsZero() {
 		return nil, coordinate.ErrZeroCoordinate
 	}
-	const q = `SELECT serialised, content_hash, analyser FROM callgraph_records
-WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
+	pred, fargs := frameFilter(frame)
+	q := `SELECT serialised, content_hash, analyser FROM callgraph_records
+WHERE module_path = ? AND module_version = ? AND pipeline_version = ?` + pred + `
 ORDER BY julianday(extracted_at) ASC, rowid ASC`
 
-	rows, err := s.db.DB().QueryContext(ctx, q, coord.Path(), coord.Version(), pipelineVersion)
+	rows, err := s.db.DB().QueryContext(ctx, q, append([]any{coord.Path(), coord.Version(), pipelineVersion}, fargs...)...)
 	if err != nil {
 		return nil, fmt.Errorf("querying callgraph records: %w", err)
 	}
@@ -1832,7 +1910,7 @@ func (s *Store) LatestCallGraphOutcome(ctx context.Context, coord coordinate.Mod
 	if coord.IsZero() {
 		return ports.CallGraphOutcome{}, false, coordinate.ErrZeroCoordinate
 	}
-	row, found, err := s.newestRow(ctx, coord, pipelineVersion, "")
+	row, found, err := s.newestRow(ctx, coord, pipelineVersion, "", domain2.BuildFrame{})
 	if err != nil || !found {
 		return ports.CallGraphOutcome{}, false, err
 	}
@@ -2357,11 +2435,15 @@ func pageSummaries(sums []ports.CallGraphSummary, limit, offset int) []ports.Cal
 // The single-generation case — every module in the store today — is answered
 // from the column without decoding a blob, which matters at millions of edge
 // rows.
+//
+// Under a read frame a coordinate held only in other frames reports found with
+// an empty hash: its rows exist and none of them answers this read.
 func (s *Store) servedContentHash(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string, toolchain gotoolchain.Version) (string, bool, error) {
-	const q = `SELECT content_hash FROM callgraph_records
-WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
+	pred, fargs := frameFilter(s.readFrame)
+	q := `SELECT content_hash FROM callgraph_records
+WHERE module_path = ? AND module_version = ? AND pipeline_version = ?` + pred + `
 LIMIT 2`
-	rows, err := s.db.DB().QueryContext(ctx, q, coord.Path(), coord.Version(), pipelineVersion)
+	rows, err := s.db.DB().QueryContext(ctx, q, append([]any{coord.Path(), coord.Version(), pipelineVersion}, fargs...)...)
 	if err != nil {
 		return "", false, fmt.Errorf("querying callgraph generations for %s: %w", coord, err)
 	}
@@ -2384,7 +2466,11 @@ LIMIT 2`
 
 	switch len(hashes) {
 	case 0:
-		return "", false, nil
+		if s.readFrame.IsZero() {
+			return "", false, nil
+		}
+		held, herr := s.pipelinesHeld(ctx, coord)
+		return "", herr == nil && slices.Contains(held, pipelineVersion), herr
 	case 1:
 		return hashes[0], true, nil
 	default:
@@ -2427,10 +2513,11 @@ func (s *Store) ForeignModulesBuilt(ctx context.Context, coord coordinate.Module
 	// maintainer's store: the local working-tree coordinate holds 80 generations,
 	// one per ingest, and composing them cost 2,073 ms against 1,710 ms for the
 	// same answer before the axis existed.
-	const qDistinct = `SELECT DISTINCT foreign_modules_built FROM callgraph_records
-WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
+	pred, fargs := frameFilter(s.readFrame)
+	qDistinct := `SELECT DISTINCT foreign_modules_built FROM callgraph_records
+WHERE module_path = ? AND module_version = ? AND pipeline_version = ?` + pred + `
 LIMIT 2`
-	rows, err := s.db.DB().QueryContext(ctx, qDistinct, coord.Path(), coord.Version(), pipelineVersion)
+	rows, err := s.db.DB().QueryContext(ctx, qDistinct, append([]any{coord.Path(), coord.Version(), pipelineVersion}, fargs...)...)
 	if err != nil {
 		return nil, false, fmt.Errorf("querying foreign modules for %s: %w", coord, err)
 	}

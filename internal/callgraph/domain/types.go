@@ -680,6 +680,10 @@ type CallGraphRecord struct {
 	// RecordToolchain, which also recovers what such a record's own stdlib
 	// positions still show.
 	Toolchain gotoolchain.Version
+	// Frame is the platform the analysis ran under, measured from the loader's
+	// own go command. It is a DIMENSION like Toolchain: composition selects on it
+	// and never ranks two frames. Zero on records written before the field.
+	Frame BuildFrame
 	// Analyser is the golang.org/x/tools that type-checked this module and built
 	// the SSA the graph was computed over, and how the store came to state it.
 	//

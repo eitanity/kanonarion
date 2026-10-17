@@ -34,7 +34,7 @@ func (a *Analyser) attachBodyFacts(ctx context.Context, nodes []domain.CallNode,
 		return
 	}
 
-	facts := scanBodyFacts(ctx, dir, pkgPaths, env)
+	facts := scanBodyFacts(ctx, dir, pkgPaths, env, a.buildFlags())
 	if len(facts) == 0 {
 		return
 	}
@@ -115,7 +115,7 @@ func isSyntheticPackagePath(pkgPath string) bool {
 //
 // A dedicated FileSet is used because these facts need no source positions and
 // re-parsing into the SSA program's FileSet would bloat it.
-func scanBodyFacts(ctx context.Context, dir string, pkgPaths []string, env []string) map[string]bodyFacts {
+func scanBodyFacts(ctx context.Context, dir string, pkgPaths []string, env, buildFlags []string) map[string]bodyFacts {
 	facts := make(map[string]bodyFacts)
 	if len(pkgPaths) == 0 {
 		return facts
@@ -129,12 +129,13 @@ func scanBodyFacts(ctx context.Context, dir string, pkgPaths []string, env []str
 		end := min(i+batchSize, len(pkgPaths))
 
 		cfg := &packages.Config{
-			Mode:    packages.NeedName | packages.NeedSyntax | packages.NeedFiles | packages.NeedCompiledGoFiles,
-			Dir:     dir,
-			Context: ctx,
-			Env:     env,
-			Fset:    token.NewFileSet(),
-			Tests:   false,
+			Mode:       packages.NeedName | packages.NeedSyntax | packages.NeedFiles | packages.NeedCompiledGoFiles,
+			Dir:        dir,
+			Context:    ctx,
+			Env:        env,
+			BuildFlags: buildFlags,
+			Fset:       token.NewFileSet(),
+			Tests:      false,
 		}
 
 		pkgs, err := packages.Load(cfg, pkgPaths[i:end]...)

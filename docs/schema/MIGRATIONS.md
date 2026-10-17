@@ -154,6 +154,11 @@ values there, as they did when `verdict` and `reachability_state` gained theirs)
   and the SBOM's `kanonarion:build:*` properties gain `goarm`, `tinygo_target`,
   `tinygo_version` and `tinygo_tags` on a TinyGo walk only. They are absent on
   every other walk, so those documents are unchanged.
+- The call-graph record document (`callgraph-show --json`, and the `local` and
+  `callgraph` summary documents) gains `frame`: `text`, `goos`, `goarch`, and
+  `goarm`, `tinygo_target`, `tinygo_version`, `tinygo_tags` where set. Absent on
+  a record that names no frame. `callgraph-show` text gains a `frame:` line and
+  `--history` a `frame:` line per generation, both absent on such a record.
 
 ## Native record: pipeline `0.4.0` → `0.5.0`
 
@@ -235,6 +240,28 @@ helper`. A `0.3.0` record could count such a file as compiled native source.
 Records are keyed by generation (`<pipeline>+recipes.<n>`), so the bump is the
 migration: `0.3.0` rows stay and are never served for a `0.4.0` request. Cost is
 one re-measurement per coordinate on its next `native` run.
+
+## Call graph record: pipeline `0.10.0` → `0.11.0`
+
+**Record shape change; store migration 17; no schema-version bump.** A record
+now carries the **build frame** it was extracted under, inside its seal: `GOOS`,
+`GOARCH` and `GOARM` as the loader's own go command resolved them, and the
+TinyGo target, release and build tags when `--tinygo` was declared. The field is
+omitted when zero, so every stored record still marshals to the bytes it was
+sealed over.
+
+Every call-graph read now selects by frame: the one the invocation declares
+with `--target`, `--goos`/`--goarch` or `--tinygo`, or this host's. `local`,
+`callgraph` and `callgraph-show` take those flags, and one working tree holds
+one record per frame. `reachability --local --json` carries the probe's `frame`
+in the same shape (additive).
+
+A `0.10.0` record names no frame, so it cannot be served to a read that names
+one, and the bump is what keeps it from being read as this host's. Records are
+keyed `(module, version, pipeline_version)`: `0.10.0` rows stay, become
+unreachable, and are never served for a `0.11.0` request. Cost is one
+re-extraction per coordinate on its next `callgraph` run; run `kanonarion local
+.` in each ingested tree whose answers you rely on.
 
 ## Call graph record: pipeline `0.9.0` → `0.10.0`
 
@@ -1191,6 +1218,21 @@ migration rather than being skipped.**
 when the set is non-empty, and `--json` carries the same field. `callers`,
 `callees`, their transitive forms and `implementers` qualify their `answer:` line
 when part of the answer comes from those modules' nodes.
+
+## Call graph store: module `callgraph`, migration 17
+
+Adds `callgraph_records.goos`, `goarch`, `goarm`, `tinygo_target` and
+`tinygo_version` — the build frame a record was extracted under — and the index
+`callgraph_records_frame_idx` on `(module_path, module_version,
+pipeline_version, goos, goarch, goarm, tinygo_target)`. Store `v88` -> `v89`.
+
+The columns are the denormalised copy of the record's sealed `frame`, written in
+the same statement as the blob, so every read selects its frame from columns
+without decoding a generation.
+
+**No back-fill.** Every existing row is at pipeline `0.10.0` or earlier, which
+records no frame and is never served at `0.11.0`. Its empty columns mean
+"unrecorded", and a read never takes them for this host's frame.
 
 
 ## Call graph records: the wrapper hop, no migration and no bump

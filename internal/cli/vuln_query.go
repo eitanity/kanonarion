@@ -114,6 +114,11 @@ func runVulnShow(
 	if terr := resolveReadTarget(ctx, target, "vuln-show", !history && walkID == "" && gomodSet, gomod); terr != nil {
 		return terr
 	}
+	// A named walk supplies the call-graph frame; adopted after the resolution
+	// above, which would otherwise put the read back in the host frame.
+	if aerr := adoptNamedWalkFrame(ctx, walks, walkID); aerr != nil {
+		return aerr
+	}
 
 	if history {
 		return runVulnShowHistory(ctx, coord, jsonOut, uc, walks, graphs, stdout)
@@ -695,6 +700,10 @@ which is what "which of my modules is hit by this CVE" usually means.`,
 				return fmt.Errorf("initialising store: %w", err)
 			}
 			defer releaseStore(cleanup)
+			// A named walk supplies the frame the route roots are classified in.
+			if aerr := adoptNamedWalkFrame(cmd.Context(), ctr.QueryWalks, walkID); aerr != nil {
+				return aerr
+			}
 			return runVulnByID(cmd.Context(), args[0], walkID, jsonOut, ctr.QueryVuln, ctr.QueryCallGraph, stdout)
 		},
 	}

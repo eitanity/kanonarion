@@ -50,7 +50,7 @@ the callers and callees queries also accept.`,
 			if len(args) != 1 {
 				return usageErr(cmd)
 			}
-			if berr := scopeFlags.bind(cmd); berr != nil {
+			if berr := scopeFlags.bindCallGraphRead(cmd); berr != nil {
 				return berr
 			}
 			logger := buildLogger(logLevel, stderr)
@@ -59,6 +59,9 @@ the callers and callees queries also accept.`,
 				return fmt.Errorf("initialising store: %w", err)
 			}
 			defer releaseStore(cleanup)
+			if aerr := adoptNamedWalkFrame(cmd.Context(), ctr.QueryWalks, scopeFlags.walkID); aerr != nil {
+				return aerr
+			}
 			sc, err := scopeFlags.resolve(cmd.Context(), ctr.QueryWalks)
 			if err != nil {
 				return err

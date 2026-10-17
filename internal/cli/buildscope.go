@@ -82,6 +82,15 @@ func (f *buildScopeFlags) bind(cmd *cobra.Command) error {
 	return resolveReadTarget(cmd.Context(), f.target, cmd.Name(), f.gomodSet && f.walkID == "", f.gomod)
 }
 
+// bindCallGraphRead is bind for a read answered from stored call graphs. The
+// declaration selects the call-graph frame as well as the walk, so it applies
+// with or without --gomod; beside --walk-id it is refused, because the named
+// walk's own frame is the read frame (see adoptNamedWalkFrame).
+func (f *buildScopeFlags) bindCallGraphRead(cmd *cobra.Command) error {
+	f.gomodSet = cmd.Flags().Changed("gomod")
+	return resolveReadTarget(cmd.Context(), f.target, cmd.Name(), f.walkID == "", f.gomod)
+}
+
 // toolchainPreference settles the toolchain this read prefers where a
 // coordinate's generations disagree about which one built them.
 //

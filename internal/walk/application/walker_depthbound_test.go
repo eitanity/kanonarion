@@ -85,7 +85,7 @@ func TestWalker_MaxDepth_BoundaryNodeHasNoResultAndIsNotAFailure(t *testing.T) {
 	}
 
 	// Partial, and for the bound: the closure really is incomplete, and that is
-	// what KN-395 settled. What must not happen is it being incomplete for a
+	// a settled decision. What must not happen is it being incomplete for a
 	// fetch nobody attempted.
 	if outcome.OverallStatus != domain.WalkPartial {
 		t.Errorf("status = %s, want partial: the graph is truncated", outcome.OverallStatus)

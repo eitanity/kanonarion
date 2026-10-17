@@ -27,6 +27,7 @@ type cgFlags struct {
 	// tells a working analysis from a stalled one: leaving them to an operator
 	// preference would let a config file disable the stall detector.
 	narrate bool
+	target  buildTargetFlags
 }
 
 func newCallGraphCmd(stdout, stderr io.Writer) *cobra.Command {
@@ -50,6 +51,7 @@ different budget: see 'kanonarion extract --help'.`,
 		Example: `  kanonarion callgraph github.com/spf13/cobra@v1.8.1
   kanonarion callgraph github.com/spf13/cobra@v1.8.1 --json
   kanonarion callgraph github.com/spf13/cobra@v1.8.1 --force
+  kanonarion callgraph golang.org/x/text@v0.3.7 --target wasip1/wasm
   kanonarion callgraph github.com/Masterminds/sprig@v2.22.0+incompatible --from-walk 01KZ3WD9JM9X4S5TWR31HF64H7`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if localShim {
@@ -83,6 +85,7 @@ different budget: see 'kanonarion extract --help'.`,
 	hideFlag(cmd, "narrate-progress")
 	registerNoProgressFlag(cmd, &f.noProgress)
 	registerFromModcacheFlag(cmd, &f.fromModcache)
+	registerBuildTargetFlags(cmd, &f.target)
 
 	return cmd
 }
@@ -105,9 +108,11 @@ func runCallGraphExtract(ctx context.Context, arg string, f cgFlags, stdout, std
 		callgraphNarration = stderr
 	}
 
-	coord, err := parseCoordinate(arg)
+	// The frame is settled before the container is built: the analyser and the
+	// read frame are wired from it there.
+	coord, err := resolveCallGraphFrame(ctx, arg, f)
 	if err != nil {
-		return fmt.Errorf("invalid coordinate %q: %w", arg, err)
+		return err
 	}
 
 	ctr, cleanup, err := NewContainer(storeRoot, "", f.goBinary, false, activeConfig, logger)
@@ -115,6 +120,12 @@ func runCallGraphExtract(ctx context.Context, arg string, f cgFlags, stdout, std
 		return fmt.Errorf("initialising store: %w", err)
 	}
 	defer releaseStore(cleanup)
+
+	// A named walk's frame is the extraction frame; it can only be read once the
+	// store is open, so the container is re-wired from it here.
+	if werr := adoptWalkFrame(ctx, ctr, coord, f.fromWalk, f.target.declared(), stderr); werr != nil {
+		return werr
+	}
 
 	inputs, run, err := callGraphInputs(ctx, ctr, coord, f, stderr)
 	if err != nil {
@@ -147,6 +158,22 @@ func runCallGraphExtract(ctx context.Context, arg string, f cgFlags, stdout, std
 		}
 	}
 	return callGraphExtractionExit(result.Record)
+}
+
+// resolveCallGraphFrame parses the coordinate and settles the frame this
+// extraction runs under. The standard library's graph is read from a toolchain's
+// own GOROOT, which a TinyGo frame replaces, so the two are refused together.
+func resolveCallGraphFrame(ctx context.Context, arg string, f cgFlags) (coordinate.ModuleCoordinate, error) {
+	coord, err := parseCoordinate(arg)
+	if err != nil {
+		return coord, fmt.Errorf("invalid coordinate %q: %w", arg, err)
+	}
+	if coord.IsStdlib() && f.target.tinygo != "" {
+		return coord, &exitError{code: ExitConfig, msg: fmt.Sprintf(
+			"--tinygo applies to a module, not to %s: the standard library's graph is read from a Go toolchain's own GOROOT, "+
+				"which a TinyGo frame replaces; --target selects a platform for it", coord)}
+	}
+	return coord, resolveBuildTarget(ctx, f.target, f.goBinary, "")
 }
 
 // resolveCallGraphModcache resolves --from-modcache against the project's
@@ -257,11 +284,12 @@ func printCallGraphSummary(
 	if fromCache {
 		cached = " (cached)"
 	}
-	if _, err := fmt.Fprintf(stdout, "%s@%s: %s — %d nodes, %d edges [%s]%s\n",
+	if _, err := fmt.Fprintf(stdout, "%s@%s: %s — %d nodes, %d edges [%s]%s%s\n",
 		r.Coordinate.Path(), r.Coordinate.Version(),
 		r.OverallStatus.String(),
 		r.NodeCount, r.EdgeCount,
 		string(r.Algorithm),
+		summaryFrame(r),
 		cached,
 	); err != nil {
 		return fmt.Errorf("writing output: %w", err)
@@ -362,8 +390,11 @@ func discoveredBuildList(
 	coord coordinate.ModuleCoordinate,
 	stderr io.Writer,
 ) (cgdomain.AnalysisInputs, *buildListRefusalJSON) {
-	found, err := findWalkContaining(ctx, walks, coord,
-		fmt.Sprintf("kanonarion callgraph %s %s <walk of that build>", coord, callGraphBuildFlag))
+	// Only walks of the analysis frame are candidates: a build list resolved for
+	// another platform is another build's.
+	frame := invocationFrame()
+	found, err := findWalkContainingIn(ctx, walks, coord,
+		fmt.Sprintf("kanonarion callgraph %s %s <walk of that build>", coord, callGraphBuildFlag), &frame)
 	if err != nil {
 		// A search that finds nothing still says nothing. An AMBIGUOUS one does:
 		// the store holds the build list this analysis needs, in more than one
@@ -388,7 +419,7 @@ func discoveredBuildList(
 	// The choice is announced, never enforced: an unwritable stderr does not make
 	// a discovered build list the wrong input to analyse with.
 	_, _ = fmt.Fprintf(stderr, "no build list was named; a pre-modules module will be pinned to walk %s, "+
-		"which resolved %d version(s) and includes this module\n", walkID, len(inputs.BuildList))
+		"which resolved %d version(s) and includes this module%s\n", walkID, len(inputs.BuildList), framePassedOverClause(found.framePassedOver, frame))
 	return inputs, nil
 }
 
@@ -396,3 +427,12 @@ func discoveredBuildList(
 // so the remedy a reader is shown and the flag a consumer retries with cannot
 // drift apart.
 const callGraphBuildFlag = "--from-walk"
+
+// framePassedOverClause says how many walks of other frames the search left out,
+// empty when none were.
+func framePassedOverClause(n int, frame cgdomain.BuildFrame) string {
+	if n == 0 {
+		return ""
+	}
+	return fmt.Sprintf("; %d walk(s) resolved for a frame other than %s were passed over", n, frame)
+}

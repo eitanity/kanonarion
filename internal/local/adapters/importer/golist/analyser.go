@@ -23,11 +23,28 @@ import (
 // Analyser implements ports.ImportAnalyser using go list -json -deps.
 type Analyser struct {
 	goBinary string // empty → resolved via PATH as "go"
+	// target and tinygo are the declared build frame; zero declares the host.
+	target goenv.Target
+	tinygo goenv.TinyGo
 }
 
 // New constructs an Analyser. goBinary may be empty (uses "go" from PATH).
 func New(goBinary string) *Analyser {
 	return &Analyser{goBinary: goBinary}
+}
+
+// WithTarget declares the platform every go list resolves for. The zero value
+// declares this host's pair, which every child still pins.
+func (a *Analyser) WithTarget(t goenv.Target) *Analyser {
+	a.target = t
+	return a
+}
+
+// WithTinyGo declares a TinyGo frame: its GOROOT and platform in the
+// environment, its tags as -tags.
+func (a *Analyser) WithTinyGo(f goenv.TinyGo) *Analyser {
+	a.tinygo = f
+	return a
 }
 
 func (a *Analyser) goBin() string {
@@ -55,13 +72,20 @@ func (a *Analyser) list(ctx context.Context, root string, args ...string) ([]byt
 	toolchains := goenv.NewToolchains()
 	defer func() { _ = toolchains.Close() }()
 
+	// TinyGo's tags go after the subcommand, never in GOFLAGS, as the call-graph
+	// load passes them.
+	if tags := a.tinygo.ListArgs(); len(tags) > 0 && len(args) > 0 {
+		args = append(append([]string{args[0]}, tags...), args[1:]...)
+	}
 	for {
 		cmd := childproc.CommandContext(ctx, a.goBin(), args...) // #nosec G204 -- binary path is either "go" (hardcoded) or caller-supplied and trusted
 		cmd.Dir = root
 		// A list the cancellation kills cannot remove its work directory (-test
 		// writes one), so it gets a temp root removed once it has exited.
 		scratch, removeScratch := childproc.Scratch()
-		cmd.Env = append(toolchains.Apply(listEnv(root)), scratch...)
+		// The frame goes on last, after the toolchain, so a TinyGo GOROOT is the
+		// one the child sees.
+		cmd.Env = append(a.tinygo.Apply(a.target.Apply(toolchains.Apply(listEnv(root)))), scratch...)
 		out, err := cmd.Output()
 		removeScratch()
 		if err == nil {

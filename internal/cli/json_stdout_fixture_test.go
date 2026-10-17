@@ -462,6 +462,7 @@ func seedJSONDocArtefactRecords(t *testing.T, ctx context.Context, db sqlitestor
 			PipelineVersion:  cgapp.PipelineVersion,
 			AnalysisSource:   cgdomain.AnalysisSourceModuleZip,
 			ArtefactIdentity: artefact,
+			Frame:            hostFrame(),
 		}
 		cg, err = cgdomain.CallGraphRecordHasher{}.SetContentHash(cg)
 		if err != nil {

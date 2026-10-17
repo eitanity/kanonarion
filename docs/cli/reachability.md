@@ -815,6 +815,52 @@ binary whose symbol table it reads contains the whole build. A module reached
 only through a dependency (a JWT library pulled in by a SAML library, say) is
 queried like any other.
 
+### The build frame of the probe
+
+The probe lists, seeds and builds in one build frame: the one `--target`,
+`--goos`/`--goarch` or `--tinygo` declares, or this host's platform when none is
+given. The answer names it on the line after `module:`, and `--json` carries it
+as `frame`, in the shape `callgraph-show --json` prints:
+
+```
+local reachability probe of /src/firmware
+  module:    example.com/firmware
+  frame:     tinygo/pico (linux/arm)
+  probe:     binary, built by tinygo build
+```
+
+The `probe:` line names the command that built the artefacts: `go build` or
+`tinygo build`. `--json` carries it as `probe_builder`, and each entry of
+`coverage.probed_binaries` as `builder`.
+
+- **A standard target** (`--target linux/arm64`, `--target windows/amd64`, ...)
+  is built with `go build` under that `GOOS`/`GOARCH`, and its symbol table is
+  read with `go tool nm`, which reads ELF, PE and Mach-O for any platform.
+- **A TinyGo target** (`--tinygo pico`, `--tinygo feather-nrf52840`, ...) is
+  built with `tinygo build -target=<target> -opt=0`. `-opt=0` keeps a called
+  function out of line, as `-gcflags=all=-l` does for `go build`; at TinyGo's
+  default optimisation a called function is inlined and leaves no symbol. TinyGo
+  spells a method `(*pkg.T).M` where Go spells it `pkg.(*T).M`, so the probe
+  rewrites TinyGo's spelling to Go's before it matches a finding. A workspace
+  with no main builds its library harness with `tinygo build` the same way.
+- **A wasm target** is refused before anything is built. The probe reads a
+  symbol table, and this build has no reader for a wasm module, so it does not
+  build the host binary in its place:
+
+  ```
+  reachability --local does not act on --target wasip1/wasm (applies to a frame whose build output carries a symbol table this build can read (ELF, PE or Mach-O); the probe reads a symbol table, and this build has no reader for a wasm module)
+  ```
+
+  `--target js/wasm` is refused the same way, and so is every TinyGo wasm
+  target (`wasip1`, `wasip2`, `wasm-unknown`, `wasi`, `wasm`), named as typed:
+
+  ```
+  reachability --local does not act on --tinygo wasip1 (applies to a frame whose build output carries a symbol table this build can read (ELF, PE or Mach-O); the probe reads a symbol table, and this build has no reader for a wasm module)
+  ```
+
+  Both exit `20`. To ask about a wasm build, read the stored scan instead:
+  `kanonarion reachability <module>@<version> --vuln <id> --gomod ./go.mod --target wasip1/wasm`.
+
 ### Coverage: what the answer speaks about
 
 The probe reports stored findings, so it can only speak about modules the store
@@ -857,8 +903,8 @@ The probe is seeded from stored records, and a store shared by several projects
 holds several answers per dependency.
 
 When the store holds a project walk for this tree's `go.mod`, the seed is drawn
-from **one walk**: the newest code-scope project walk for that `go.mod` on this
-platform whose vuln-scan completed, chosen the way `vuln-show --gomod` chooses it. Within that walk it uses
+from **one walk**: the newest code-scope project walk for that `go.mod` in the
+probe's build frame whose vuln-scan completed, chosen the way `vuln-show --gomod` chooses it. Within that walk it uses
 the records measured in the walk's own frame, plus the **isolated** frame, which
 answers "the module built alone" and belongs to no project. Records of older
 walks are not read. An older walk taken under an earlier Go release can disagree
@@ -987,11 +1033,11 @@ command is safe to run from the root of a repository with fixture modules under
 | Flag | Default | Description |
 |---|---|---|
 | `--vuln` | *(empty)* | Vulnerability ID to query (stored-module mode); requires a `<module>@<version>` argument |
-| `--walk-id` | *(empty)* | Answer the stored query in the frame of this walk's scans |
+| `--walk-id` | *(empty)* | Answer the stored query in the frame of this walk's scans. The walk's build frame is also the frame the call graphs behind the answer are read in |
 | `--gomod <path>` | *(empty)* | Answer the stored query in the frame of the latest **code-scope** project walk for this go.mod on this platform. Takes a path, e.g. `--gomod ./go.mod`. Refuses, naming the scopes the store does hold, rather than answering from a walk of another scope or platform |
-| `--target <GOOS/GOARCH>` | _(this host's platform)_ | Select the walk taken for this build target, e.g. `--target windows/amd64`. Applies to the `--gomod` route; refused by name on `--walk-id`, which names a walk that already recorded its platform. A refusal raised under a declared target prints a remedy carrying it. See [Declaring the build target](walk.md#declaring-the-build-target---target) |
-| `--goos` / `--goarch` | _(this host's)_ | The two halves of `--target`, for a caller holding them separately. Both are required, and neither combines with `--target` |
-| `--tinygo <target>` | _(none)_ | Select the walk taken with `--tinygo <target>`, e.g. `--tinygo pico`; the `tinygo` command on `PATH` defines the target. Mutually exclusive with `--target`, `--goos` and `--goarch`. See [Declaring a TinyGo target](walk.md#declaring-a-tinygo-target---tinygo) |
+| `--target <GOOS/GOARCH>` | _(this host's platform)_ | Select the walk taken for this build target, e.g. `--target windows/amd64`. Applies to the `--gomod` route and to `--local`, which lists, seeds and builds in it (a `wasm` target is refused by name; see [The build frame of the probe](#the-build-frame-of-the-probe)); refused by name on `--walk-id`, which names a walk that already recorded its platform. A refusal raised under a declared target prints a remedy carrying it. See [Declaring the build target](walk.md#declaring-the-build-target---target) |
+| `--goos` / `--goarch` | _(this host's)_ | The two halves of `--target`, for a caller holding them separately. Both are required, and neither combines with `--target`. Apply to `--local` as `--target` does |
+| `--tinygo <target>` | _(none)_ | Select the walk taken with `--tinygo <target>`, e.g. `--tinygo pico`; the `tinygo` command on `PATH` defines the target. Applies to `--local` too, which builds with `tinygo build`; a TinyGo wasm target is refused by name. Mutually exclusive with `--target`, `--goos` and `--goarch`. See [Declaring a TinyGo target](walk.md#declaring-a-tinygo-target---tinygo) |
 | `--local` | *(empty)* | Path to the local Go workspace to probe (live local mode) |
 | `--json` | false | Emit output as JSON (global flag) |
 
@@ -1011,7 +1057,9 @@ JSON shape:
   "root": "/abs/path/to/workspace",
   "module_path": "github.com/example/app",
   "version_id": "local-<sha256>",
-  "probe_kind": "",
+  "probe_kind": "binary",
+  "probe_builder": "go build",
+  "frame": { "text": "linux/amd64", "goos": "linux", "goarch": "amd64" },
   "seed_restriction": "seed restricted to stored records measured in this tree's own frame (rooted at github.com/example/app) or in the isolated frame; records measured in another consumer's build were not read",
   "notice": "<optional diagnostic>",
   "coverage": {
@@ -1029,9 +1077,10 @@ JSON shape:
     ],
     "uncovered_remedy": "<the commands that widen the next answer>",
     "probed_binaries": [
-      { "import_path": "github.com/example/app/cmd/server" },
+      { "import_path": "github.com/example/app/cmd/server", "builder": "go build" },
       {
         "import_path": "github.com/example/app/cmd/tool",
+        "builder": "go build",
         "build_error": "building probe binary: exit status 1\n..."
       }
     ],

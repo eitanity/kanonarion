@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -59,6 +60,13 @@ func (f TinyGo) GOARM() string { return f.goarm }
 
 // Tags is the target's build tag set, in the order tinygo reported it.
 func (f TinyGo) Tags() []string { return append([]string(nil), f.tags...) }
+
+// BuildsWasm reports whether this frame's artefact is a wasm module. The tag
+// decides as well as GOARCH: tinygo reports wasip2 and wasm-unknown as linux/arm
+// and tags every wasm target tinygo.wasm.
+func (f TinyGo) BuildsWasm() bool {
+	return f.goarch == "wasm" || slices.Contains(f.tags, "tinygo.wasm")
+}
 
 // GOROOT is the merged root TinyGo builds with.
 func (f TinyGo) GOROOT() string { return f.goroot }
