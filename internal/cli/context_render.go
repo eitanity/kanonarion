@@ -188,6 +188,8 @@ func printContextSummary(out contextOutput, stdout io.Writer) error {
 		}
 	case sectionStatusReadError:
 		w.printf("  Call Graph:      (failed: %s)\n", out.CallGraph.Error)
+	case sectionStatusOtherFrame:
+		w.printf("  Call Graph:      %s\n", otherFrameSection(out.CallGraph))
 	default:
 		w.printf("  Call Graph:      %d nodes, %d edges (%s)\n",
 			out.CallGraph.NodeCount, out.CallGraph.EdgeCount,

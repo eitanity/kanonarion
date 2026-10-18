@@ -204,7 +204,9 @@ coverage: reached/not-reached is measured over recorded CALL EDGES in the stored
 
 If the project has no stored call graph at all, the run says so and points at
 `kanonarion local .` - the silence that follows is an absence of evidence, not
-evidence of absence.
+evidence of absence. Where the project's graph is held only under other build
+frames, the line names them, the flag that reads each, and the command that
+produces this frame's graph.
 
 ## Examples
 

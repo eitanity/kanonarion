@@ -200,3 +200,43 @@ func TestWorktree_OneRecordPerFrame(t *testing.T) {
 		t.Errorf("no read frame over a tree analysed in two frames = %v, want a frame conflict", err)
 	}
 }
+
+// A coordinate held at the asked pipeline only under other frames is unserved
+// and names them from the frame columns; one the read frame holds is served,
+// and with no read frame set nothing is said about frames.
+func TestUnservedCoordinates_OtherFrames(t *testing.T) {
+	t.Parallel()
+	s := openTestStore(t)
+	ctx := context.Background()
+	wasmOnly := coordinatetest.MustNew("example.com/wasm", "v1.0.0")
+	both := coordinatetest.MustNew("example.com/both", "v1.0.0")
+	for _, c := range []struct {
+		coord coordinate.ModuleCoordinate
+		frame domain2.BuildFrame
+	}{{wasmOnly, frameWasm}, {wasmOnly, frameTinyGo}, {both, frameWasm}, {both, frameHost}} {
+		rec := framedLedgerRecord(t, ledgerSpec{coord: c.coord, source: domain2.AnalysisSourceModuleZip, artefact: "zip:h1:" + c.frame.String(),
+			completeness: domain2.CompletenessBuiltWithBodies}, c.frame)
+		if err := s.PutCallGraphRecord(ctx, rec); err != nil {
+			t.Fatalf("PutCallGraphRecord: %v", err)
+		}
+	}
+	pv := framedLedgerRecord(t, ledgerSpec{coord: both, source: domain2.AnalysisSourceModuleZip, artefact: "zip:h1:x",
+		completeness: domain2.CompletenessBuiltWithBodies}, frameHost).PipelineVersion
+
+	if got, err := s.UnservedCoordinates(ctx, []coordinate.ModuleCoordinate{wasmOnly, both}, pv); err != nil || len(got) != 0 {
+		t.Errorf("with no read frame: %+v, %v", got, err)
+	}
+	s.WithReadFrame(frameHost)
+	got, err := s.UnservedCoordinates(ctx, []coordinate.ModuleCoordinate{wasmOnly, both}, pv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Coordinate != wasmOnly || len(got[0].Frames) != 2 {
+		t.Fatalf("unserved = %+v", got)
+	}
+	for _, f := range got[0].Frames {
+		if !domain2.SameFrame(f, frameWasm) && !domain2.SameFrame(f, frameTinyGo) {
+			t.Errorf("unexpected frame %+v", f)
+		}
+	}
+}

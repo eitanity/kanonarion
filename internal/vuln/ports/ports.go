@@ -1075,6 +1075,10 @@ type CallSiteAnswer struct {
 	// Edges holds one fact per call site the graph records out of the requested
 	// callers. A site the graph does not record is absent, never a zero fact.
 	Edges map[CallSiteKey]CallSiteFact
+	// FrameMiss, when nothing was served, says the graph is held only under other
+	// build frames, and FrameMissRemedy produces this frame's. Empty otherwise.
+	FrameMiss       string
+	FrameMissRemedy string
 }
 
 // CallSiteReader reads what one module's SERVED call graph records about

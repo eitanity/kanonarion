@@ -199,6 +199,8 @@ func printFullCallGraph(w *errWriter, cg contextCallGraph, cmd string) {
 		}
 	case sectionStatusReadError:
 		w.printf("(failed: %s)\n", cg.Error)
+	case sectionStatusOtherFrame:
+		w.printf("%s\n", otherFrameSection(cg))
 	default:
 		w.printf("Status:       %s\n", cg.Status)
 		if cg.ExtractedAt != "" {
@@ -370,4 +372,9 @@ func printFullCVE(w *errWriter, cve contextCVE) {
 	if cve.Soundness != vuldomain.SoundnessNotStated {
 		w.printf("    Soundness: %s — %s\n", cve.Soundness, cve.SoundnessReason)
 	}
+}
+
+// otherFrameSection is a call-graph section held only under other frames.
+func otherFrameSection(cg contextCallGraph) string {
+	return "(held under " + strings.Join(cg.HeldFrames, ", ") + " — read with " + strings.Join(cg.ReadWith, " or ") + ")"
 }

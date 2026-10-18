@@ -31,9 +31,10 @@ func (t *textLines) writeTo(w io.Writer, what string) error {
 	return nil
 }
 
-func printCapabilityReport(stdout io.Writer, coord coordinate.ModuleCoordinate, r capdomain.CapabilityReport, scope cgdomain.RootScope, showSuppressed bool) error {
+func printCapabilityReport(stdout io.Writer, coord coordinate.ModuleCoordinate, r capdomain.CapabilityReport, scope cgdomain.RootScope, showSuppressed bool, rec cgdomain.CallGraphRecord) error {
 	var t textLines
 	t.add("%s@%s capabilities:", coord.Path(), coord.Version())
+	t.b.WriteString(recordFrameLine(rec))
 	t.add("  %s", capabilityRootScopeLine(scope))
 	if r.Partial {
 		t.add("  ⚠ %s", r.Caveat)
@@ -152,9 +153,14 @@ func addUnanalyzed(t *textLines, r capdomain.CapabilityReport) {
 	}
 }
 
-func printCapabilityDiff(stdout io.Writer, from, to coordinate.ModuleCoordinate, diff capdomain.CapabilityDiff, scope cgdomain.RootScope, showSuppressed bool) error {
+func printCapabilityDiff(stdout io.Writer, from, to coordinate.ModuleCoordinate, diff capdomain.CapabilityDiff, scope cgdomain.RootScope, showSuppressed bool, fromRec, toRec cgdomain.CallGraphRecord) error {
 	var t textLines
 	t.add("capability diff %s@%s → %s@%s:", from.Path(), from.Version(), to.Path(), to.Version())
+	// Both sides are read under one frame; a second line only where they state it differently.
+	t.b.WriteString(recordFrameLine(fromRec))
+	if to := recordFrameLine(toRec); to != recordFrameLine(fromRec) {
+		t.b.WriteString(to)
+	}
 	t.add("  %s", capabilityRootScopeLine(scope))
 	if !diff.ParityOK {
 		t.add("  ⚠ %s", diff.Caveat)

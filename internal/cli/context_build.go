@@ -469,13 +469,24 @@ func contextPackageOf(pkg ifacedomain.PackageInterface, compact bool) contextPac
 	return cp
 }
 
+// contextCallGraphMiss is the section for a coordinate no graph is served
+// for: held under other frames, from the listing's frame columns, or not run.
+func contextCallGraphMiss(ctx context.Context, coord coordinate.ModuleCoordinate, uc QueryCallGraphUseCase) contextCallGraph {
+	unserved, err := uc.UnservedCoordinates(ctx, []coordinate.ModuleCoordinate{coord}, cgapp.PipelineVersion)
+	if err != nil || len(unserved) == 0 || len(unserved[0].Frames) == 0 {
+		return contextCallGraph{Status: sectionStatusNotRun}
+	}
+	frames, flags := cgdomain.HeldFrames(frameRecords(unserved[0].Frames), cgdomain.BuildFrame{})
+	return contextCallGraph{Status: sectionStatusOtherFrame, HeldFrames: frames, ReadWith: flags}
+}
+
 func buildCallGraph(ctx context.Context, coord coordinate.ModuleCoordinate, uc QueryCallGraphUseCase, entryPointsFull bool, pkgFilter string) contextCallGraph {
 	rec, found, err := uc.GetCallGraphRecord(ctx, coord, cgapp.PipelineVersion)
 	if err != nil {
 		return contextCallGraph{Status: sectionStatusReadError, Error: err.Error()}
 	}
 	if !found {
-		return contextCallGraph{Status: sectionStatusNotRun}
+		return contextCallGraphMiss(ctx, coord, uc)
 	}
 	out := contextCallGraph{
 		ExtractedAt: ledgerStamp(rec.ExtractedAt),

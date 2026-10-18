@@ -2780,16 +2780,55 @@ func (s *Store) UnservedCoordinates(ctx context.Context, coords []coordinate.Mod
 		if err != nil {
 			return nil, err
 		}
-		if slices.Contains(pipelines, pipelineVersion) {
-			continue
-		}
 		u := ports.UnservedCoordinate{Coordinate: c, Pipelines: pipelines}
+		if slices.Contains(pipelines, pipelineVersion) {
+			// Held at this pipeline: unserved only when no generation is the read's
+			// frame, which the frame columns say without decoding a blob.
+			if u.Frames, err = s.otherFramesHeld(ctx, c, pipelineVersion); err != nil {
+				return nil, err
+			}
+			if len(u.Frames) == 0 {
+				continue
+			}
+		}
 		if c.IsLocal() && len(pipelines) > 0 {
 			if u.AnalysisRoot, err = s.newestAnalysisRoot(ctx, c); err != nil {
 				return nil, err
 			}
 		}
 		out = append(out, u)
+	}
+	return out, nil
+}
+
+// otherFramesHeld lists the frames c's generations at pipelineVersion were
+// extracted under when none is the read frame, nil when one is or no read frame
+// is set.
+func (s *Store) otherFramesHeld(ctx context.Context, c coordinate.ModuleCoordinate, pipelineVersion string) ([]domain2.BuildFrame, error) {
+	if s.readFrame.IsZero() {
+		return nil, nil
+	}
+	rows, err := s.db.DB().QueryContext(ctx,
+		`SELECT DISTINCT goos, goarch, goarm, tinygo_target FROM callgraph_records
+WHERE module_path = ? AND module_version = ? AND pipeline_version = ? ORDER BY goos, goarch, goarm, tinygo_target`,
+		c.Path(), c.Version(), pipelineVersion)
+	if err != nil {
+		return nil, fmt.Errorf("querying the frames held for %s: %w", c, err)
+	}
+	defer rows.Close() //nolint:errcheck // read-only; Err is checked below
+	var out []domain2.BuildFrame
+	for rows.Next() {
+		var f domain2.BuildFrame
+		if serr := rows.Scan(&f.GOOS, &f.GOARCH, &f.GOARM, &f.TinyGoTarget); serr != nil {
+			return nil, fmt.Errorf("scanning the frames held for %s: %w", c, serr)
+		}
+		if domain2.SameFrame(f, s.readFrame) {
+			return nil, nil
+		}
+		out = append(out, f)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating the frames held for %s: %w", c, err)
 	}
 	return out, nil
 }

@@ -363,6 +363,10 @@ type UnservedCoordinate struct {
 	// AnalysisRoot is the working tree the newest generation of a local
 	// coordinate names, empty when none does.
 	AnalysisRoot string
+	// Frames, when set, are the build frames the coordinate's generations at the
+	// asked pipeline were extracted under, none of them the read's: it is held,
+	// only not for this read.
+	Frames []domain.BuildFrame
 }
 
 // CallGraphUnservedReader is the optional capability of naming what an edge

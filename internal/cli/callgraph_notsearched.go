@@ -19,6 +19,7 @@ import (
 const (
 	notSearchedSuperseded  = "superseded"
 	notSearchedNotAnalysed = "not_analysed"
+	notSearchedOtherFrame  = "other_frame"
 )
 
 // notSearchedJSON is one coordinate an answer could not read. Remedy is absent
@@ -28,7 +29,9 @@ type notSearchedJSON struct {
 	Coordinate string   `json:"coordinate"`
 	Pipelines  []string `json:"pipelines,omitempty"`
 	Reason     string   `json:"reason"`
-	Remedy     string   `json:"remedy,omitempty"`
+	// Frames are the build frames an other_frame coordinate is held under.
+	Frames []string `json:"frames,omitempty"`
+	Remedy string   `json:"remedy,omitempty"`
 }
 
 // storeNotSearched collects, for one invocation, the coordinates the edge and
@@ -95,10 +98,16 @@ func (s notSearchedRows) json() []notSearchedJSON {
 			reason = notSearchedNotAnalysed
 		}
 		remedy, _ := domain.ReanalysisCommand(r.Coordinate, r.AnalysisRoot, false)
+		var frames []string
+		if len(r.Frames) > 0 {
+			reason, remedy = notSearchedOtherFrame, frameRemedy(r)
+			frames, _ = domain.HeldFrames(frameRecords(r.Frames), domain.BuildFrame{})
+		}
 		out = append(out, notSearchedJSON{
 			Coordinate: r.Coordinate.String(),
 			Pipelines:  r.Pipelines,
 			Reason:     reason,
+			Frames:     frames,
 			Remedy:     remedy,
 		})
 	}
@@ -108,11 +117,14 @@ func (s notSearchedRows) json() []notSearchedJSON {
 // write states the rows as two notices, superseded and never analysed, each
 // naming its coordinates and then one remedy line per coordinate.
 func (s notSearchedRows) write(w io.Writer) error {
-	var superseded, unanalysed notSearchedRows
+	var superseded, unanalysed, otherFrame notSearchedRows
 	for _, r := range s {
-		if len(r.Pipelines) == 0 {
+		switch {
+		case len(r.Frames) > 0:
+			otherFrame = append(otherFrame, r)
+		case len(r.Pipelines) == 0:
 			unanalysed = append(unanalysed, r)
-		} else {
+		default:
 			superseded = append(superseded, r)
 		}
 	}
@@ -121,9 +133,28 @@ func (s notSearchedRows) write(w io.Writer) error {
 		"re-derive with"); err != nil {
 		return err
 	}
-	return unanalysed.writeNotice(w,
+	if err := unanalysed.writeNotice(w,
 		"module version(s) in the build scope have no call graph at any pipeline and were not searched",
-		"analyse with")
+		"analyse with"); err != nil {
+		return err
+	}
+	return otherFrame.writeNotice(w,
+		"module version(s) in the build scope are held only under other frames and were not searched",
+		"or produce this frame's with")
+}
+
+// frameRecords carries frames in the shape the shared frame helper reads.
+func frameRecords(frames []domain.BuildFrame) []domain.CallGraphRecord {
+	out := make([]domain.CallGraphRecord, 0, len(frames))
+	for _, f := range frames {
+		out = append(out, domain.CallGraphRecord{Frame: f})
+	}
+	return out
+}
+
+// frameRemedy produces the read frame's record for an other-frame row.
+func frameRemedy(r ports.UnservedCoordinate) string {
+	return frameReanalysis(r.Coordinate, r.AnalysisRoot)
 }
 
 func (s notSearchedRows) writeNotice(w io.Writer, what, how string) error {
@@ -133,7 +164,11 @@ func (s notSearchedRows) writeNotice(w io.Writer, what, how string) error {
 	names := make([]string, 0, len(s))
 	for _, r := range s {
 		name := r.Coordinate.String()
-		if len(r.Pipelines) > 0 {
+		switch {
+		case len(r.Frames) > 0:
+			frames, flags := domain.HeldFrames(frameRecords(r.Frames), domain.BuildFrame{})
+			name += " (" + strings.Join(frames, ", ") + "; read with " + strings.Join(flags, " or ") + ")"
+		case len(r.Pipelines) > 0:
 			name += " (pipeline " + strings.Join(r.Pipelines, ", ") + ")"
 		}
 		names = append(names, name)
@@ -141,6 +176,10 @@ func (s notSearchedRows) writeNotice(w io.Writer, what, how string) error {
 	var b strings.Builder
 	b.WriteString("notice: " + strconv.Itoa(len(s)) + " " + what + ": " + strings.Join(names, ", ") + " — " + how + ":\n")
 	for _, r := range s {
+		if len(r.Frames) > 0 {
+			b.WriteString("  " + frameRemedy(r) + "\n")
+			continue
+		}
 		if line, ok := domain.ReanalysisCommand(r.Coordinate, r.AnalysisRoot, false); ok {
 			b.WriteString("  " + line + "\n")
 			continue

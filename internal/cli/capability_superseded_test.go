@@ -23,6 +23,10 @@ func (noGenerations) ListCallGraphCoordinates(context.Context, cgports.CallGraph
 	return nil, nil
 }
 
+func (noGenerations) CallGraphHistory(context.Context, coordinate.ModuleCoordinate, string) ([]cgdomain.CallGraphRecord, error) {
+	return nil, nil
+}
+
 // generationsAt is a store holding one coordinate at the named pipeline
 // versions — the state a bare "no record" refusal contradicts.
 type generationsAt struct {
@@ -40,6 +44,11 @@ func (g generationsAt) ListCallGraphCoordinates(context.Context, cgports.CallGra
 		})
 	}
 	return out, nil
+}
+
+// CallGraphHistory decodes none of them: each is at a pipeline this build does not serve.
+func (generationsAt) CallGraphHistory(context.Context, coordinate.ModuleCoordinate, string) ([]cgdomain.CallGraphRecord, error) {
+	return nil, nil
 }
 
 // capability said the record did not exist while the store held two generations

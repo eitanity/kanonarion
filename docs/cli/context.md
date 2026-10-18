@@ -566,7 +566,9 @@ measurement carried one - the same two words `audit` prints for the same node.
 
 | Field | Type | Description |
 |---|---|---|
-| `status` | string | `not_run` / `read_error` / extractor status |
+| `status` | string | `not_run` / `other_frame` / `read_error` / extractor status. `other_frame` means the graph is held only under build frames other than the read's; text prints `(held under wasip1/wasm — read with --target wasip1/wasm)` |
+| `held_frames` | array | On `other_frame`: the frames the graph is held under |
+| `read_with` | array | On `other_frame`: the flag that reads each held frame |
 | `algorithm` | string | Analysis algorithm used (e.g. `CHA`) |
 | `node_count` | int | Total call graph nodes. Always present; `0` is a real extraction result — a module analysed at a fidelity that records no nodes |
 | `edge_count` | int | Total call graph edges. Always present at `0` for the same reason as `node_count` |

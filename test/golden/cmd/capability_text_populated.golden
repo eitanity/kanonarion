@@ -3,6 +3,7 @@ $ kanonarion capability example.com/mod@v1.2.0
 exit 0
 --- stdout ---
 example.com/mod@v1.2.0 capabilities:
+  frame: linux/amd64
   roots: all of this module's own code; test functions excluded (widen with --include-tests)
   (no sensitive capabilities witnessed)
   sensitive calls: none (no exported sensitive function called over a Direct edge)

@@ -376,7 +376,7 @@ func runCallGraphHistory(ctx context.Context, coord coordinate.ModuleCoordinate,
 	// itself: a coordinate the store has never held and one whose generations
 	// this build has stopped serving are different facts, and a list that simply
 	// omits the second states neither.
-	note, nerr := supersededGenerationsNote(ctx, coord, uc, recs)
+	note, nerr := supersededGenerationsNote(ctx, coord, uc, recs, nil)
 	if nerr != nil {
 		return nerr
 	}
@@ -392,7 +392,7 @@ func runCallGraphHistory(ctx context.Context, coord coordinate.ModuleCoordinate,
 // writeNoCallGraphHistory says the coordinate has no generation this build
 // serves, and whether the ledger holds ones it has stopped serving.
 func writeNoCallGraphHistory(ctx context.Context, coord coordinate.ModuleCoordinate, uc QueryCallGraphUseCase, recs []domain.CallGraphRecord, stdout io.Writer) error {
-	note, nerr := supersededGenerationsNote(ctx, coord, uc, recs)
+	note, nerr := supersededGenerationsNote(ctx, coord, uc, recs, nil)
 	if nerr != nil {
 		return nerr
 	}
@@ -1487,18 +1487,44 @@ func writeCallGraphNodes(stdout io.Writer, r domain.CallGraphRecord, limitNodes 
 // The exit code and the remedy are the same either way — the coordinate has to
 // be analysed by this build — so only the diagnosis differs, and it differs on
 // what the store says rather than on which command asked.
-func missingCallGraphRefusal(ctx context.Context, coord coordinate.ModuleCoordinate, uc ports.CallGraphCoordinateLister) error {
-	note, err := supersededGenerationsNote(ctx, coord, uc, nil)
+func missingCallGraphRefusal(ctx context.Context, coord coordinate.ModuleCoordinate, uc callGraphGenerationReader) error {
+	// The decodable generations say which unserved ones are another frame's and
+	// which tree the remedy names; an unreadable history leaves the listing alone.
+	recs, herr := uc.CallGraphHistory(ctx, coord, cgapp.PipelineVersion)
+	if herr != nil {
+		recs = nil
+	}
+	want := invocationFrame()
+	var otherFrames []domain.CallGraphRecord
+	for _, r := range recs {
+		if !r.Frame.IsZero() && !domain.SameFrame(r.Frame, want) {
+			otherFrames = append(otherFrames, r)
+		}
+	}
+	note, err := supersededGenerationsNote(ctx, coord, uc, otherFrames, otherFrames)
 	if err != nil {
 		return err
 	}
-	if note != "" {
+	remedy := frameReanalysis(coord, domain.AgreedRoot(recs))
+	switch {
+	case len(otherFrames) > 0:
+		return &exitError{code: ExitNotFound, msg: fmt.Sprintf(
+			"no callgraph record for %s at pipeline %s extracted under %s — %s. Produce one under %s:\n  %s",
+			coord, cgapp.PipelineVersion, want, note, want, remedy)}
+	case note != "":
 		return &exitError{code: ExitNotFound, msg: fmt.Sprintf(
 			"no callgraph record for %s at pipeline %s — %s. Re-analyse it:\n  %s",
-			coord, cgapp.PipelineVersion, note, frameReanalysis(coord, ""))}
+			coord, cgapp.PipelineVersion, note, remedy)}
 	}
 	return &exitError{code: ExitNotFound, msg: fmt.Sprintf(
-		"no callgraph record for %s — analyse it first:\n  %s", coord, frameReanalysis(coord, ""))}
+		"no callgraph record for %s — analyse it first:\n  %s", coord, remedy)}
+}
+
+// callGraphGenerationReader is what a refusal reads to say what the store holds:
+// the listing's columns, and the generations this build decodes.
+type callGraphGenerationReader interface {
+	ports.CallGraphCoordinateLister
+	CallGraphHistory(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) ([]domain.CallGraphRecord, error)
 }
 
 // supersededGenerationsNote describes the generations the store holds for a
@@ -1531,6 +1557,7 @@ func supersededGenerationsNote(
 	coord coordinate.ModuleCoordinate,
 	uc ports.CallGraphCoordinateLister,
 	servable []domain.CallGraphRecord,
+	otherFrames []domain.CallGraphRecord,
 ) (string, error) {
 	sums, err := uc.ListCallGraphCoordinates(ctx, ports.CallGraphFilter{ModulePath: coord.Path()})
 	if err != nil {
@@ -1565,7 +1592,9 @@ func supersededGenerationsNote(
 			unserved = append(unserved, g)
 		}
 	}
-	var clauses []string
+	// Ahead of every other clause: a generation of another frame decoded fine, and
+	// the reader's flag, not a re-analysis, is what reads it.
+	clauses := otherFramesClause(otherFrames)
 	// The pipeline clause answers "why is there no answer at all", so it is
 	// stated only where there is none. Every caller that displays generations
 	// names the pipeline version it is displaying them at, so a generation under
@@ -1590,6 +1619,20 @@ func supersededGenerationsNote(
 		return "", nil
 	}
 	return strings.Join(clauses, "; "), nil
+}
+
+// otherFramesClause names the generations held under frames other than the
+// read's and the flag that reads each, as one clause, or none when there are none.
+func otherFramesClause(recs []domain.CallGraphRecord) []string {
+	if len(recs) == 0 {
+		return nil
+	}
+	frames, flags := domain.HeldFrames(recs, domain.BuildFrame{})
+	clause := fmt.Sprintf("%d generation(s) extracted under %s", len(recs), strings.Join(frames, ", "))
+	if len(flags) > 0 {
+		clause += "; read one with " + strings.Join(flags, " or ")
+	}
+	return []string{clause}
 }
 
 // statedAnalysers renders the distinct analysers a set of listed generations

@@ -225,6 +225,8 @@ var frameGuardCases = map[string][]frameGuardCase{
 	"callgraph-show": {{args: func(string) []string { return []string{"callgraph-show", jsonDocRootPath + "@local"} },
 		want: "frame: linux/arm64"}},
 	"implementers": {{args: func(string) []string { return []string{"implementers", jsonDocRootPath + ".Store"} }, want: "(*ArmOnlyStore)"}},
+	"capability": {{args: func(string) []string { return []string{"capability", jsonDocRootPath + "@local"} },
+		want: "frame: linux/arm64"}},
 	"usage": {{args: func(tree string) []string {
 		return []string{"usage", jsonDocDepCoord, "--gomod", filepath.Join(tree, "go.mod")}
 	}, want: jsonDocDep.Path() + ".ArmOnlyAPI"}},

@@ -276,6 +276,9 @@ func classifyEmptyEdgeResult(ctx context.Context, symbolID string, uc QueryCallG
 	}
 	modulePath, ok := domain.ResolveSymbolModule(symbolID, coordinatePaths(stored))
 	if !ok {
+		if miss := stdlibFrameMiss(ctx, uc, symbolID, stored); miss != nil {
+			return miss
+		}
 		return unresolvedSymbolError(symbolID) // module never analysed
 	}
 
@@ -289,7 +292,7 @@ func classifyEmptyEdgeResult(ctx context.Context, symbolID string, uc QueryCallG
 	// The module was analysed. Zero edges is only a genuine answer if the
 	// symbol is actually a vertex in the graph; otherwise "no callers/callees"
 	// is an absence-as-answer for a symbol the store has never seen.
-	known, err := symbolIsKnownNode(ctx, uc, symbolID, modulePath, coords, sc.toolchain)
+	known, served, err := symbolIsKnownNode(ctx, uc, symbolID, modulePath, coords, sc.toolchain)
 	if err != nil {
 		return err
 	}
@@ -297,6 +300,13 @@ func classifyEmptyEdgeResult(ctx context.Context, symbolID string, uc QueryCallG
 		return nil // analysed, genuinely zero edges
 	}
 	versions := analysedVersionsOf(modulePath, coords)
+	// A module analysed only under other frames was never searched for the
+	// symbol, so the typo diagnostic below would misstate what ran.
+	if !served {
+		if miss := moduleFrameMiss(ctx, uc, modulePath, versions); miss != nil {
+			return miss
+		}
+	}
 	if len(versions) == 0 {
 		// moduleServedAtThisPipeline reported the module served, so there is a
 		// version; with none there is no coordinate to name, and the
@@ -839,31 +849,47 @@ func localCoordinateOwning(ctx context.Context, symbolID string, uc QueryCallGra
 	return coordinate.ModuleCoordinate{}, false, nil
 }
 
+// stdlibFrameMiss is moduleFrameMiss for a standard-library symbol, whose
+// module path is no prefix of it. A stdlib import path's first element holds no
+// dot; any other symbol is not the standard library's.
+func stdlibFrameMiss(ctx context.Context, uc QueryCallGraphUseCase, symbolID string, stored []ports.CallGraphCoordinate) error {
+	elem, _, sliced := strings.Cut(symbolID, "/")
+	if !sliced {
+		elem, _, _ = strings.Cut(symbolID, ".")
+	}
+	if elem == "" || strings.Contains(elem, ".") {
+		return nil
+	}
+	return moduleFrameMiss(ctx, uc, coordinate.StdlibPath, analysedVersionsOf(coordinate.StdlibPath, stored))
+}
+
 // symbolIsKnownNode reports whether symbolID is a node in any analysed call
-// graph record for modulePath (a module may have several analysed versions).
-func symbolIsKnownNode(ctx context.Context, uc QueryCallGraphUseCase, symbolID, modulePath string, coords []ports.CallGraphCoordinate, toolchain gotoolchain.Version) (bool, error) {
+// graph record for modulePath (a module may have several analysed versions),
+// and whether any record of the module was served under the read frame.
+func symbolIsKnownNode(ctx context.Context, uc QueryCallGraphUseCase, symbolID, modulePath string, coords []ports.CallGraphCoordinate, toolchain gotoolchain.Version) (known, served bool, err error) {
 	for _, s := range coords {
 		if s.ModulePath != modulePath {
 			continue
 		}
 		coord, cErr := coordinate.NewModuleCoordinate(s.ModulePath, s.ModuleVersion)
 		if cErr != nil {
-			return false, fmt.Errorf("call graph record %s@%s names no module: %w", s.ModulePath, s.ModuleVersion, cErr)
+			return false, served, fmt.Errorf("call graph record %s@%s names no module: %w", s.ModulePath, s.ModuleVersion, cErr)
 		}
-		rec, found, err := uc.GetCallGraphRecordFrom(ctx, coord, s.PipelineVersion, domain.ComposeRequest{ToolchainPreference: toolchain})
-		if err != nil {
-			return false, fmt.Errorf("loading call graph for %s: %w", coord, err)
+		rec, found, gErr := uc.GetCallGraphRecordFrom(ctx, coord, s.PipelineVersion, domain.ComposeRequest{ToolchainPreference: toolchain})
+		if gErr != nil {
+			return false, served, fmt.Errorf("loading call graph for %s: %w", coord, gErr)
 		}
 		if !found {
 			continue
 		}
+		served = true
 		for i := range rec.Nodes {
 			if rec.Nodes[i].ID == symbolID {
-				return true, nil
+				return true, true, nil
 			}
 		}
 	}
-	return false, nil
+	return false, served, nil
 }
 
 // unknownNodeMessage is the diagnostic for a symbol whose module was analysed

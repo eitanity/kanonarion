@@ -176,6 +176,9 @@ func usageWith(ctx context.Context, ctr *Container, coord coordinate.ModuleCoord
 		return err
 	}
 	if !bound.CallGraphFound {
+		if miss := frameMiss(ctx, bound.Consumer, ctr.QueryCallGraph); miss != nil {
+			return miss
+		}
 		return &exitError{code: ExitNotFound, msg: fmt.Sprintf(
 			"no stored call graph for %s, so nothing can be measured about what its code uses — "+
 				"run: kanonarion local .", bound.Consumer)}
@@ -440,7 +443,8 @@ func resolveUsageModule(
 	res := &usageModuleResolution{Requested: requested, Measured: requested, Basis: usageVersionUnenumerated}
 	versions := usageStoredVersionsOf(stored, requested.Path())
 
-	for _, cand := range usageVersionCandidates(requested, scope, versions) {
+	candidates := usageVersionCandidates(requested, scope, versions)
+	for _, cand := range candidates {
 		coord, cerr := coordinate.NewModuleCoordinate(requested.Path(), cand.version)
 		if cerr != nil {
 			continue
@@ -455,6 +459,15 @@ func resolveUsageModule(
 		}
 		res.Measured, res.Record, res.Found, res.Basis = coord, rec, true, cand.basis
 		return res, nil
+	}
+	// A module held only under other frames was enumerated, just not for this
+	// read; saying its surface was never enumerated would misstate the store.
+	tried := make([]string, 0, len(candidates))
+	for _, cand := range candidates {
+		tried = append(tried, cand.version)
+	}
+	if miss := moduleFrameMiss(ctx, graphs, requested.Path(), tried); miss != nil {
+		return nil, miss
 	}
 	return res, nil
 }

@@ -538,7 +538,7 @@ func NewContainerFrom(st *storage.Storage, storeRoot, goproxy, goBinary string, 
 	// and the re-scan share its memo of served graphs: serving a graph is a blob
 	// decode and an edge reconstruction, and a walk's records share their routes.
 	routeAnnotator := reachability.NewDispatchAnnotator(
-		reachability.NewCallSiteStoreReader(cgStore, cgapp.PipelineVersion), logger)
+		reachability.NewCallSiteStoreReader(cgStore, cgapp.PipelineVersion).WithReadFrame(declaredReadFrame), logger)
 
 	// The same ceiling: a reachability scan spawns the same analysis of the same
 	// module, and a ceiling that applied only on the extract path would leave the
@@ -1017,6 +1017,11 @@ func (c *Container) adoptDeclaredFrame() {
 	if c.cgFrames != nil {
 		c.cgFrames.WithReadFrame(invocationFrame())
 	}
+}
+
+// declaredReadFrame is invocationFrame and the flag a remedy carries to reach it.
+func declaredReadFrame() (cgdomain.BuildFrame, string) {
+	return invocationFrame(), targetFlagHint()
 }
 
 // invocationFrame is the build frame this invocation's call-graph reads select.

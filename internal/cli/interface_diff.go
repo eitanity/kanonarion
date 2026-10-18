@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	cgapp "github.com/eitanity/kanonarion/internal/callgraph/application"
+	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
 	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/gotoolchain"
@@ -237,6 +238,47 @@ type usedByResult struct {
 	// reads it and a large respelt surface would otherwise cost one call-graph
 	// query per declaration for no reader.
 	Touched []usedSymbol
+	// frameMiss, when no graph was served, says it is held under other frames
+	// and how to read or produce this frame's; empty otherwise.
+	frameMiss string
+}
+
+// absentGraphClause, absentGraphLead and absentGraphRemedy state the missing
+// consumer graph: unchanged for one never analysed, naming the held frames and
+// the flag that reads them for one held under other frames.
+func (r *usedByResult) absentGraphClause() string {
+	if r.frameMiss != "" {
+		return r.frameMiss
+	}
+	return "there is no stored call graph for it; run: kanonarion local ."
+}
+
+func (r *usedByResult) absentGraphLead() string {
+	if r.frameMiss != "" {
+		return r.frameMiss
+	}
+	return "no stored call graph for " + r.Consumer.Path()
+}
+
+func (r *usedByResult) absentGraphRemedy() string {
+	if r.frameMiss != "" {
+		return ""
+	}
+	return "; run: kanonarion local ."
+}
+
+// consumerFrameMiss is the frame-miss clause for a consumer whose call graph
+// is held only under other frames, "" when that is not why none was served.
+func consumerFrameMiss(ctx context.Context, uc QueryCallGraphUseCase, coord coordinate.ModuleCoordinate) string {
+	recs, err := uc.CallGraphHistory(ctx, coord, cgapp.PipelineVersion)
+	if err != nil {
+		return ""
+	}
+	reason, _, ok := cgdomain.FrameMissReason(coord, recs, invocationFrame(), targetFlagHint(), "this read's")
+	if !ok {
+		return ""
+	}
+	return reason + ", or produce this frame's with: " + frameReanalysis(coord, cgdomain.AgreedRoot(recs))
 }
 
 // Reached returns the symbols the consumer's own code actually calls.
@@ -275,6 +317,9 @@ func joinUsedBy(ctx context.Context, ctr *Container, diff ifacedomain.InterfaceD
 		return nil, err
 	}
 	res := &usedByResult{consumerBinding: *bound}
+	if !bound.CallGraphFound {
+		res.frameMiss = consumerFrameMiss(ctx, ctr.QueryCallGraph, bound.Consumer)
+	}
 	scope := bound.Scope
 
 	join := func(sym breakingDelta) (usedSymbol, error) {
@@ -542,8 +587,8 @@ func printZeroBreakingStatement(diff ifacedomain.InterfaceDiff, used *usedByResu
 		if _, err := fmt.Fprintf(stdout,
 			"  what would answer it: exercise your own tests over the call sites this bump touches — "+
 				"whether %s own code calls any of the %d declaration(s) it moved could NOT be measured: "+
-				"there is no stored call graph for it; run: kanonarion local .\n",
-			used.Consumer.Path(), len(used.Touched)); err != nil {
+				"%s\n",
+			used.Consumer.Path(), len(used.Touched), used.absentGraphClause()); err != nil {
 			return fmt.Errorf("writing zero-breaking statement: %w", err)
 		}
 		return nil
@@ -717,9 +762,9 @@ func printUsedBySection(used *usedByResult, stdout io.Writer) error {
 	}
 	if !used.CallGraphFound {
 		if _, err := fmt.Fprintf(stdout,
-			"  no stored call graph for %s — every reach count and per-declaration row in this "+
-				"report is an absence of evidence, not a measurement of reach; "+
-				"run: kanonarion local .\n", used.Consumer.Path()); err != nil {
+			"  %s — every reach count and per-declaration row in this "+
+				"report is an absence of evidence, not a measurement of reach%s\n",
+			used.absentGraphLead(), used.absentGraphRemedy()); err != nil {
 			return fmt.Errorf("writing used-by absence: %w", err)
 		}
 	}

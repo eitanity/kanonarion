@@ -12,7 +12,6 @@ import (
 
 	cgapp "github.com/eitanity/kanonarion/internal/callgraph/application"
 	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
-	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
 	capapp "github.com/eitanity/kanonarion/internal/capability/application"
 	capdomain "github.com/eitanity/kanonarion/internal/capability/domain"
 )
@@ -24,9 +23,17 @@ import (
 // that consumes it, and a consumer compiles none of its _test.go files.
 const capabilityTestRootFlagName = "include-tests"
 
+// capabilityFlags are the capability command's flags.
+type capabilityFlags struct {
+	against        string
+	includeTests   bool
+	showSuppressed bool
+	target         buildTargetFlags
+	walkID         string
+}
+
 func newCapabilityCmd(stdout, stderr io.Writer) *cobra.Command {
-	var against string
-	var includeTests, showSuppressed bool
+	var f capabilityFlags
 
 	cmd := &cobra.Command{
 		Use: "capability <module>@<version>",
@@ -73,42 +80,95 @@ labelled callee, or its own unsafe.Pointer use. Added and removed rows, sensitiv
 calls, co-location facts and unanalysed bodies are listed separately. The diff is
 only valid when both versions were analysed at equal completeness.
 
+The call graph read is the one extracted under this host's build frame, or the
+frame --target, --goos/--goarch or --tinygo declares, or the frame of the walk
+--walk-id names. The report's frame line says which.
+
 It reads stored call graphs; run
 'kanonarion fetch <module>@<version> && kanonarion callgraph <module>@<version>' first.`,
 		Example: `  kanonarion capability github.com/spf13/cobra@v1.8.1
   kanonarion capability github.com/spf13/cobra@v1.8.1 --json
   kanonarion capability github.com/spf13/cobra@v1.8.1 --show-suppressed
   kanonarion capability github.com/spf13/cobra@v1.8.1 --include-tests
+  kanonarion capability github.com/spf13/cobra@v1.8.1 --target wasip1/wasm
   kanonarion capability github.com/spf13/cobra@v1.8.0 --against github.com/spf13/cobra@v1.8.1`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) != 1 {
 				return usageErr(cmd)
 			}
-			logger := buildLogger(logLevel, stderr)
-			ctr, cleanup, err := NewContainer(storeRoot, "", "", false, activeConfig, logger)
-			if err != nil {
-				return fmt.Errorf("initialising store: %w", err)
-			}
-			defer releaseStore(cleanup)
-
-			uc := capapp.NewAnalyseCapabilitiesUseCase(ctr.QueryCallGraph)
-			scope := capabilityRootScope(includeTests)
-			if against != "" {
-				return runCapabilityDiff(cmd.Context(), args[0], against, uc, ctr.QueryCallGraph, scope,
-					capabilityOutput{json: jsonOut, showSuppressed: showSuppressed}, stdout)
-			}
-			return runCapability(cmd.Context(), args[0], uc, ctr.QueryCallGraph, scope,
-				capabilityOutput{json: jsonOut, showSuppressed: showSuppressed}, stdout)
+			return runCapabilityCmd(cmd.Context(), cmd.Name(), args[0], f, stdout, stderr)
 		},
 	}
 
-	cmd.Flags().StringVar(&against, "against", "", "second <module>@<version> to diff the capability set against")
-	cmd.Flags().BoolVar(&includeTests, capabilityTestRootFlagName, false,
+	cmd.Flags().StringVar(&f.against, "against", "", "second <module>@<version> to diff the capability set against")
+	cmd.Flags().BoolVar(&f.includeTests, capabilityTestRootFlagName, false,
 		"also root the traversal at test functions, which a consumer of the module does not compile")
-	cmd.Flags().BoolVar(&showSuppressed, capabilityShowSuppressedFlagName, false,
+	cmd.Flags().BoolVar(&f.showSuppressed, capabilityShowSuppressedFlagName, false,
 		"also print what text hides by default: RUNTIME_INTERNAL and unexported plumbing rows (JSON always carries them)")
+	registerBuildTargetFlags(cmd, &f.target)
+	cmd.Flags().StringVar(&f.walkID, "walk-id", "", "read the call graph extracted under the build frame this walk resolved")
 	return cmd
+}
+
+// runCapabilityCmd settles the frame the read selects, opens the store, and
+// answers. The callers rule applies: a declaration beside --walk-id is refused
+// by name, since the walk's own frame is the read frame.
+func runCapabilityCmd(ctx context.Context, name, arg string, f capabilityFlags, stdout, stderr io.Writer) error {
+	if terr := resolveReadTarget(ctx, f.target, name, f.walkID == "", ""); terr != nil {
+		return terr
+	}
+	logger := buildLogger(logLevel, stderr)
+	ctr, cleanup, err := NewContainer(storeRoot, "", "", false, activeConfig, logger)
+	if err != nil {
+		return fmt.Errorf("initialising store: %w", err)
+	}
+	defer releaseStore(cleanup)
+	if f.walkID != "" {
+		// No later read names the walk, so a missing one is refused here.
+		if _, werr := ctr.QueryWalks.GetWalk(ctx, f.walkID); werr != nil {
+			return fmt.Errorf("loading walk %q: %w", f.walkID, werr)
+		}
+		if aerr := adoptNamedWalkFrame(ctx, ctr.QueryWalks, f.walkID); aerr != nil {
+			return aerr
+		}
+	}
+
+	served := &servedCallGraphs{source: ctr.QueryCallGraph}
+	uc := capapp.NewAnalyseCapabilitiesUseCase(served)
+	scope := capabilityRootScope(f.includeTests)
+	out := capabilityOutput{json: jsonOut, showSuppressed: f.showSuppressed, served: served}
+	if f.against != "" {
+		return runCapabilityDiff(ctx, arg, f.against, uc, ctr.QueryCallGraph, scope, out, stdout)
+	}
+	return runCapability(ctx, arg, uc, ctr.QueryCallGraph, scope, out, stdout)
+}
+
+// servedCallGraphs is the capability source that keeps each record it served,
+// so the report can state the frame that record was extracted under.
+type servedCallGraphs struct {
+	source capapp.CallGraphSource
+	recs   map[string]cgdomain.CallGraphRecord
+}
+
+func (s *servedCallGraphs) GetCallGraphRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (cgdomain.CallGraphRecord, bool, error) {
+	rec, found, err := s.source.GetCallGraphRecord(ctx, coord, pipelineVersion)
+	if err == nil && found {
+		if s.recs == nil {
+			s.recs = map[string]cgdomain.CallGraphRecord{}
+		}
+		s.recs[coord.String()] = rec
+	}
+	return rec, found, err //nolint:wrapcheck // a pass-through; the use case wraps what it reads
+}
+
+// record is the record served for coord; the zero record when none was, or
+// when the report was not read through a servedCallGraphs.
+func (s *servedCallGraphs) record(coord coordinate.ModuleCoordinate) cgdomain.CallGraphRecord {
+	if s == nil {
+		return cgdomain.CallGraphRecord{}
+	}
+	return s.recs[coord.String()]
 }
 
 // capabilityRootScope maps the flag to the shared root scope.
@@ -149,9 +209,11 @@ type capabilityAnalyser interface {
 type capabilityOutput struct {
 	json           bool
 	showSuppressed bool
+	// served holds the records the reports were drawn from, for the frame line.
+	served *servedCallGraphs
 }
 
-func runCapability(ctx context.Context, arg string, uc capabilityAnalyser, generations cgports.CallGraphCoordinateLister, scope cgdomain.RootScope, out capabilityOutput, stdout io.Writer) error {
+func runCapability(ctx context.Context, arg string, uc capabilityAnalyser, generations callGraphGenerationReader, scope cgdomain.RootScope, out capabilityOutput, stdout io.Writer) error {
 	coord, err := parseCoordinate(arg)
 	if err != nil {
 		return fmt.Errorf("invalid coordinate %q: %w", arg, err)
@@ -165,13 +227,14 @@ func runCapability(ctx context.Context, arg string, uc capabilityAnalyser, gener
 	}
 	if out.json {
 		doc := capabilityReportToJSON(coord, report, scope)
+		doc.Frame = toFrameJSON(out.served.record(coord).Frame)
 		doc.SetAside = storeSetAside.take().json()
 		return encodeJSON(stdout, doc)
 	}
-	return printCapabilityReport(stdout, coord, report, scope, out.showSuppressed)
+	return printCapabilityReport(stdout, coord, report, scope, out.showSuppressed, out.served.record(coord))
 }
 
-func runCapabilityDiff(ctx context.Context, fromArg, toArg string, uc capabilityAnalyser, generations cgports.CallGraphCoordinateLister, scope cgdomain.RootScope, out capabilityOutput, stdout io.Writer) error {
+func runCapabilityDiff(ctx context.Context, fromArg, toArg string, uc capabilityAnalyser, generations callGraphGenerationReader, scope cgdomain.RootScope, out capabilityOutput, stdout io.Writer) error {
 	from, err := parseCoordinate(fromArg)
 	if err != nil {
 		return fmt.Errorf("invalid coordinate %q: %w", fromArg, err)
@@ -189,10 +252,13 @@ func runCapabilityDiff(ctx context.Context, fromArg, toArg string, uc capability
 	}
 	if out.json {
 		doc := capabilityDiffToJSON(from, to, fromReport, toReport, diff, scope)
+		doc.From.Frame = toFrameJSON(out.served.record(from).Frame)
+		doc.To.Frame = toFrameJSON(out.served.record(to).Frame)
 		doc.SetAside = storeSetAside.take().json()
 		return encodeJSON(stdout, doc)
 	}
-	return printCapabilityDiff(stdout, from, to, diff, scope, out.showSuppressed)
+	return printCapabilityDiff(stdout, from, to, diff, scope, out.showSuppressed,
+		out.served.record(from), out.served.record(to))
 }
 
 // capabilityMissingRecord turns "this coordinate has no call graph" into the
@@ -209,7 +275,7 @@ func runCapabilityDiff(ctx context.Context, fromArg, toArg string, uc capability
 // does not exist where the store holds two superseded generations of it is a
 // claim the store itself contradicts, and it leaves a reader with no reason to
 // suspect the pipeline bump that is the actual answer.
-func capabilityMissingRecord(ctx context.Context, err error, generations cgports.CallGraphCoordinateLister) error {
+func capabilityMissingRecord(ctx context.Context, err error, generations callGraphGenerationReader) error {
 	missing, ok := errors.AsType[*capapp.NoCallGraphError](err)
 	if !ok {
 		return nil

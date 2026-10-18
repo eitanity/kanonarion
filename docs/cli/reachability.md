@@ -547,7 +547,7 @@ module whose source makes the call.
 | `unresolved` | The analyser could not resolve the call to a concrete callee, and did not attribute it to reflection. |
 | `reference` | The callee's function **value** was taken at that site. It is not an invocation and never counts as one. |
 | `route-entry` | The route's first hop. There is no hop above it, so there is no call site to read. |
-| `not-annotated` | The call graph could not corroborate this hop. `reason` says which: no graph is held for the module the call site is in, the graph does not name the calling function, or it names it and records no edge to this callee. |
+| `not-annotated` | The call graph could not corroborate this hop. `reason` says which: no graph is held for the module the call site is in, the graph does not name the calling function, or it names it and records no edge to this callee. Where the module's graph is held only under other build frames, the reason names them, the flag that reads each, and the command that produces the scan's frame, e.g. `the call graph of example.com/app@local is held under wasip1/wasm, not under this scan's frame linux/amd64; read it with --target wasip1/wasm, or produce this frame's with: kanonarion local /src/app`. The root's `unrooted` reason names the frames the same way. |
 
 Four rules keep this honest:
 

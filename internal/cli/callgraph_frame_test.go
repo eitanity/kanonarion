@@ -29,6 +29,7 @@ func TestCallGraphFrameFlags_RefuseAsWalkDoes(t *testing.T) {
 	tree := writeTinyModule(t)
 	for _, cmd := range [][]string{
 		{"local", tree}, {"callgraph", "example.com/mod@v1.0.0"}, {"callgraph-show", "example.com/mod@v1.0.0"},
+		{"capability", "example.com/mod@v1.0.0"},
 	} {
 		for _, tc := range []struct {
 			name string
@@ -368,11 +369,33 @@ func TestWalkID_SuppliesTheReadFrame(t *testing.T) {
 	for _, cmd := range [][]string{
 		{"callers", "example.com/app.HostOnly"}, {"callees", "example.com/app.main"},
 		{"implementers", "example.com/app.Store"}, {"usage", "example.com/dep@v1.0.0"},
+		{"capability", "example.com/app@local"},
 	} {
 		args := append(append([]string{}, cmd...), "--walk-id", frameWalkID, "--target", "linux/amd64")
 		_, stderr, code := runTinyGoCLI(t, root, args...)
 		if code != ExitConfig || !strings.Contains(stderr, cmd[0]+" does not act on --target/--goos/--goarch") {
 			t.Errorf("%v = exit %d, want the refusal by name:\n%s", args, code, stderr)
 		}
+	}
+}
+
+// capability reads the declared frame's record, says which on its frame line
+// and in --json, and refuses a walk id the store does not hold.
+func TestCapability_ReadsTheDeclaredFrame(t *testing.T) {
+	requireGoOnPath(t)
+	installWasip1TinyGo(t)
+	root := cgFrameStore(t)
+	out, stderr, code := runTinyGoCLI(t, root, "capability", "example.com/app@local", "--tinygo", "wasip1")
+	if code != 0 || !strings.HasPrefix(out, "example.com/app@local capabilities:\n  frame: tinygo/wasip1 (wasip1/wasm)  tinygo 0.42.0\n") {
+		t.Errorf("capability --tinygo wasip1 = exit %d\n%s%s", code, out, stderr)
+	}
+	out, stderr, code = runTinyGoCLI(t, root, "capability", "example.com/app@local", "--walk-id", frameWalkID, "--json")
+	if code != 0 || !strings.Contains(out, `"frame": {
+    "text": "wasip1/wasm",`) {
+		t.Errorf("capability --walk-id --json = exit %d\n%s%s", code, out, stderr)
+	}
+	_, stderr, code = runTinyGoCLI(t, root, "capability", "example.com/app@local", "--walk-id", "01JS0NNOSUCHWALK0000000000")
+	if code != ExitConfig || !strings.Contains(stderr, `loading walk "01JS0NNOSUCHWALK0000000000"`) {
+		t.Errorf("a missing walk = exit %d:\n%s", code, stderr)
 	}
 }

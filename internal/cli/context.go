@@ -138,6 +138,9 @@ const (
 	// sectionStatusDivergent: the module's fetch records disagree on a hash they
 	// both carry. The error field states the disagreement.
 	sectionStatusDivergent = "divergent"
+	// sectionStatusOtherFrame: the call graph is held only under build frames
+	// other than the read's; held_frames and read_with name them.
+	sectionStatusOtherFrame = "other_frame"
 )
 
 // Fork-heuristic status strings, mirrored from the domain status names so the
@@ -326,6 +329,10 @@ type contextCallGraph struct {
 	EntryPointsByPackage map[string]int `json:"entry_points_by_package,omitempty"`
 	EntryPoints          []string       `json:"entry_points,omitempty"`
 	Error                string         `json:"error,omitempty"`
+	// HeldFrames and ReadWith, on an other_frame section, are the frames the
+	// graph is held under and the flag that reads each.
+	HeldFrames []string `json:"held_frames,omitempty"`
+	ReadWith   []string `json:"read_with,omitempty"`
 }
 
 type contextExample struct {

@@ -1085,13 +1085,14 @@ toolchain is. Build constraints decide which files a package compiles, so a
 `linux/amd64` graph and a `wasip1/wasm` graph of one module are two answers and
 neither is a lesser measurement of the other. Every read selects the frame the
 invocation declares or, with no declaration, this host's. `callgraph-show`,
-`callers`, `callees`, `implementers` and `usage` take `--target`,
-`--goos`/`--goarch` and `--tinygo` for it; on the last four a walk named by
+`callers`, `callees`, `implementers`, `usage` and `capability` take `--target`,
+`--goos`/`--goarch` and `--tinygo` for it; on the last five a walk named by
 `--walk-id` supplies the frame instead, and a declaration beside it is refused. A
-read that takes none, such as `capability`, reads this host's frame. A coordinate holding no graph of that
-frame has no answer, and `callgraph-show` names the frames it does hold and the
-command that produces this one. A record that names no frame is never read as
-the host's.
+coordinate holding no graph of that frame has no answer: each of these reads
+exits `4`, naming the frames it does hold, the flag that reads each, and the
+command that produces this one. A symbol read reports a symbol it cannot find as
+a typo only when a graph of the read frame was searched. A record that names no
+frame is never read as the host's.
 
 The graph difference is what makes it a disagreement. Two toolchains that
 produced the **same** nodes and edges produced the same answer, so the read
@@ -1486,6 +1487,7 @@ Three failure modes are kept distinct rather than collapsed into an empty list:
 | Situation | Result |
 |---|---|
 | The module was never analysed | error directing you to `local` or `callgraph` |
+| The module's graphs are held only under other build frames | exit `4`, naming the frames held, the flag that reads each, and the command that produces this frame's |
 | The name is not an interface the module declares | error naming the module and how to list what was analysed |
 | The interface declares no such method | error listing the methods it does declare |
 
@@ -1743,7 +1745,10 @@ skipped:
 ```
 
 `reason` is `superseded` (graphs only at older pipelines, listed in `pipelines`)
-or `not_analysed` (no graph at all; only under `--gomod` or `--walk-id`).
+or `not_analysed` (no graph at all; only under `--gomod` or `--walk-id`), or
+`other_frame` (held only under other build frames, listed in `frames`; text
+states these on a third line, `… are held only under other frames and were not
+searched: stdlib@v1.27.2 (wasip1/wasm; read with --target wasip1/wasm)`).
 `remedy` is absent for a local coordinate whose working tree no graph recorded.
 `callers` and `callees` without `--transitive` print a JSON array, so they state
 the notice on stderr instead.

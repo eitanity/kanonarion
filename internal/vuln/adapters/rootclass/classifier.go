@@ -47,6 +47,21 @@ type Classifier struct {
 	graphs          GraphReader
 	pipelineVersion string
 	cache           map[coordinate.ModuleCoordinate]*graph
+	// readFrame is the frame graphs serve this read under and the flag declaring
+	// it; nil states no frame miss.
+	readFrame func() (callgraphdomain.BuildFrame, string)
+}
+
+// GraphHistory lists every generation of a coordinate, under every frame. A
+// reader that has one lets a miss be told apart from a frame miss.
+type GraphHistory interface {
+	CallGraphHistory(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) ([]callgraphdomain.CallGraphRecord, error)
+}
+
+// WithReadFrame names the frame graphs serves this read under.
+func (c *Classifier) WithReadFrame(f func() (callgraphdomain.BuildFrame, string)) *Classifier {
+	c.readFrame = f
+	return c
 }
 
 // New returns a Classifier reading graphs at pipelineVersion.
@@ -223,6 +238,9 @@ func (c *Classifier) read(ctx context.Context, coord coordinate.ModuleCoordinate
 			unavailable: fmt.Sprintf("%s's call graph could not be read: %v", coord, err),
 		}
 	case !found:
+		if g := c.frameMiss(ctx, coord); g != nil {
+			return g
+		}
 		return &graph{
 			unavailable: fmt.Sprintf("no call graph is stored for %s, so nothing can be said about what enters the route", coord),
 			// No record came back, so there is no tree to name: the instruction says
@@ -277,6 +295,25 @@ func (c *Classifier) read(ctx context.Context, coord coordinate.ModuleCoordinate
 		g.callers[e.ToID]++
 	}
 	return g
+}
+
+// frameMiss is the unavailable graph for a coordinate held only under other
+// frames, naming them and the remedy for this read's; nil when that is not why.
+func (c *Classifier) frameMiss(ctx context.Context, coord coordinate.ModuleCoordinate) *graph {
+	history, ok := c.graphs.(GraphHistory)
+	if !ok || c.readFrame == nil {
+		return nil
+	}
+	recs, err := history.CallGraphHistory(ctx, coord, c.pipelineVersion)
+	if err != nil {
+		return nil
+	}
+	want, flag := c.readFrame()
+	reason, remedy, held := callgraphdomain.FrameMissReason(coord, recs, want, flag, "this read's")
+	if !held {
+		return nil
+	}
+	return &graph{unavailable: reason + ", so nothing can be said about what enters the route", remedy: remedy}
 }
 
 // ancestrySearchBound is the hop limit of the upward entry-point search. Zero is

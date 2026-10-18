@@ -30,6 +30,16 @@ import (
 type CallSiteStoreReader struct {
 	store           cgports.CallGraphStore
 	pipelineVersion string
+	// readFrame is the frame this scan reads under and the flag declaring it;
+	// nil states no frame miss.
+	readFrame func() (callgraphdomain.BuildFrame, string)
+}
+
+// WithReadFrame names the frame the store serves this scan under, read when a
+// graph is missed, so a graph held only under other frames is said to be.
+func (r *CallSiteStoreReader) WithReadFrame(f func() (callgraphdomain.BuildFrame, string)) *CallSiteStoreReader {
+	r.readFrame = f
+	return r
 }
 
 // NewCallSiteStoreReader returns a reader over the call-graph ledger.
@@ -61,7 +71,7 @@ func (r *CallSiteStoreReader) ReadCallSites(
 		return ports.CallSiteAnswer{}, fmt.Errorf("reading call sites in %s: %w", coord, err)
 	}
 	if !ok {
-		return ports.CallSiteAnswer{}, nil
+		return r.frameMiss(ctx, coord), nil
 	}
 
 	wanted := make(map[string]bool, len(fromIDs))
@@ -176,3 +186,19 @@ func ImplementersQuery(interfaceID string) string {
 
 // Ensure CallSiteStoreReader implements ports.CallSiteReader.
 var _ ports.CallSiteReader = (*CallSiteStoreReader)(nil)
+
+// frameMiss is the unserved answer, stating the frames the ledger holds coord
+// under when none is this scan's. A history that cannot be read states nothing.
+func (r *CallSiteStoreReader) frameMiss(ctx context.Context, coord coordinate.ModuleCoordinate) ports.CallSiteAnswer {
+	lister, ok := r.store.(cgports.CallGraphRecordLister)
+	if !ok || r.readFrame == nil {
+		return ports.CallSiteAnswer{}
+	}
+	recs, err := lister.ListCallGraphRecordsFor(ctx, coord, r.pipelineVersion)
+	if err != nil {
+		return ports.CallSiteAnswer{}
+	}
+	want, flag := r.readFrame()
+	reason, remedy, _ := callgraphdomain.FrameMissReason(coord, recs, want, flag, "this scan's")
+	return ports.CallSiteAnswer{FrameMiss: reason, FrameMissRemedy: remedy}
+}

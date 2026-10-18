@@ -33,13 +33,22 @@ func frameDescription(f cgdomain.BuildFrame) string {
 // states none prints nothing: it predates the field, and its pipeline is never
 // served beside one that does.
 func writeFrameLine(stdout io.Writer, r cgdomain.CallGraphRecord) error {
-	if r.Frame.IsZero() {
+	line := recordFrameLine(r)
+	if line == "" {
 		return nil
 	}
-	if _, err := fmt.Fprintf(stdout, "  frame: %s%s\n", frameDescription(r.Frame), tinyGoEdgeCounts(r)); err != nil {
+	if _, err := io.WriteString(stdout, line); err != nil {
 		return fmt.Errorf("writing frame: %w", err)
 	}
 	return nil
+}
+
+// recordFrameLine is the line writeFrameLine prints, "" for a record that states no frame.
+func recordFrameLine(r cgdomain.CallGraphRecord) string {
+	if r.Frame.IsZero() {
+		return ""
+	}
+	return fmt.Sprintf("  frame: %s%s\n", frameDescription(r.Frame), tinyGoEdgeCounts(r))
 }
 
 // historyFrame is the frame line of one generation in --history, empty for a
@@ -179,18 +188,7 @@ func frameMiss(ctx context.Context, coord coordinate.ModuleCoordinate, uc QueryC
 		return nil //nolint:nilerr // an unreadable history leaves the ordinary refusal to say what is absent
 	}
 	want := invocationFrame()
-	seen := map[string]bool{}
-	var held, flags []string
-	for _, r := range recs {
-		if cgdomain.SameFrame(r.Frame, want) || seen[r.Frame.String()] {
-			continue
-		}
-		seen[r.Frame.String()] = true
-		held = append(held, r.Frame.String())
-		if flag := r.Frame.FlagSpelling(); flag != "" {
-			flags = append(flags, flag)
-		}
-	}
+	held, flags := cgdomain.HeldFrames(recs, want)
 	if len(held) == 0 {
 		return nil
 	}
@@ -199,24 +197,28 @@ func frameMiss(ctx context.Context, coord coordinate.ModuleCoordinate, uc QueryC
 	if len(flags) > 0 {
 		msg += ", or read that frame with " + strings.Join(flags, " or ")
 	}
-	msg += ". Produce one under " + want.String() + ":\n  " + frameReanalysis(coord, agreedRoot(recs))
+	// A generation that also failed to decode is a second reason, stated after the frame.
+	if note, nerr := supersededGenerationsNote(ctx, coord, uc, recs, nil); nerr == nil && note != "" {
+		msg += "; " + note
+	}
+	msg += ". Produce one under " + want.String() + ":\n  " + frameReanalysis(coord, cgdomain.AgreedRoot(recs))
 	return &exitError{code: ExitNotFound, msg: msg}
 }
 
-// agreedRoot is the working tree every generation naming one agrees on, empty
-// when they disagree or none names one; a remedy names only a tree they share.
-func agreedRoot(recs []cgdomain.CallGraphRecord) string {
-	root := ""
-	for _, r := range recs {
-		switch {
-		case r.AnalysisRoot == "":
-		case root == "":
-			root = r.AnalysisRoot
-		case root != r.AnalysisRoot:
-			return ""
+// moduleFrameMiss is frameMiss for a read that resolved a symbol to modulePath
+// and found no record of it under the read frame: the first of versions, in the
+// caller's order, held under another frame names the refusal.
+func moduleFrameMiss(ctx context.Context, uc QueryCallGraphUseCase, modulePath string, versions []string) error {
+	for _, v := range versions {
+		coord, err := coordinate.NewModuleCoordinate(modulePath, v)
+		if err != nil {
+			continue
+		}
+		if miss := frameMiss(ctx, coord, uc); miss != nil {
+			return miss
 		}
 	}
-	return root
+	return nil
 }
 
 // adoptNamedWalkFrame makes the walk --walk-id names supply the call-graph read
