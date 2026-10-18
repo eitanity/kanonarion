@@ -50,8 +50,14 @@ func (s *factStore) ComposeFetchRecord(_ context.Context, coord coordinate.Modul
 	return fetchtest.ComposeCoordinate(coord, held)
 }
 
-// blobStore serves blob content from memory.
-type blobStore struct{ blobs map[string][]byte }
+// blobStore serves blob content from memory. refuse names identities it
+// refuses as altered, from the given read on (1 is every read), as a verifying
+// store refuses bytes that no longer hash to their identity.
+type blobStore struct {
+	blobs  map[string][]byte
+	refuse map[string]int
+	reads  map[string]int
+}
 
 func (s *blobStore) Put(_ context.Context, identity fetchports.BlobIdentity, r io.Reader) error {
 	data, err := io.ReadAll(r)
@@ -63,6 +69,15 @@ func (s *blobStore) Put(_ context.Context, identity fetchports.BlobIdentity, r i
 }
 
 func (s *blobStore) Get(_ context.Context, identity fetchports.BlobIdentity) (io.ReadCloser, error) {
+	if from, ok := s.refuse[identity.String()]; ok {
+		if s.reads == nil {
+			s.reads = map[string]int{}
+		}
+		s.reads[identity.String()]++
+		if s.reads[identity.String()] >= from {
+			return nil, &fetchports.BlobTamperedError{Identity: identity, Observed: "h1:other"}
+		}
+	}
 	return io.NopCloser(bytes.NewReader(s.blobs[identity.String()])), nil
 }
 

@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"archive/zip"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -31,33 +30,23 @@ var limitProbe = coordinatetest.MustNew("example.com/genmeth", "v1.0.0")
 func limitStore(t *testing.T) string {
 	t.Helper()
 	goMod := "module example.com/genmeth\n\ngo 1.27.2\n"
-	var zbuf bytes.Buffer
-	zw := zip.NewWriter(&zbuf)
-	for name, src := range map[string]string{
+	zipData, zipIdentity := fetchtest.ModuleZip(t, limitProbe.Path(), limitProbe.Version(), map[string]string{
 		"go.mod":          goMod,
 		"genmeth.go":      "package genmeth\n\nfunc (b Box) Map[T any](f func(int) T) T {\n",
 		"box.go":          "package genmeth\n\n// Box holds a value.\ntype Box struct{ V int }\n",
 		"example_test.go": "package genmeth_test\n\nfunc ExampleBox() {\n",
 		"plain/p_test.go": "package plain_test\n\nfunc ExamplePlain() {\n\tprintln(1)\n\t// Output: 1\n}\n",
 		"plain/plain.go":  "package plain\n\n// Plain returns one.\nfunc Plain() int { return 1 }\n",
-	} {
-		f, err := zw.Create(limitProbe.Path() + "@" + limitProbe.Version() + "/" + name)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := f.Write([]byte(src)); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := zw.Close(); err != nil {
-		t.Fatal(err)
-	}
+	})
+	goModIdentity := fetchtest.GoModBlob(t, goMod)
 	r := fetchtest.Record(t,
 		fetchtest.Coordinate(limitProbe),
 		fetchtest.PipelineVersion(fetchapp.PipelineVersion),
 		fetchtest.Status(fetchdomain.Verified),
 		fetchtest.Content("zip"),
 		fetchtest.GoMod("gomod"),
+		fetchtest.ModuleHash(zipIdentity.Hash()),
+		fetchtest.GoModHash(goModIdentity.Hash()),
 	)
 	root := asideStore(t, func(ctx context.Context, db sqlitestore.DB) {
 		sealed, err := fetchdomain.Rehydrate(r)
@@ -70,7 +59,7 @@ func limitStore(t *testing.T) string {
 	})
 	blobs := localfs.New(root)
 	ctx := context.Background()
-	if err := blobs.Put(ctx, fetchtest.ZipIdentity(t, r), bytes.NewReader(zbuf.Bytes())); err != nil {
+	if err := blobs.Put(ctx, fetchtest.ZipIdentity(t, r), bytes.NewReader(zipData)); err != nil {
 		t.Fatal(err)
 	}
 	if err := blobs.Put(ctx, fetchtest.GoModIdentity(t, r), strings.NewReader(goMod)); err != nil {

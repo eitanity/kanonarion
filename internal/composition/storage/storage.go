@@ -69,6 +69,13 @@ type Request struct {
 	// Section is the raw YAML of the selected backend's own config.yaml
 	// section, nil when absent; the backend unmarshals it into its own type.
 	Section []byte
+	// Command names the reader in the event a refused stored artefact appends
+	// to the assurance log; empty outside the CLI.
+	Command string
+	// OnBlobRefused, when set, is told of every stored artefact the blob store
+	// refuses for not hashing to its identity, and with a nil refusal of one
+	// whose refused bytes a later write replaced.
+	OnBlobRefused func(fetchports.BlobIdentity, *fetchports.BlobTamperedError)
 }
 
 // Storage is everything the pipeline persists through, supplied as one value.

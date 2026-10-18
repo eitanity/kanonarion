@@ -20,6 +20,7 @@
 package localfs
 
 import (
+	"archive/zip"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -29,8 +30,12 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"time"
 
+	"github.com/eitanity/kanonarion/internal/audit"
 	"github.com/eitanity/kanonarion/internal/fetch/ports"
+	"golang.org/x/mod/sumdb/dirhash"
 )
 
 var ErrBlobNotFound = errors.New("blob not found")
@@ -45,12 +50,46 @@ var (
 // Store is the local filesystem blob store.
 type Store struct {
 	root string
+
+	audit   ports.AuditSink
+	command string
+	observe func(ports.BlobIdentity, *ports.BlobTamperedError)
+
+	// verdicts holds one hash verdict per identity for this process. A verdict
+	// stands only while the file keeps the size and modification time it was
+	// hashed at; any change to either re-hashes it on the next read.
+	mu       sync.Mutex
+	verdicts map[string]verdict
+}
+
+// verdict is the outcome of hashing one held file: nil err means it verified.
+type verdict struct {
+	size  int64
+	mtime time.Time
+	err   error
 }
 
 // New constructs a Store rooted at root. root need not exist yet; Put creates
 // it on first write.
 func New(root string) *Store {
-	return &Store{root: root}
+	return &Store{root: root, verdicts: map[string]verdict{}}
+}
+
+// WithAudit appends a verification_failed event to sink for every held file
+// that does not hash to its identity, naming command as the reader. Returns the
+// receiver for chaining.
+func (s *Store) WithAudit(sink ports.AuditSink, command string) *Store {
+	s.audit, s.command = sink, command
+	return s
+}
+
+// WithRefusalObserver tells observe of every held file refused for not hashing
+// to its identity, so a caller can act on a refusal a reader did not return,
+// and calls it with a nil refusal when Put replaces refused bytes. nil observes
+// nothing. Returns the receiver for chaining.
+func (s *Store) WithRefusalObserver(observe func(ports.BlobIdentity, *ports.BlobTamperedError)) *Store {
+	s.observe = observe
+	return s
 }
 
 // Put stores content under the given artefact identity. Idempotent: if the
@@ -68,9 +107,13 @@ func (s *Store) Put(_ context.Context, identity ports.BlobIdentity, content io.R
 	}
 
 	blobPath := s.blobPath(identity)
-	if _, err := os.Stat(blobPath); err == nil {
-		// Already held. Drain the reader so a caller streaming from a network
-		// connection is not left with a half-consumed body.
+	held, replacing, herr := s.heldIntact(identity, blobPath)
+	if herr != nil {
+		return herr
+	}
+	if held {
+		// Drain the reader so a caller streaming from a network connection is not
+		// left with a half-consumed body.
 		if _, derr := io.Copy(io.Discard, content); derr != nil {
 			return fmt.Errorf("draining already-stored blob %s: %w", identity, derr)
 		}
@@ -87,7 +130,7 @@ func (s *Store) Put(_ context.Context, identity ports.BlobIdentity, content io.R
 	// `go clean -modcache`: the toolchain unlinks its own name and the inode
 	// survives while this link holds it. A link across filesystems fails, and the
 	// copy below is the fallback.
-	if f, ok := content.(*os.File); ok {
+	if f, ok := content.(*os.File); ok && !replacing {
 		if err := os.Link(f.Name(), blobPath); err == nil {
 			return nil
 		}
@@ -113,38 +156,203 @@ func (s *Store) Put(_ context.Context, identity ports.BlobIdentity, content io.R
 		rerr := os.Remove(tmpName)
 		return fmt.Errorf("renaming blob: %w", errors.Join(err, rerr))
 	}
+	if replacing {
+		s.replaced(identity)
+	}
 	return nil
 }
 
-// Get opens the artefact identified by identity for reading.
+// replaced drops the refused verdict of bytes Put has just replaced, and tells
+// the observer the refusal no longer stands.
+func (s *Store) replaced(identity ports.BlobIdentity) {
+	s.forget(identity)
+	if s.observe != nil {
+		s.observe(identity, nil)
+	}
+}
+
+// heldIntact reports whether blobPath already holds bytes that verify, and
+// whether it holds refused ones Put must replace: that replacement is what the
+// re-fetch a refusal names has to achieve.
+func (s *Store) heldIntact(identity ports.BlobIdentity, blobPath string) (held, replacing bool, err error) {
+	if _, serr := os.Stat(blobPath); serr != nil {
+		return false, false, nil //nolint:nilerr // not held: Put writes it
+	}
+	verr := s.verifyPath(identity, blobPath)
+	switch {
+	case verr == nil:
+		return true, false, nil
+	case errors.Is(verr, ports.ErrBlobTampered):
+		return false, true, nil
+	default:
+		return false, false, verr
+	}
+}
+
+// Get opens the artefact identified by identity for reading. The open file is
+// hashed against identity before it is returned, so the bytes a caller reads are
+// the bytes that were hashed; a mismatch closes it and returns ErrBlobTampered.
 func (s *Store) Get(_ context.Context, identity ports.BlobIdentity) (io.ReadCloser, error) {
 	if identity.IsZero() {
 		return nil, ErrBlobNotFound
 	}
-	f, err := os.Open(s.blobPath(identity))
+	path := s.blobPath(identity)
+	f, err := os.Open(path) // #nosec G304 -- path derived from the store's own blob layout
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, ErrBlobNotFound
 		}
 		return nil, fmt.Errorf("opening blob %s: %w", identity, err)
 	}
+	if err := s.verify(identity, path, f); err != nil {
+		return nil, errors.Join(err, closeQuietly(f))
+	}
 	return f, nil
 }
 
 // GetPath returns the local filesystem path to the artefact identified by
-// identity. It satisfies the optional ports.BlobPathOptimizer capability.
+// identity, after hashing the file against it. It satisfies the optional
+// ports.BlobPathOptimizer capability.
 func (s *Store) GetPath(_ context.Context, identity ports.BlobIdentity) (string, error) {
 	if identity.IsZero() {
 		return "", ErrBlobNotFound
 	}
 	path := s.blobPath(identity)
-	if _, err := os.Stat(path); err != nil {
-		if os.IsNotExist(err) {
-			return "", ErrBlobNotFound
-		}
-		return "", fmt.Errorf("checking blob %s: %w", identity, err)
+	if err := s.verifyPath(identity, path); err != nil {
+		return "", err
 	}
 	return path, nil
+}
+
+// verifyPath opens path and verifies it against identity.
+func (s *Store) verifyPath(identity ports.BlobIdentity, path string) error {
+	f, err := os.Open(path) // #nosec G304 -- path derived from the store's own blob layout
+	if err != nil {
+		if os.IsNotExist(err) {
+			return ErrBlobNotFound
+		}
+		return fmt.Errorf("opening blob %s: %w", identity, err)
+	}
+	return errors.Join(s.verify(identity, path, f), f.Close())
+}
+
+// verify hashes f by identity's kind and compares the h1 with identity, once
+// per identity while the file keeps its size and modification time. f is left
+// positioned at its start.
+func (s *Store) verify(identity ports.BlobIdentity, path string, f *os.File) error {
+	info, err := f.Stat()
+	if err != nil {
+		return fmt.Errorf("checking blob %s: %w", identity, err)
+	}
+	key := identity.String()
+	s.mu.Lock()
+	v, ok := s.verdicts[key]
+	s.mu.Unlock()
+	if ok && v.size == info.Size() && v.mtime.Equal(info.ModTime()) {
+		return v.err
+	}
+
+	observed, herr := hashFile(identity.Kind(), f, info.Size())
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return fmt.Errorf("rewinding blob %s: %w", identity, err)
+	}
+	var result error
+	if herr != nil || observed != identity.Hash().String() {
+		tampered := &ports.BlobTamperedError{Identity: identity, Observed: observed, Path: path}
+		if herr != nil {
+			tampered.Observed, tampered.Unhashable = "", herr.Error()
+		}
+		result = errors.Join(tampered, s.recordTamper(tampered))
+		if s.observe != nil {
+			s.observe(identity, tampered)
+		}
+	}
+	s.mu.Lock()
+	s.verdicts[key] = verdict{size: info.Size(), mtime: info.ModTime(), err: result}
+	s.mu.Unlock()
+	return result
+}
+
+// forget drops identity's verdict, for a file Put has just replaced.
+func (s *Store) forget(identity ports.BlobIdentity) {
+	s.mu.Lock()
+	delete(s.verdicts, identity.String())
+	s.mu.Unlock()
+}
+
+// recordTamper appends the refusal to the assurance log. A failed append is
+// returned beside the refusal: the event that says the store's bytes changed
+// must never be lost silently.
+func (s *Store) recordTamper(t *ports.BlobTamperedError) error {
+	if s.audit == nil {
+		return nil
+	}
+	payload := map[string]any{
+		"reason":            "stored artefact does not hash to its identity",
+		"artefact_identity": t.Identity.String(),
+		"expected_hash":     t.Identity.Hash().String(),
+		"observed_hash":     t.Observed,
+		"path":              t.Path,
+	}
+	if t.Unhashable != "" {
+		payload["unhashable"] = t.Unhashable
+	}
+	if s.command != "" {
+		payload["command"] = s.command
+	}
+	if err := s.audit.RecordEvent(audit.Event{Type: audit.EventVerificationFailed, Payload: payload}); err != nil {
+		return fmt.Errorf("recording the refusal of %s: %w", t.Identity, err)
+	}
+	return nil
+}
+
+// hashFile computes the h1 of a held artefact: over the zip's entries for a
+// module zip, as the go command does, and over the single file named go.mod for
+// a standalone go.mod.
+func hashFile(kind ports.BlobKind, f *os.File, size int64) (string, error) {
+	if kind == ports.BlobKindGoMod {
+		h, err := dirhash.Hash1([]string{"go.mod"}, func(string) (io.ReadCloser, error) {
+			return io.NopCloser(io.NewSectionReader(f, 0, size)), nil
+		})
+		if err != nil {
+			return "", fmt.Errorf("hashing go.mod: %w", err)
+		}
+		return h, nil
+	}
+	zr, err := zip.NewReader(f, size)
+	if err != nil {
+		return "", fmt.Errorf("reading module zip: %w", err)
+	}
+	names := make([]string, len(zr.File))
+	byName := make(map[string]*zip.File, len(zr.File))
+	for i, zf := range zr.File {
+		names[i] = zf.Name
+		byName[zf.Name] = zf
+	}
+	h, err := dirhash.Hash1(names, func(name string) (io.ReadCloser, error) {
+		zf := byName[name]
+		if zf == nil {
+			return nil, fmt.Errorf("file %q not in zip", name)
+		}
+		rc, oerr := zf.Open()
+		if oerr != nil {
+			return nil, fmt.Errorf("opening %q in module zip: %w", name, oerr)
+		}
+		return rc, nil
+	})
+	if err != nil {
+		return "", fmt.Errorf("hashing module zip: %w", err)
+	}
+	return h, nil
+}
+
+// closeQuietly closes a file Get will not hand out; a close error is returned
+// beside the refusal that caused it.
+func closeQuietly(f *os.File) error {
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("closing refused blob: %w", err)
+	}
+	return nil
 }
 
 // Exists reports whether the artefact is held by the store.

@@ -3,6 +3,7 @@ package modcache
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -38,6 +39,19 @@ type Report struct {
 
 // Complete reports whether every requested coordinate was written.
 func (r Report) Complete() bool { return len(r.Failures) == 0 }
+
+// Tampered joins the failures that are a stored artefact refused for not
+// hashing to its identity, nil when there are none. Unlike any other hole it is
+// not best-effort: a caller stops on it rather than proceeding without the bytes.
+func (r Report) Tampered() error {
+	var errs []error
+	for _, f := range r.Failures {
+		if errors.Is(f.Err, fetchports.ErrBlobTampered) {
+			errs = append(errs, f.Err)
+		}
+	}
+	return errors.Join(errs...)
+}
 
 // FailureSummary renders up to max failures as "coord: err" strings, with a
 // trailing "+N more" when the list is longer. It bounds what a caller puts in a
@@ -128,7 +142,7 @@ func populateOne(
 		return fmt.Errorf("fact record for %s carries no module zip to populate the cache with", coord)
 	}
 	if lerr := linkOrCopy(ctx, blobs, zipIdentity, base+".zip"); lerr != nil {
-		return fmt.Errorf("writing zip: %w", lerr)
+		return fmt.Errorf("writing zip: %w", fetchports.AttributeBlobTamper(lerr, coord))
 	}
 	goModIdentity, hasGoMod, err := fetchports.GoModIdentity(record.FactRecord)
 	if err != nil {
@@ -136,7 +150,7 @@ func populateOne(
 	}
 	if hasGoMod {
 		if err := linkOrCopy(ctx, blobs, goModIdentity, base+".mod"); err != nil {
-			return fmt.Errorf("writing mod: %w", err)
+			return fmt.Errorf("writing mod: %w", fetchports.AttributeBlobTamper(err, coord))
 		}
 	}
 
@@ -220,7 +234,7 @@ func populateGoModOne(
 		return fmt.Errorf("fact record for %s carries no go.mod hash", coord)
 	}
 	if err := linkOrCopy(ctx, blobs, goModIdentity, base+".mod"); err != nil {
-		return fmt.Errorf("writing mod: %w", err)
+		return fmt.Errorf("writing mod: %w", fetchports.AttributeBlobTamper(err, coord))
 	}
 	if err := writeInfo(base, coord.Version(), record.FirstFetchedAt); err != nil {
 		return err

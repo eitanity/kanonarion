@@ -179,12 +179,14 @@ func rel(pkgPath string) string {
 // only worth stating while it is true of every path, and a second re-zipper
 // would be indistinguishable from the first at a glance.
 //
-// The one entry is the local working tree, which has no upstream zip at all.
+// The local working tree has no upstream zip at all, and test fixtures are not fetched.
 // Key: repo-relative package directory.
 var zipWriterPackages = map[string]string{
 	"internal/walk/adapters/localfs": "a local module is packaged from its working tree rather than fetched, " +
 		"and modzip requires a canonical semver, so the synthetic zip is rewritten to carry the local " +
 		"coordinate's entry prefix; no fetched artefact reaches this path",
+	"internal/fetch/fetchtest": "builds fixture module zips for tests, so a store that verifies what it " +
+		"serves has bytes that hash to the identity they are stored under; no fetched artefact reaches it",
 }
 
 // TestNoZipRewritingOutsideNamedPackages enforces that module zips are stored

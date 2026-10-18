@@ -853,6 +853,9 @@ type ModuleCacheReport struct {
 	// Failures renders the coordinates that were not written and why, bounded for
 	// a log line. Empty when every one of them was.
 	Failures string
+	// Tampered is a stored artefact refused for not hashing to its identity. The
+	// analysis stops on it rather than loading without those bytes.
+	Tampered error
 }
 
 // Complete reports whether the whole requested closure reached the cache.

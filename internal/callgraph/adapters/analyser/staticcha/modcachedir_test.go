@@ -14,6 +14,8 @@ import (
 	"github.com/eitanity/kanonarion/internal/callgraph/domain"
 	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
+	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
 )
 
 // recordingCache is a cgports.ModuleCache that records what it was asked to
@@ -237,5 +239,29 @@ func TestAnalyseDir_WorkingTreeKeepsTheDevelopersCache(t *testing.T) {
 	}
 	if got := readChildEnv(t, recorded)["GOMODCACHE"]; got != "/kanonarion-test/developer-modcache" {
 		t.Errorf("the child read GOMODCACHE=%q, want the developer's own cache", got)
+	}
+}
+
+// A stored artefact refused as altered while materialising stops the analysis:
+// it returns the refusal and no record, loads nothing, and leaves no cache.
+func TestAnalyse_ARefusedArtefactStopsTheAnalysis(t *testing.T) {
+	refusal := &fetchports.BlobTamperedError{Identity: fetchtest.Blob(fetchports.BlobKindZip, fetchtest.H1("dep"))}
+	cache := &recordingCache{report: cgports.ModuleCacheReport{Tampered: refusal}}
+	a, recorded := fakeGoAnalyser(t)
+	a = a.WithModuleCache(cache)
+
+	zipPath := writeZipToTemp(t, makeZip(t, testCoord, dependentModuleFiles))
+	rec, err := a.Analyse(context.Background(), zipPath, testCoord, domain.AnalysisInputs{})
+	if !errors.Is(err, fetchports.ErrBlobTampered) {
+		t.Fatalf("Analyse err = %v, want the refusal", err)
+	}
+	if rec.OverallStatus != (domain.CallGraphRecord{}).OverallStatus {
+		t.Errorf("Analyse returned a %s record beside the refusal", rec.OverallStatus)
+	}
+	if _, serr := os.Stat(recorded); serr == nil {
+		t.Error("the loader ran although the cache could not be materialised")
+	}
+	if _, serr := os.Stat(cache.dir); serr == nil {
+		t.Errorf("the refused cache %s survived", cache.dir)
 	}
 }

@@ -608,9 +608,20 @@ func (uc *ScanModuleUseCase) openModuleSource(ctx context.Context, fact fetchdom
 	if !hasZip {
 		return nil, fmt.Errorf("fact record for %s carries no module zip to scan", fact.Coordinate())
 	}
+	// The go.mod is read later only as a hint and an unreadable one is absorbed,
+	// so a refusal of it is taken here, where it ends the module's scan.
+	if goModIdentity, hasGoMod, gerr := fetchports.GoModIdentity(fact); gerr == nil && hasGoMod {
+		rc, gmerr := uc.blobs.Get(ctx, goModIdentity)
+		if errors.Is(gmerr, fetchports.ErrBlobTampered) {
+			return nil, fmt.Errorf("retrieving module go.mod: %w", fetchports.AttributeBlobTamper(gmerr, fact.Coordinate()))
+		}
+		if gmerr == nil {
+			_ = rc.Close() //nolint:errcheck // opened only to verify; nothing was read
+		}
+	}
 	blob, err := uc.blobs.Get(ctx, zipIdentity)
 	if err != nil {
-		return nil, fmt.Errorf("retrieving module content: %w", err)
+		return nil, fmt.Errorf("retrieving module content: %w", fetchports.AttributeBlobTamper(err, fact.Coordinate()))
 	}
 	return blob, nil
 }

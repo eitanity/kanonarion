@@ -15,9 +15,10 @@ the network.
 
 It answers in the frame of one walk of the target coordinate, then
 materialises each module into the cache's `cache/download/<path>/@v/` layout
-(`.zip`, `.mod`, `.info`, `.ziphash`, `.lock`). Every copied artefact is
-**re-verified against the recorded hash** (`dirhash` over the zip and go.mod);
-a checksum mismatch fails that module rather than writing suspect bytes.
+(`.zip`, `.mod`, `.info`, `.ziphash`, `.lock`). The store hashes each module's
+zip and go.mod against their recorded h1 **before anything is written**; a module
+whose stored copy does not match has nothing written for it and the run exits
+`10`. A file already in the cache is left as it is and not re-hashed.
 
 By default only the target module is copied. With `--recursive`, every node in
 the walk's resolved graph is copied - the full closure that walk selected.
@@ -171,6 +172,7 @@ whether every selected node landed.
 | 2 | Nothing reached the cache, though at least one module had an artefact to copy |
 | 3 | The run was interrupted (see [Interrupting a run](conventions.md#interrupting-a-run)) |
 | 4 | The named walk id, or the target coordinate, is not in the store |
+| 10 | A module's stored zip or go.mod does not hash to its identity; nothing was written for it, and the message names the `kanonarion fetch <module>@<version> --force` that replaces it |
 | 20 | The walk id is rooted at a different target, or the invocation is malformed |
 
 ## Flags

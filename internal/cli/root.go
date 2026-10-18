@@ -50,6 +50,7 @@ func newRootCmd(stdout, stderr io.Writer) *cobra.Command {
 			// sites that print a no-network refusal — the proxy adapter is
 			// built in a dozen of them — have no command to ask.
 			offlineRemedy = renderOfflineRemedy(cmd)
+			invokedCommand = cmd.CommandPath()
 			if err := declareGoproxyFlag(cmd); err != nil {
 				return err
 			}
@@ -256,7 +257,7 @@ func Run(args []string, stdout, stderr io.Writer) error {
 	root := newRootCmd(stdout, stderr)
 	installDefaultSubcommands(root)
 	root.SetArgs(args)
-	err := root.ExecuteContext(ctx)
+	err := surfaceBlobRefusal(root.ExecuteContext(ctx))
 	storeSetAside.flush(stderr, err)
 	storeNotSearched.flush(stderr)
 	if err == nil {

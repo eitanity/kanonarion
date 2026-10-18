@@ -234,7 +234,10 @@ func (a *Analyser) Analyse(
 			domain.FailureCauseEnvironment, "cancelled before load"), synth, dropped, inputs.Source, tempDir), nil
 	}
 
-	goModCache, cleanupCache := a.prepareModuleCache(ctx, tempDir, coord)
+	goModCache, cleanupCache, err := a.prepareModuleCache(ctx, tempDir, coord)
+	if err != nil {
+		return domain.CallGraphRecord{}, err
+	}
 	defer cleanupCache()
 
 	rec, err = a.analyseDir(ctx, tempDir, coord, synth, nil, modeModuleZip, goModCache)

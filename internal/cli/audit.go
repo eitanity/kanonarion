@@ -763,6 +763,11 @@ func auditScope(
 	if ierr := stopIfInterrupted(ctx, "extracting licences for walk "+walkID, eerr); ierr != nil {
 		return nil, derivation, ierr
 	}
+	// A refused artefact leaves a licence row the audit would report as not run;
+	// the refusal is the answer instead.
+	if errors.Is(eerr, fetchports.ErrBlobTampered) {
+		return nil, derivation, eerr
+	}
 	if eerr != nil {
 		_, _ = fmt.Fprintf(stderr, "extract: %v\n", eerr)
 	}

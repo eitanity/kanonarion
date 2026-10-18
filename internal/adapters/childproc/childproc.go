@@ -133,6 +133,16 @@ func ExitedPartial(err error) bool {
 // rather than the work, has to change.
 const ConfigExitCode = 20
 
+// IntegrityExitCode is the exit code a kanonarion child uses when the evidence
+// it read is in doubt.
+const IntegrityExitCode = 10
+
+// ExitedIntegrity reports whether err is a child exit carrying IntegrityExitCode.
+func ExitedIntegrity(err error) bool {
+	var ec exitCoder
+	return errors.As(err, &ec) && ec.ExitCode() == IntegrityExitCode
+}
+
 // ExitedAnalyserLimit reports whether a child exited ConfigExitCode because it
 // was built with a Go too old to read the source. It still wrote its record,
 // which says so, so a parent reads the record as it would after a Partial exit.

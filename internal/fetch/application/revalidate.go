@@ -104,28 +104,19 @@ func (uc *FetchModuleUseCase) tryRevalidate(
 		return revalidation{}, false, nil
 	}
 
-	zipData, ok, err := uc.readHeldArtefact(ctx, zipIdentity)
-	if err != nil {
+	zipData, ok, err := uc.readForRevalidation(ctx, log, existing, zipIdentity)
+	if err != nil || !ok {
 		return revalidation{}, false, err
 	}
-	if !ok {
-		log.InfoContext(ctx, "revalidate_declined_artefact_absent",
-			slog.String("artefact", "zip"), slog.String("identity", zipIdentity.String()))
-		return revalidation{}, false, nil
-	}
-	goModData, ok, err := uc.readHeldArtefact(ctx, goModIdentity)
-	if err != nil {
+	goModData, ok, err := uc.readForRevalidation(ctx, log, existing, goModIdentity)
+	if err != nil || !ok {
 		return revalidation{}, false, err
-	}
-	if !ok {
-		log.InfoContext(ctx, "revalidate_declined_artefact_absent",
-			slog.String("artefact", "go.mod"), slog.String("identity", goModIdentity.String()))
-		return revalidation{}, false, nil
 	}
 
 	// Re-hash the held bytes. This is the whole basis for not downloading: the
 	// bytes are only trusted because they were just shown to be the recorded
-	// ones.
+	// ones. A verifying store has already refused wrong bytes above; this is the
+	// second line, for a store that serves what it holds.
 	//
 	// Bytes that cannot be hashed at all — not readable as a module zip, say —
 	// are treated exactly as bytes that hash to the wrong thing. Both mean the
@@ -191,13 +182,17 @@ func (uc *FetchModuleUseCase) reportHeldArtefactDisagreement(ctx context.Context
 
 // readHeldArtefact returns the bytes the blob store holds for identity. ok is
 // false when the store does not hold it, which is an absence rather than an
-// error: an evicted artefact is re-acquired exactly as it always was.
+// error: an evicted artefact is re-acquired exactly as it always was. The
+// store's refusal of the held bytes as altered is returned as the error.
 func (uc *FetchModuleUseCase) readHeldArtefact(ctx context.Context, identity ports.BlobIdentity) (_ []byte, _ bool, retErr error) {
 	exists, err := uc.blobs.Exists(ctx, identity)
 	if err != nil || !exists {
 		return nil, false, nil //nolint:nilerr // an unreadable store is a re-acquisition, not a failure
 	}
 	rc, err := uc.blobs.Get(ctx, identity)
+	if errors.Is(err, ports.ErrBlobTampered) {
+		return nil, false, err
+	}
 	if err != nil {
 		return nil, false, nil //nolint:nilerr // as above
 	}
@@ -211,6 +206,48 @@ func (uc *FetchModuleUseCase) readHeldArtefact(ctx context.Context, identity por
 		return nil, false, fmt.Errorf("reading held artefact %s: %w", identity, err)
 	}
 	return data, true, nil
+}
+
+// readForRevalidation reads one held artefact, ok false when the run must
+// download instead: an absent artefact is logged and re-acquired, and one the
+// store refuses as altered is audited as the disagreement it is.
+func (uc *FetchModuleUseCase) readForRevalidation(ctx context.Context, log *slog.Logger, existing domain2.FactRecord, identity ports.BlobIdentity) ([]byte, bool, error) {
+	data, ok, err := uc.readHeldArtefact(ctx, identity)
+	if refused, isRefusal := refusedArtefact(err); isRefusal {
+		if identity.Kind() == ports.BlobKindZip {
+			return nil, false, uc.reportHeldArtefactDisagreement(ctx, log, existing, refused.Observed, "", refusalReason(refused), nil)
+		}
+		return nil, false, uc.reportHeldArtefactDisagreement(ctx, log, existing, "", refused.Observed, nil, refusalReason(refused))
+	}
+	if err != nil || ok {
+		return data, ok, err
+	}
+	artefact := "zip"
+	if identity.Kind() == ports.BlobKindGoMod {
+		artefact = "go.mod"
+	}
+	log.InfoContext(ctx, "revalidate_declined_artefact_absent",
+		slog.String("artefact", artefact), slog.String("identity", identity.String()))
+	return nil, false, nil
+}
+
+// refusedArtefact reports whether err is the store's refusal of held bytes,
+// with what the store observed when it says.
+func refusedArtefact(err error) (*ports.BlobTamperedError, bool) {
+	if !errors.Is(err, ports.ErrBlobTampered) {
+		return nil, false
+	}
+	refused := &ports.BlobTamperedError{Unhashable: err.Error()}
+	errors.As(err, &refused)
+	return refused, true
+}
+
+// refusalReason is why refused bytes could not be hashed, nil when they could.
+func refusalReason(refused *ports.BlobTamperedError) error {
+	if refused.Unhashable == "" {
+		return nil
+	}
+	return errors.New(refused.Unhashable)
 }
 
 // recordTamperEvent appends the assurance-log entry for held bytes that do not

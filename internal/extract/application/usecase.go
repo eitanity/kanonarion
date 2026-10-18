@@ -222,6 +222,7 @@ func (uc *ExtractUseCase) Execute(ctx context.Context, req ExtractRequest) (doma
 	var outMu sync.Mutex
 	var partial, cancelled atomic.Bool
 	var completed atomic.Int64
+	var refused firstError
 
 	// The run is in the store before the first module is touched, and again
 	// every checkpoint interval. Persisting only at the end meant the failure
@@ -270,7 +271,7 @@ func (uc *ExtractUseCase) Execute(ctx context.Context, req ExtractRequest) (doma
 					continue
 				}
 
-				uc.runModuleStages(ctx, req, j.node.Coordinate, runStages, modRes, &partial, &cancelled)
+				uc.runModuleStages(ctx, req, j.node.Coordinate, runStages, modRes, &partial, &cancelled, &refused)
 
 				outMu.Lock()
 				outcomes[j.idx] = outcome{coord: j.node.Coordinate, result: modRes, set: true}
@@ -298,7 +299,30 @@ func (uc *ExtractUseCase) Execute(ctx context.Context, req ExtractRequest) (doma
 
 	run.CompletedAt = uc.clock.Now().UTC()
 
-	return uc.sealAndPersist(ctx, run)
+	// The run records which module's stages were refused; the refusal itself is
+	// the command's answer, so a caller exits on it rather than on "partial".
+	sealed, err := uc.sealAndPersist(ctx, run)
+	return sealed, errors.Join(err, refused.load())
+}
+
+// firstError keeps the first error stored in it, for concurrent workers.
+type firstError struct {
+	mu  sync.Mutex
+	err error
+}
+
+func (f *firstError) store(err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.err == nil {
+		f.err = err
+	}
+}
+
+func (f *firstError) load() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.err
 }
 
 // walkToExtract reads the walk the request names, refusing one with no modules.
@@ -335,9 +359,11 @@ func (uc *ExtractUseCase) orderedRunStages(req ExtractRequest) ([]string, error)
 }
 
 // runModuleStages runs each stage over one module, recording its result on
-// modRes; it stops at the run's cancellation.
-func (uc *ExtractUseCase) runModuleStages(ctx context.Context, req ExtractRequest, coord coordinate.ModuleCoordinate, runStages []string, modRes domain.ModuleExtractionResult, partial, cancelled *atomic.Bool) {
-	for _, stage := range runStages {
+// modRes; it stops at the run's cancellation. A stored artefact refused as
+// altered fails the module's remaining stages unrun: each would read the same
+// refused bytes.
+func (uc *ExtractUseCase) runModuleStages(ctx context.Context, req ExtractRequest, coord coordinate.ModuleCoordinate, runStages []string, modRes domain.ModuleExtractionResult, partial, cancelled *atomic.Bool, refused *firstError) {
+	for i, stage := range runStages {
 		if ctx.Err() != nil {
 			cancelled.Store(true)
 			break
@@ -361,6 +387,13 @@ func (uc *ExtractUseCase) runModuleStages(ctx context.Context, req ExtractReques
 
 		if stageRes.Status == domain.StageFailed {
 			partial.Store(true)
+		}
+		if errors.Is(extractErr, fetchports.ErrBlobTampered) {
+			refused.store(extractErr)
+			for _, rest := range runStages[i+1:] {
+				modRes.Stages[rest] = domain.StageResult{Status: domain.StageFailed, Error: stageRes.Error}
+			}
+			return
 		}
 	}
 }

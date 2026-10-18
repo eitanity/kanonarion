@@ -138,3 +138,49 @@ func TestZipIdentity_FailsClosedOnAMalformedStoredHash(t *testing.T) {
 		t.Errorf("ZipIdentity error = %v, want it to name the derivation it refused", err)
 	}
 }
+
+// A tamper refusal reads as one sentence naming what was stored, what the bytes
+// hash to, and the re-fetch that replaces them, and every refusal matches the
+// sentinel the exit mapping reads.
+func TestBlobTamperedError_SaysWhatWasRefusedAndHowToReplaceIt(t *testing.T) {
+	identity := fetchtest.Blob(ports.BlobKindZip, fetchtest.H1("recorded"))
+	refusal := &ports.BlobTamperedError{Identity: identity, Observed: "h1:observed"}
+	if !errors.Is(refusal, ports.ErrBlobTampered) {
+		t.Fatal("a refusal does not match ErrBlobTampered")
+	}
+	if errors.Is(refusal, ports.ErrUnknownBlobKind) {
+		t.Fatal("a refusal matches an unrelated sentinel")
+	}
+	if got := refusal.Error(); !strings.Contains(got, "stored artefact "+identity.String()+" does not hash to its identity (observed h1:observed)") ||
+		!strings.HasSuffix(got, "kanonarion fetch <module>@<version> --force") {
+		t.Errorf("unattributed refusal = %q", got)
+	}
+
+	coord := fetchtest.Record(t, fetchtest.Module("example.com/m", "v1.0.0")).Coordinate()
+	wrapped := ports.AttributeBlobTamper(fmtWrap(refusal), coord)
+	if !strings.HasSuffix(wrapped.Error(), "kanonarion fetch "+coord.String()+" --force") {
+		t.Errorf("attributed refusal = %q", wrapped)
+	}
+	// A refusal already attributed keeps its module.
+	other := fetchtest.Record(t, fetchtest.Module("example.com/other", "v9.9.9")).Coordinate()
+	if got := ports.AttributeBlobTamper(refusal, other).Error(); strings.Contains(got, other.String()) {
+		t.Errorf("re-attribution overwrote the module: %q", got)
+	}
+	// Anything else passes through untouched.
+	plain := errors.New("plain")
+	if got := ports.AttributeBlobTamper(plain, coord); got.Error() != "plain" {
+		t.Errorf("a non-refusal was altered: %v", got)
+	}
+
+	unhashable := &ports.BlobTamperedError{Identity: identity, Unhashable: "zip: checksum error"}
+	if got := unhashable.Error(); !strings.Contains(got, "(observed no h1: zip: checksum error)") {
+		t.Errorf("unhashable refusal = %q", got)
+	}
+}
+
+type wrapped struct{ err error }
+
+func (w wrapped) Error() string { return "reading: " + w.err.Error() }
+func (w wrapped) Unwrap() error { return w.err }
+
+func fmtWrap(err error) error { return wrapped{err} }

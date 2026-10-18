@@ -20,12 +20,6 @@ func testIdentity(value string) ports.BlobIdentity {
 	return fetchtest.Blob(ports.BlobKindZip, fetchtest.H1(value))
 }
 
-// testGoModIdentity is testIdentity's go.mod counterpart: the same h1 under the
-// other kind, for the tests whose subject is that the two do not collide.
-func testGoModIdentity(value string) ports.BlobIdentity {
-	return fetchtest.Blob(ports.BlobKindGoMod, fetchtest.H1(value))
-}
-
 // The malformed-handle cases these tests used to cover no longer exist. An
 // address is a typed value derived from a fetch measurement rather than a string
 // the caller assembles, so it cannot arrive misspelled; the only degenerate

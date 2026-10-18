@@ -34,17 +34,18 @@ import (
 // disk names, not the ones the published zip shipped.
 //
 // A failure to create the directory is not fatal. The analysis falls back to the
-// host cache, which is where it resolved from until now, and says so.
+// host cache, which is where it resolved from until now, and says so. A stored
+// artefact refused as altered is fatal: the analysis must not load without it.
 func (a *Analyser) prepareModuleCache(
 	ctx context.Context,
 	dir string,
 	coord coordinate.ModuleCoordinate,
-) (string, func()) {
+) (string, func(), error) {
 	if a.realModcacheDir != "" {
-		return a.realModcacheDir, func() {}
+		return a.realModcacheDir, func() {}, nil
 	}
 	if a.moduleCache == nil {
-		return "", func() {}
+		return "", func() {}, nil
 	}
 
 	main := declaredMainModule(dir)
@@ -53,7 +54,7 @@ func (a *Analyser) prepareModuleCache(
 		// standard library alone, and an empty cache serves it exactly as well as
 		// a full one. Materialising a directory to hold nothing would only add a
 		// mkdir and a remove to every such analysis.
-		return "", func() {}
+		return "", func() {}, nil
 	}
 
 	cacheDir, err := os.MkdirTemp("", "kanonarion-cg-modcache-*")
@@ -63,7 +64,7 @@ func (a *Analyser) prepareModuleCache(
 			slog.String("version", coord.Version()),
 			slog.String("error", err.Error()),
 		)
-		return "", func() {}
+		return "", func() {}, nil
 	}
 	cleanup := func() {
 		// modcache.Remove rather than os.RemoveAll: the go command writes the
@@ -81,6 +82,10 @@ func (a *Analyser) prepareModuleCache(
 
 	a.step(coord, "materialising the module cache")
 	report := a.moduleCache.Materialise(ctx, cacheDir, main)
+	if report.Tampered != nil {
+		cleanup()
+		return "", func() {}, fmt.Errorf("materialising the module cache for %s: %w", coord, report.Tampered)
+	}
 	a.step(coord, fmt.Sprintf("module cache materialised (%d of %d)", report.Written, report.Requested))
 	a.logger.InfoContext(ctx, "callgraph_modcache_materialised",
 		slog.String("module", coord.Path()),
@@ -100,7 +105,7 @@ func (a *Analyser) prepareModuleCache(
 			slog.String("failures", report.Failures),
 		)
 	}
-	return cacheDir, cleanup
+	return cacheDir, cleanup, nil
 }
 
 // declaredMainModule reads what the extracted tree states about itself: the

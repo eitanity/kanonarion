@@ -2,6 +2,7 @@ package application
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/eitanity/kanonarion/internal/adapters/interrupt"
@@ -79,8 +80,8 @@ func (uc *ScanWalkUseCase) scanTargetRooted(
 		return false, nil
 	}
 	blob, err := uc.moduleScanner.blobs.Get(ctx, zipIdentity)
-	if interrupt.Cancelled(ctx, err) {
-		return false, fmt.Errorf("retrieving the content of %s: %w", target, err)
+	if interrupt.Cancelled(ctx, err) || errors.Is(err, fetchports.ErrBlobTampered) {
+		return false, fmt.Errorf("retrieving the content of %s: %w", target, fetchports.AttributeBlobTamper(err, target))
 	}
 	if err != nil {
 		uc.logger.Warn("target-rooted scan: could not retrieve the target's module content, falling back to isolated scans",

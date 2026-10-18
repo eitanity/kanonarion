@@ -151,7 +151,7 @@ func open(req storage.Request, inspect bool) (*storage.Storage, error) {
 	facts := fetchsqlite.New(db)
 	facts.ReportSetAside(req.SetAside)
 	auditing := fetchsqlite.NewAuditingStore(facts, LedgerPath(req.StoreRoot))
-	blobs := localfs.New(req.StoreRoot)
+	blobs := localfs.New(req.StoreRoot).WithAudit(auditing, req.Command).WithRefusalObserver(req.OnBlobRefused)
 	if maintain {
 		if err := maintainStore(db, auditing, blobs, req, needLedger); err != nil {
 			return nil, errors.Join(err, db.Close())

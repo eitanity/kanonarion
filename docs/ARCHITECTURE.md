@@ -302,7 +302,8 @@ ports; it has no application layer of its own.
 Infrastructure used by more than one context lives under `internal/adapters/`
 rather than being re-declared per context:
 
-- `blobstore` - SHA-256 content-addressed blob storage (module zips)
+- `blobstore` - blob storage for module zips and go.mod files, addressed by
+  their h1 hash and verified against it on every read
 - `factstore` - `FactRecord` persistence in SQLite, wrapped by the
   `AuditingStore` that appends the assurance log
 - `proxy` - module proxy client (`proxy.golang.org` or `$GOPROXY`)

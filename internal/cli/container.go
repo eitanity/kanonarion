@@ -249,6 +249,7 @@ var openStorage = openConfiguredStorage
 // through. A configuration naming a backend this binary did not register is a
 // precondition failure.
 func openConfiguredStorage(req storage.Request) (*storage.Storage, error) {
+	req.Command, req.OnBlobRefused = invokedCommand, blobRefusals.observe
 	st, err := composition.OpenStorage(context.Background(), req)
 	if errors.Is(err, storage.ErrBackendNotRegistered) {
 		return nil, &exitError{code: ExitConfig, msg: err.Error()}

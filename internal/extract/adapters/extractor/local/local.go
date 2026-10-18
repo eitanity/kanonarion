@@ -22,6 +22,7 @@ import (
 	exapp "github.com/eitanity/kanonarion/internal/example/application"
 	exdomain "github.com/eitanity/kanonarion/internal/example/domain"
 	"github.com/eitanity/kanonarion/internal/failurecause"
+	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
 	"github.com/eitanity/kanonarion/internal/gotoolchain"
 	ifaceapp "github.com/eitanity/kanonarion/internal/iface/application"
 	ifacedomain "github.com/eitanity/kanonarion/internal/iface/domain"
@@ -337,6 +338,20 @@ func (a *AdapterExtractor) Extract(ctx context.Context, coord coordinate.ModuleC
 	}
 }
 
+// tamperRefusal returns the line in which a child that exited with the integrity
+// code refused a stored artefact as altered.
+func tamperRefusal(execErr error, stderr []byte) (string, bool) {
+	if !childproc.ExitedIntegrity(execErr) {
+		return "", false
+	}
+	for _, line := range strings.Split(string(stderr), "\n") {
+		if strings.Contains(line, fetchports.BlobTamperedMarker) {
+			return strings.TrimSpace(line), true
+		}
+	}
+	return "", false
+}
+
 // extractCallgraphSubprocess runs the callgraph stage by spawning a child
 // process. The child runs the full callgraph extraction and persists the record
 // to the store. The parent reads the record back on success.
@@ -376,6 +391,12 @@ func (a *AdapterExtractor) extractCallgraphSubprocess(ctx context.Context, coord
 	// The child's writes are this run's writes. Without folding its count in, a
 	// run whose children waited repeatedly for the store lock reports none.
 	sqlitestore.AddRetries(sqlitestore.ContentionNoticeIn(string(stderr)))
+	// A child that refused a stored artefact as altered wrote nothing; the run
+	// stops on it as it does for an in-process stage, rather than recording a
+	// failed stage and carrying on.
+	if line, ok := tamperRefusal(execErr, stderr); ok {
+		return ports.StageResult{}, fmt.Errorf("callgraph stage: %w: %s", fetchports.ErrBlobTampered, line)
+	}
 	// A child that exited Partial wrote its graph; the record read below is what
 	// classifies it. Reading that exit as a fault made every incompletely
 	// analysable module a failed stage.

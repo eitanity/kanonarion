@@ -361,7 +361,7 @@ func (uc *ExtractCallGraphUseCase) resolveZipPath(ctx context.Context, req Extra
 	}
 	zipPath, cleanup, err := blobZipPath(ctx, uc.blobs, zipIdentity)
 	if err != nil {
-		return "", nil, fmt.Errorf("resolving blob path for %s: %w", factRecord.ContentLocation, err)
+		return "", nil, fmt.Errorf("resolving blob path for %s: %w", factRecord.ContentLocation, fetchports.AttributeBlobTamper(err, req.Coordinate))
 	}
 	return zipPath, cleanup, nil
 }

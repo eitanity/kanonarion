@@ -3,6 +3,7 @@ package modcache_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -528,5 +529,23 @@ func TestPopulate_UnencodableInfoIsReported(t *testing.T) {
 	info := filepath.Join(cacheDir, "cache", "download", "example.com", "mod", "@v", "v1.0.0.info")
 	if _, err := os.Stat(info); err == nil {
 		t.Errorf("an .info was written for a fetch time that cannot be encoded")
+	}
+}
+
+// Tampered picks out the failures that are a stored artefact refused as
+// altered, and is nil for a report whose holes are only absences.
+func TestReport_TamperedNamesOnlyRefusedArtefacts(t *testing.T) {
+	coord := newCoord(t, "example.com/m", "v1.0.0")
+	refusal := &fetchports.BlobTamperedError{Identity: fetchtest.Blob(fetchports.BlobKindZip, fetchtest.H1("x"))}
+	report := modcache.Report{Failures: []modcache.CoordinateFailure{
+		{Coordinate: coord, Err: errors.New("fact record not found")},
+		{Coordinate: coord, Err: fmt.Errorf("writing zip: %w", refusal)},
+	}}
+	var got *fetchports.BlobTamperedError
+	if err := report.Tampered(); !errors.As(err, &got) || got != refusal {
+		t.Errorf("Tampered = %v, want the refusal", err)
+	}
+	if err := (modcache.Report{Failures: report.Failures[:1]}).Tampered(); err != nil {
+		t.Errorf("Tampered over an absence = %v, want nil", err)
 	}
 }

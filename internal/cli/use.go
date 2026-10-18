@@ -1,9 +1,9 @@
 package cli
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -22,7 +22,6 @@ import (
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
 	"github.com/spf13/cobra"
-	"golang.org/x/mod/sumdb/dirhash"
 )
 
 type useFlags struct {
@@ -550,6 +549,13 @@ func noArtefactNoun(s walkdomain.ResolutionSource) string {
 //
 // Nothing to copy is exit 0. The run is not incomplete; there was nothing owed.
 func useCopyExit(t useTally) error {
+	// A refused artefact says the store's evidence is in doubt, which outranks
+	// how much of the selection reached the cache.
+	for _, o := range t.of(useFailed) {
+		if errors.Is(o.err, ports.ErrBlobTampered) {
+			return o.err
+		}
+	}
 	failed := len(t.of(useFailed))
 	switch {
 	case failed == 0:
@@ -605,6 +611,13 @@ func copyToModCache(
 
 	relDir := filepath.Join("cache", "download", escapedPath, "@v")
 	baseDir := filepath.Join(modCache, relDir)
+
+	// The store verifies each artefact as it is read, and both are read before
+	// anything is written, so a refused one leaves the shared cache untouched.
+	if verr := verifyHeldArtefacts(ctx, blobs, record.FactRecord, coord); verr != nil {
+		return useLanding{}, verr
+	}
+
 	root, err := os.OpenRoot(modCache)
 	if err != nil {
 		return useLanding{}, fmt.Errorf("opening mod cache root: %w", err)
@@ -633,19 +646,8 @@ func copyToModCache(
 	}
 	landing := useLanding{dir: relDir, alreadyPresent: zipPresent}
 
-	zipDst := filepath.Join(baseDir, coord.Version()+".zip")
-
-	// 1b. Verify ZIP hash
-	computedZipHash, err := dirhash.HashZip(zipDst, dirhash.Hash1)
-	if err != nil {
-		return useLanding{}, fmt.Errorf("hashing zip: %w", err)
-	}
-	if record.ModuleHash != computedZipHash {
-		return useLanding{}, fmt.Errorf("checksum mismatch for %s zip: recorded %s, computed %s", coord, record.ModuleHash, computedZipHash)
-	}
-
 	// 2. Copy MOD
-	if err := copyAndVerifyGoMod(ctx, blobs, root, record, coord, relDir, logger); err != nil {
+	if err := copyGoMod(ctx, blobs, root, record, coord, relDir, logger); err != nil {
 		return useLanding{}, err
 	}
 
@@ -656,9 +658,27 @@ func copyToModCache(
 	return landing, nil
 }
 
-// copyAndVerifyGoMod copies the go.mod into the module cache and checks it
-// hashes to the recorded value.
-func copyAndVerifyGoMod(ctx context.Context, blobs ports.BlobStore, root *os.Root, record fetchdomain.CompositeRecord, coord coordinate.ModuleCoordinate, relDir string, logger *slog.Logger) error {
+// verifyHeldArtefacts reads the zip and go.mod the record names through the
+// verifying store, returning its refusal of either.
+func verifyHeldArtefacts(ctx context.Context, blobs ports.BlobStore, record fetchdomain.FactRecord, coord coordinate.ModuleCoordinate) error {
+	for _, derive := range []func(fetchdomain.FactRecord) (ports.BlobIdentity, bool, error){ports.ZipIdentity, ports.GoModIdentity} {
+		identity, ok, err := derive(record)
+		if err != nil || !ok {
+			continue // the copy below reports an underivable or absent artefact in its own words
+		}
+		rc, err := blobs.Get(ctx, identity)
+		if errors.Is(err, ports.ErrBlobTampered) {
+			return ports.AttributeBlobTamper(err, coord)
+		}
+		if err == nil {
+			_ = rc.Close() //nolint:errcheck // opened only to verify; nothing was read
+		}
+	}
+	return nil
+}
+
+// copyGoMod copies the go.mod into the module cache.
+func copyGoMod(ctx context.Context, blobs ports.BlobStore, root *os.Root, record fetchdomain.CompositeRecord, coord coordinate.ModuleCoordinate, relDir string, logger *slog.Logger) error {
 	goModIdentity, hasGoMod, err := ports.GoModIdentity(record.FactRecord)
 	if err != nil {
 		return fmt.Errorf("deriving go.mod address for %s: %w", coord, err)
@@ -667,21 +687,6 @@ func copyAndVerifyGoMod(ctx context.Context, blobs ports.BlobStore, root *os.Roo
 		relModPath := filepath.Join(relDir, coord.Version()+".mod")
 		if _, err := copyBlob(ctx, blobs, goModIdentity, root, relModPath); err != nil {
 			return fmt.Errorf("copying mod: %w", err)
-		}
-
-		// 2b. Verify MOD hash
-		modBytes, err := root.ReadFile(relModPath)
-		if err != nil {
-			return fmt.Errorf("reading copied mod: %w", err)
-		}
-		computedModHash, err := dirhash.Hash1([]string{"go.mod"}, func(string) (io.ReadCloser, error) {
-			return io.NopCloser(bytes.NewReader(modBytes)), nil
-		})
-		if err != nil {
-			return fmt.Errorf("hashing mod: %w", err)
-		}
-		if record.GoModHash != computedModHash {
-			return fmt.Errorf("checksum mismatch for %s go.mod: recorded %s, computed %s", coord, record.GoModHash, computedModHash)
 		}
 	} else {
 		// Fallback for older records if any (unlikely to work without the mod file)

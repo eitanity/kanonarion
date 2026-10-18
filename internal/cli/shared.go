@@ -11,8 +11,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
@@ -869,6 +871,8 @@ func resetInvocationState() {
 	// No remedy, so a refusal raised before a command was resolved names none
 	// rather than the last command's.
 	offlineRemedy = ""
+	invokedCommand = ""
+	blobRefusals.reset()
 	if restoreGoproxy != nil {
 		if err := restoreGoproxy(); err != nil {
 			slog.Default().Error("restoring GOPROXY after --goproxy", slog.String("error", err.Error()))
@@ -1132,6 +1136,80 @@ func offlineAlternativeOf(cmd *cobra.Command) string {
 // print a no-network refusal — the proxy adapter is built in a dozen places and
 // none of them knows which command is running.
 var offlineRemedy string
+
+// invokedCommand is this invocation's command path, which a refused stored
+// artefact names in the assurance log as the reader that refused it.
+var invokedCommand string
+
+// blobRefusals collects every stored artefact this invocation's blob store
+// refused and did not later replace, so a refusal a reader absorbed still
+// decides the exit while one a re-fetch repaired does not.
+var blobRefusals refusalLog
+
+// refusalLog is the invocation's standing refusals, in the order they happened.
+type refusalLog struct {
+	mu   sync.Mutex
+	seen []*fetchports.BlobTamperedError
+}
+
+// observe records a refusal, or with a nil refusal withdraws identity's.
+func (l *refusalLog) observe(identity fetchports.BlobIdentity, r *fetchports.BlobTamperedError) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.seen = slices.DeleteFunc(l.seen, func(s *fetchports.BlobTamperedError) bool { return s.Identity == identity })
+	if r != nil {
+		l.seen = append(l.seen, r)
+	}
+}
+
+func (l *refusalLog) first() *fetchports.BlobTamperedError {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if len(l.seen) == 0 {
+		return nil
+	}
+	return l.seen[0]
+}
+
+func (l *refusalLog) reset() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.seen = nil
+}
+
+// blobRefusalError is a run that refused a stored artefact. It prints the
+// refusal's own sentence, and unwraps to both the command's error and the
+// refusal so the exit and every errors.Is still see the chain.
+type blobRefusalError struct {
+	err     error
+	refusal *fetchports.BlobTamperedError
+}
+
+func (e *blobRefusalError) Error() string { return e.refusal.Error() }
+
+func (e *blobRefusalError) Unwrap() []error {
+	if e.err == nil {
+		return []error{e.refusal}
+	}
+	return []error{e.err, e.refusal}
+}
+
+// surfaceBlobRefusal makes a refused stored artefact the run's answer: the one
+// in err's chain, or else the first the store recorded. A refusal a child
+// process made reaches here as its text alone and is left as it is.
+func surfaceBlobRefusal(err error) error {
+	var refusal *fetchports.BlobTamperedError
+	if errors.As(err, &refusal) {
+		return &blobRefusalError{err: err, refusal: refusal}
+	}
+	if errors.Is(err, fetchports.ErrBlobTampered) {
+		return err
+	}
+	if refusal = blobRefusals.first(); refusal != nil {
+		return &blobRefusalError{err: err, refusal: refusal}
+	}
+	return err
+}
 
 // restoreGoproxy undoes the invocation's --goproxy declaration; nil when the
 // command was given none.
@@ -1790,6 +1868,11 @@ var moduleNotFetched = []error{
 func ExitCodeForError(err error) int {
 	if err == nil {
 		return ExitOK
+	}
+	// A stored artefact refused as altered outranks whatever the command made of
+	// the gap it left: every answer the run gave stands on the store's bytes.
+	if errors.Is(err, fetchports.ErrBlobTampered) {
+		return ExitIntegrity
 	}
 	if code, ok := ExitCodeFromError(err); ok {
 		return code

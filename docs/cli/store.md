@@ -123,6 +123,17 @@ The log carries two kinds of event and they answer different questions:
   re-measuring. A scan that reuses a stored run measures nothing, so without
   these the last check is invisible.
 
+A command that reads a stored module zip or go.mod which no longer hashes to its
+identity refuses it (exit `10`) and appends a `verification_failed` event naming
+the `artefact_identity`, the `expected_hash`, the `observed_hash` (empty, with
+`unhashable` saying why, when the bytes are not a readable zip) and the
+`command` that read it. The event names the artefact, not the module, so list
+these with `--event-type verification_failed` rather than `--module`:
+
+```
+kanonarion store ledger --event-type verification_failed
+```
+
 #### What the ledger does not witness
 
 These are persisted and append no event, so their absence from a query is not

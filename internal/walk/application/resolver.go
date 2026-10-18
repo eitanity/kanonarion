@@ -1444,7 +1444,7 @@ func (r *GraphResolver) extractGoMod(ctx context.Context, fact domain2.FactRecor
 	if hasGoMod {
 		data, rerr := r.readBlob(ctx, goModIdentity)
 		if rerr != nil {
-			return nil, fmt.Errorf("reading go.mod blob for %s@%s: %w", fact.ModulePath, fact.ModuleVersion, rerr)
+			return nil, fmt.Errorf("reading go.mod blob for %s@%s: %w", fact.ModulePath, fact.ModuleVersion, fetchports.AttributeBlobTamper(rerr, fact.Coordinate()))
 		}
 		// An empty standalone go.mod is equivalent to "no go.mod" — preserve
 		// the leaf-node semantics of the zip-scan path.
@@ -1465,7 +1465,7 @@ func (r *GraphResolver) extractGoMod(ctx context.Context, fact domain2.FactRecor
 	}
 	zipData, err := r.readBlob(ctx, zipIdentity)
 	if err != nil {
-		return nil, fmt.Errorf("reading blob for %s@%s: %w", fact.ModulePath, fact.ModuleVersion, err)
+		return nil, fmt.Errorf("reading blob for %s@%s: %w", fact.ModulePath, fact.ModuleVersion, fetchports.AttributeBlobTamper(err, fact.Coordinate()))
 	}
 
 	archive, err := ziparchive.New(zipData)

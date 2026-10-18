@@ -292,7 +292,7 @@ func (uc *GenerateNoticeUseCase) readLicenseTexts(
 	}
 	r, err := uc.blobs.Get(ctx, zipIdentity)
 	if err != nil {
-		return nil, nil, fmt.Errorf("opening blob: %w", err)
+		return nil, nil, fmt.Errorf("opening blob: %w", fetchports.AttributeBlobTamper(err, coord))
 	}
 	defer func() { _ = r.Close() }()
 
