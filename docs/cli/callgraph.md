@@ -157,7 +157,8 @@ Two things can connect a caller to a function, and they are not the same fact.
 
 Both are edges. Every edge states its `kind` in JSON — `"Call"` or
 `"Reference"`, spelled out on both so a consumer never has to infer one from a
-missing field — and a reference carries a label in the text output:
+missing field (a record made under `--tinygo` has two more kinds of call, see
+[Edge kind](#edge-kind)) — and a reference carries a label in the text output:
 
 ```
 1 caller of pkg.(*H).confirmEmail:
@@ -351,6 +352,29 @@ module: `callers` on a function handed to `machine.Pin.SetInterrupt` names the
 such as `time` and `fmt`, stay standard library. The graph is much larger than
 the same program's under the host frame, because `device/*` packages declare a
 method per register.
+
+The record also holds what TinyGo adds beyond the source's calls:
+
+- **Calls the compiler inserts**, edge kind `compiler-inserted`: map, string,
+  channel, `append`, `panic`/`recover`, type assertion, interface comparison,
+  `go`, `defer`, heap allocation, the bounds, nil and divide-by-zero checks, and
+  `print`/`println` each become a call to the runtime function TinyGo emits for
+  them. The functions come from a table kanonarion keeps per TinyGo release.
+  Under a release the table does not cover, the record is `Partial` with
+  `compiler-inserted runtime calls and the entry points TinyGo exports by name
+  are not recorded: TinyGo <version> is outside kanonarion's lowering table,
+  which covers TinyGo <versions>`; everything else in it is measured as usual.
+- **Bodies `//go:linkname` supplies**, edge kind `linkname`, in both forms: the
+  implementing package names the declaration (`//go:linkname timeSleep
+  time.Sleep`), or a declaration without a body names its implementation
+  (`//go:linkname callMain main.main`).
+- **Entry points.** The `//export` functions in TinyGo's own packages carry
+  `export_directive`: `runtime.main` as `Reset_Handler`, the `<name>_IRQHandler`
+  stubs, the `__atomic_*` helpers. In a wasm build, `runtime.wasmEntryCommand`
+  carries `wasmexport` `_start`: TinyGo exports it by name, with no directive in
+  source, under the build mode `tinygo build` uses. A function handed to
+  `interrupt.New`, whether named, a method value or a function literal, carries
+  `interrupt_handler`, and reachability starts there as it does at an export.
 
 TinyGo's packages are written for TinyGo's cgo, so they are read the way TinyGo
 reads them: `import "C"` is removed and every `C.<name>` becomes the name TinyGo
@@ -1492,7 +1516,8 @@ constructing them by hand.
 | `is_assembly_or_linkname` | The function has no Go body (assembly or `//go:linkname`) |
 | `uses_plugin` | The body references the Go `plugin` package |
 | `position_file`, `position_line` | Where the symbol is declared. Absent when the record states no position — see below |
-| `export_directive` | The function hands itself to a caller outside Go. `kind` is `wasmexport` (`//go:wasmexport`), `export` (`//export`, and TinyGo's `//go:export`) or `interrupt` (TinyGo's `//go:interrupt`); `name` is the exported name, absent for an interrupt. Read from the doc comment of a package-level function in the analysed packages; a method records none. Absent when the function carries no directive |
+| `export_directive` | The function hands itself to a caller outside Go. `kind` is `wasmexport` (`//go:wasmexport`), `export` (`//export`, and TinyGo's `//go:export`) or `interrupt` (TinyGo's `//go:interrupt`); `name` is the exported name, absent for an interrupt. Read from the doc comment of a package-level function in the analysed packages, and under `--tinygo` in TinyGo's own packages too; a method records none, and neither does an `//export` or `//go:export` on a declaration without a body, which imports a C symbol rather than exporting one. Absent when the function carries no directive |
+| `interrupt_handler` | Under `--tinygo` only: the function is installed as a hardware interrupt handler by `runtime/interrupt.New`. `kind` is `interrupt.New`; `site_file` and `site_line` are the registration call, the first in file and line order when there are several. Absent when nothing installs the function |
 
 The three body-level facts are ones a callee-identity map cannot witness. They
 are used by [`capability`](capability.md) analysis and by the answer layer,
@@ -1554,6 +1579,20 @@ unbounded are the five `reflect.Value` methods that pick their target at run tim
 `to_id` as well as on the attribute. On one 74,797-edge graph the attribute is set
 on 162 edges and 2 of them are of that kind, so reading the attribute alone
 overstates them by about eighty times.
+
+## Edge kind
+
+| `kind` | Meaning |
+|--------|---------|
+| `Call` | A call written in the source |
+| `Reference` | The callee's value is taken at the call site; not a call |
+| `compiler-inserted` | Under `--tinygo` only: a call TinyGo's compiler emits for a construct the source writes as an operator, builtin or statement — a map read calls `runtime.hashmapStringGet`, `go f()` calls `internal/task.start`, a bounds check calls `runtime.lookupPanic`. The call site is the construct's position |
+| `linkname` | Under `--tinygo` only: from a declaration without a body to the function `//go:linkname` makes implement it, such as `time.Sleep` → `runtime.timeSleep` |
+
+`callers`, `callees` and `usage` label the last two beside the edge, and a
+transitive traversal follows them as calls, because at run time they are.
+`callgraph-show` tags them on each edge line, and its frame line counts them
+when the record has any.
 
 Confidence answers *how was the target resolved*, a different question from
 *what kind of edge is it*. A reference edge is usually `Direct` — the analyser

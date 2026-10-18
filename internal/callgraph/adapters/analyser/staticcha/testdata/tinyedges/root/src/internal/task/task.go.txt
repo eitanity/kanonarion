@@ -1,0 +1,7 @@
+package task
+
+import "unsafe"
+
+func start(fn uintptr, args unsafe.Pointer, stackSize uintptr) {}
+
+func Pause() {}

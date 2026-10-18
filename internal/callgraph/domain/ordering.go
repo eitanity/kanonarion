@@ -59,10 +59,27 @@ func CallNodeLess(a, b CallNode) bool {
 	if a.IsTest != b.IsTest {
 		return !a.IsTest
 	}
-	if a.ExportDirective.Kind != b.ExportDirective.Kind {
-		return a.ExportDirective.Kind < b.ExportDirective.Kind
+	if a.ExportDirective != b.ExportDirective {
+		return exportDirectiveLess(a.ExportDirective, b.ExportDirective)
 	}
-	return a.ExportDirective.Name < b.ExportDirective.Name
+	return interruptHandlerLess(a.InterruptHandler, b.InterruptHandler)
+}
+
+func exportDirectiveLess(a, b ExportDirective) bool {
+	if a.Kind != b.Kind {
+		return a.Kind < b.Kind
+	}
+	return a.Name < b.Name
+}
+
+func interruptHandlerLess(a, b InterruptHandler) bool {
+	if a.Kind != b.Kind {
+		return a.Kind < b.Kind
+	}
+	if a.Site.File != b.Site.File {
+		return a.Site.File < b.Site.File
+	}
+	return a.Site.Line < b.Site.Line
 }
 
 // CallEdgeLess is the canonical ordering for CallEdge slices. The endpoints and

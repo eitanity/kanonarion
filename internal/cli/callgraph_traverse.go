@@ -379,12 +379,7 @@ func printEdgeRefs(kind, symbolID string, refs []ports.CallEdgeRef, jsonOut bool
 		if ref.IsTest {
 			testTag = "  [test]"
 		}
-		kindTag := ""
-		if ref.Kind.IsReference() {
-			// Said on the line rather than in a footnote: a reader scanning a
-			// caller list must not take a registration for an invocation.
-			kindTag = "  [reference — the symbol's value is taken here, not called]"
-		}
+		kindTag := edgeKindTag(ref.Kind)
 		if _, err := fmt.Fprintf(stdout, "  %s  [%s]%s%s  (%s@%s)\n",
 			other, string(ref.Confidence), kindTag, testTag,
 			ref.ModulePath, ref.ModuleVersion,
@@ -681,9 +676,29 @@ func writeTraversalTruncationNotice(stdout io.Writer, direction string, maxDepth
 
 // edgeKindLabel renders an edge kind for JSON consumers, naming the zero value
 // rather than emitting an empty string a reader would have to know to interpret.
+// The two TinyGo kinds keep their own names: each is a call, made by code the
+// source does not spell.
 func edgeKindLabel(k domain.EdgeKind) string {
-	if k.IsReference() {
+	switch {
+	case k.IsReference():
 		return "reference"
+	case k == domain.EdgeKindCompilerInserted, k == domain.EdgeKindLinkname:
+		return string(k)
 	}
 	return "call"
+}
+
+// edgeKindTag is what a caller or callee line says beside a non-call edge.
+func edgeKindTag(k domain.EdgeKind) string {
+	switch k {
+	case domain.EdgeKindReference:
+		// Said on the line rather than in a footnote: a reader scanning a
+		// caller list must not take a registration for an invocation.
+		return "  [reference — the symbol's value is taken here, not called]"
+	case domain.EdgeKindCompilerInserted:
+		return "  [compiler-inserted — TinyGo's compiler emits this call]"
+	case domain.EdgeKindLinkname:
+		return "  [linkname — //go:linkname supplies this body]"
+	}
+	return ""
 }

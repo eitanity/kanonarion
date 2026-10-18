@@ -241,6 +241,31 @@ Records are keyed by generation (`<pipeline>+recipes.<n>`), so the bump is the
 migration: `0.3.0` rows stay and are never served for a `0.4.0` request. Cost is
 one re-measurement per coordinate on its next `native` run.
 
+## Call graph record: pipeline `0.12.0` → `0.13.0`
+
+**Derivation and record shape change; no store migration.** Under a TinyGo
+frame (`--tinygo`) a record now carries three things inside its seal: edges of
+kind `compiler-inserted`, the runtime calls TinyGo's compiler emits for maps,
+strings, channels, `append`, panics, bounds checks, `go`, `defer` and heap
+allocation; edges of kind `linkname`, from a declaration without a body to the
+function `//go:linkname` makes implement it; and an `interrupt_handler` node
+fact on each function handed to `runtime/interrupt.New`. The `export_directive`
+fact is also read from TinyGo's own packages, a wasm build's
+`runtime.wasmEntryCommand` carries it as `wasmexport` `_start` (TinyGo exports
+that entry by name), and an `//export` or
+`//go:export` on a declaration without a body no longer records one, under any
+frame. The node fact is omitted when absent, so every record without one
+marshals to the bytes it always did. A record under the host frame or
+`--target` is unchanged apart from its pipeline version, unless one of the
+module's own declarations without a body carried `//export`.
+
+A `0.12.0` TinyGo-frame record lacks the two edge kinds and the handler fact,
+and has no export directive on TinyGo's own packages, so it is not served for a
+`0.13.0` request. Records are keyed `(module, version, pipeline_version)`:
+`0.12.0` rows stay and become unreachable. Cost is one re-extraction per
+coordinate on its next `callgraph` or `local` run. No released build wrote
+`0.12.0`.
+
 ## Call graph record: pipeline `0.11.0` → `0.12.0`
 
 **Derivation change; no record shape change, no store migration.** Under a

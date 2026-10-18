@@ -135,7 +135,10 @@ switch settled.
 
 Call-graph records carry their frame from pipeline `0.11.0`, and every call-graph
 read selects the frame its invocation declares, or this host's. From pipeline
-`0.12.0` a record under `--tinygo` holds TinyGo's own packages with bodies. Interface records
+`0.12.0` a record under `--tinygo` holds TinyGo's own packages with bodies, and from `0.13.0`
+it also holds the calls TinyGo's compiler inserts (edge kind `compiler-inserted`), the bodies
+`//go:linkname` supplies (edge kind `linkname`) and the interrupt handlers installed by
+`interrupt.New`. Interface records
 are measured in the host frame, and examples records apply no build constraint.
 
 `--target` means the build target on every command that shows it. Two commands

@@ -504,6 +504,14 @@ type callNodeJSON struct {
 	Role          string `json:"role"`
 	// ExportDirective is absent when the function carries none.
 	ExportDirective *callNodeExportJSON `json:"export_directive,omitempty"`
+	// InterruptHandler is absent when nothing installs the function as one.
+	InterruptHandler *callNodeHandlerJSON `json:"interrupt_handler,omitempty"`
+}
+
+type callNodeHandlerJSON struct {
+	Kind     string `json:"kind"`
+	SiteFile string `json:"site_file"`
+	SiteLine int    `json:"site_line"`
 }
 
 type callNodeExportJSON struct {
@@ -547,8 +555,9 @@ type callEdgeJSON struct {
 // edgeKindJSON renders an edge kind for the curated shape, naming the zero
 // value instead of emitting it as the empty string.
 func edgeKindJSON(k domain.EdgeKind) string {
-	if k.IsReference() {
-		return string(domain.EdgeKindReference)
+	switch k {
+	case domain.EdgeKindReference, domain.EdgeKindCompilerInserted, domain.EdgeKindLinkname:
+		return string(k)
 	}
 	return "Call"
 }
@@ -896,6 +905,11 @@ func toCallGraphJSON(r domain.CallGraphRecord) callGraphRecordJSON {
 		}
 		if !n.ExportDirective.IsZero() {
 			nodes[i].ExportDirective = &callNodeExportJSON{Kind: string(n.ExportDirective.Kind), Name: n.ExportDirective.Name}
+		}
+		if !n.InterruptHandler.IsZero() {
+			nodes[i].InterruptHandler = &callNodeHandlerJSON{
+				Kind: string(n.InterruptHandler.Kind), SiteFile: n.InterruptHandler.Site.File, SiteLine: n.InterruptHandler.Site.Line,
+			}
 		}
 	}
 	edges := make([]callEdgeJSON, len(r.Edges))
@@ -1382,11 +1396,19 @@ func printCallGraphRecord(r domain.CallGraphRecord, limitNodes, limitEdges int, 
 		return fmt.Errorf("writing edges header: %w", err)
 	}
 	for _, e := range edges {
-		if _, err := fmt.Fprintf(stdout, "  %s → %s  [%s]\n", e.FromID, e.ToID, string(e.Confidence)); err != nil {
+		if _, err := fmt.Fprintf(stdout, "  %s → %s  [%s]%s\n", e.FromID, e.ToID, string(e.Confidence), tinyGoKindTag(e.Kind)); err != nil {
 			return fmt.Errorf("writing edge: %w", err)
 		}
 	}
 	return nil
+}
+
+// tinyGoKindTag is the edge line's tag for the two kinds of call TinyGo supplies.
+func tinyGoKindTag(k domain.EdgeKind) string {
+	if k == domain.EdgeKindCompilerInserted || k == domain.EdgeKindLinkname {
+		return " [" + string(k) + "]"
+	}
+	return ""
 }
 
 // writeRecordQualifiers writes the lines that qualify what the record covers:

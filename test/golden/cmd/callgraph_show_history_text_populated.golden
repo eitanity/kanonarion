@@ -2,23 +2,23 @@
 $ kanonarion callgraph-show example.com/mod@v1.2.0 --history
 exit 0
 --- stdout ---
-2 generation(s) for example.com/mod@v1.2.0 at pipeline 0.12.0:
+2 generation(s) for example.com/mod@v1.2.0 at pipeline 0.13.0:
 * 2026-01-15T08:00:00Z  Extracted        BUILT_WITH_BODIES 5 node(s) / 1 edge(s)
     source:   zip
     toolchain: not recorded
     frame:    linux/amd64
     analyser: not recorded
     from:     zip:h1:e3OmvJfFGN8zHyBHMYyERM362zguHcEOgGGgZ+9xR6A=
-    graph:    sha256:a5cb8a346a68bac111f0f50df992ca1881a4be1c571db34f0d871484569645fd
-    record:   sha256:97bab49669a911fade2af0b064f933f839d2ad5b7c5e0e7b5d8882950d7a46bd
+    graph:    sha256:a7b28bac5f8f9db30a26ed25218d55d5f64d80927a1424f320037d56ba4c21db
+    record:   sha256:0d13d9e22d00946f05aeea9ba3096ed759ed577775f75f0c09e2ac4147c53d83
   2026-01-16T08:00:00Z  Extracted        METADATA_ONLY     5 node(s) / 0 edge(s)
     source:   zip
     toolchain: not recorded
     frame:    linux/amd64
     analyser: not recorded
     from:     zip:h1:e3OmvJfFGN8zHyBHMYyERM362zguHcEOgGGgZ+9xR6A=
-    graph:    sha256:994a1eb2dc66eb20cec822a1f6ee12d106735a655f4aef497958716e86dfca3f
-    record:   sha256:5d80df4c8539258a99d6c487ecab241476c9eb8e4ae7768c60161da1ba5e3e60
+    graph:    sha256:d8157527cfa2d2d701dcc01f046120fdd4d8045a1d94bd61357e79643745f34c
+    record:   sha256:c8b6587d25bf3c93993e4c5ca1069becad31ce2a45ab5c6c498c27d0122f9bc0
 
 * served by the composed read (highest completeness, then most recent, within one analysis source)
 --- stderr ---

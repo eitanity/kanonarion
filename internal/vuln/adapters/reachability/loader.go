@@ -69,6 +69,9 @@ func projectCallGraph(rec callgraphdomain.CallGraphRecord) ports.CallGraphProjec
 			IsTest:        n.IsTest,
 			ExportKind:    string(n.ExportDirective.Kind),
 			ExportName:    n.ExportDirective.Name,
+			HandlerKind:   string(n.InterruptHandler.Kind),
+			HandlerFile:   n.InterruptHandler.Site.File,
+			HandlerLine:   n.InterruptHandler.Site.Line,
 		})
 	}
 	// Reference edges are projected alongside calls, deliberately. A handler

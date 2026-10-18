@@ -322,6 +322,12 @@ const (
 	// EdgeKindReference is a function value taken at the FromID site, naming
 	// ToID. It is not an invocation and never counts as one.
 	EdgeKindReference EdgeKind = "Reference"
+	// EdgeKindCompilerInserted is a call TinyGo's compiler emits for a construct
+	// the source spells as an operator, builtin or statement. It is an invocation.
+	EdgeKindCompilerInserted EdgeKind = "compiler-inserted"
+	// EdgeKindLinkname runs from a declaration without a body to the function
+	// //go:linkname makes implement it. Calling the first runs the second.
+	EdgeKindLinkname EdgeKind = "linkname"
 )
 
 // IsReference reports whether the edge records a value being taken rather than a
@@ -415,6 +421,9 @@ type CallNode struct {
 	// ExportDirective is the directive that hands a package-level function to a
 	// caller outside Go, read from its doc comment; zero when it carries none.
 	ExportDirective ExportDirective
+	// InterruptHandler is the registration that installs the function as a
+	// hardware interrupt handler by value; zero when nothing does.
+	InterruptHandler InterruptHandler
 }
 
 // InterfaceType is an interface declared in the analysed module, made

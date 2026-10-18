@@ -989,6 +989,11 @@ type CallGraphNode struct {
 	// it carries none.
 	ExportKind string
 	ExportName string
+	// HandlerKind, HandlerFile and HandlerLine are the node's interrupt-handler
+	// registration, opaque for the same reason; all zero when nothing installs it.
+	HandlerKind string
+	HandlerFile string
+	HandlerLine int
 }
 
 // CallGraphEdge is a directed call edge between two node IDs.

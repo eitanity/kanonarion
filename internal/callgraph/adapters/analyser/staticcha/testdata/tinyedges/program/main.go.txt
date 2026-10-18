@@ -1,0 +1,31 @@
+package main
+
+import (
+	"fxtime"
+	"runtime/interrupt"
+)
+
+type dev struct{ n int }
+
+var d dev
+
+func (x *dev) handle(interrupt.Interrupt) { x.n++ }
+
+func onIRQ(interrupt.Interrupt) {}
+
+var m map[string]int
+
+func worker() {}
+
+func main() {
+	_ = m["a"]
+	go worker()
+	fxtime.Sleep(1)
+	interrupt.New(1, onIRQ)
+	interrupt.New(2, d.handle)
+	interrupt.New(3, func(interrupt.Interrupt) {})
+	interrupt.New(4, onIRQ)
+}
+
+// lookup has no calls of its own: only the compiler's.
+func lookup(k string) int { return m[k] }

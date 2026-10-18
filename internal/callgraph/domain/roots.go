@@ -29,6 +29,9 @@ type RootCandidate struct {
 	// Export is the directive that hands the node to a caller outside Go, zero
 	// when it carries none.
 	Export ExportDirective
+	// Handler is the registration that installs the node as an interrupt
+	// handler, zero when nothing does.
+	Handler InterruptHandler
 }
 
 // RootScope says whether test-declared nodes may root a traversal.
@@ -98,6 +101,8 @@ func IsSyntheticTestMain(pkg, symbol, receiver string) bool {
 //   - An export directive (see ExportDirective), the one witness read from
 //     source rather than identity: the WebAssembly host, C code or the hardware
 //     calls the function, so nothing in the Go call graph does.
+//   - An interrupt handler installed by value (see InterruptHandler), read from
+//     the registration call: the hardware calls the function.
 //
 // A registered route — a handler function stored into a router — is NOT
 // witnessed here, and cannot be. Registration is a value flowing into a data
@@ -107,7 +112,7 @@ func IsSyntheticTestMain(pkg, symbol, receiver string) bool {
 // point. Claiming ingress from a node fact would be a guess; measuring the hops
 // is not, so a root reached only that way keeps its kind and states the
 // distance.
-func ExternalEntryPointReason(symbol, receiver string, export ExportDirective) string {
+func ExternalEntryPointReason(symbol, receiver string, export ExportDirective, handler InterruptHandler) string {
 	switch {
 	case IsInitSymbol(symbol):
 		return "package initialisation — the runtime runs it when the package is loaded, so it runs unconditionally"
@@ -119,6 +124,8 @@ func ExternalEntryPointReason(symbol, receiver string, export ExportDirective) s
 		return "a function exported to C (" + export.String() + ") — C code, assembly or a vector table invokes it"
 	case export.Kind == ExportInterrupt:
 		return "an interrupt handler (" + export.String() + ") — the hardware invokes it"
+	case !handler.IsZero():
+		return "a hardware interrupt handler, installed by " + string(handler.Kind) + " at " + handler.SiteString() + " — the hardware invokes it"
 	case symbol == "ServeHTTP" && receiver != "":
 		return "an http.Handler implementation (method named ServeHTTP) — an HTTP server invokes it per request"
 	}
@@ -246,7 +253,7 @@ func SelectEntryPointRoots(candidates []RootCandidate, scope RootScope) []string
 		if IsSyntheticTestMain(c.Package, c.Symbol, c.Receiver) {
 			continue
 		}
-		if c.IsExportedAPI || ExternalEntryPointReason(c.Symbol, c.Receiver, c.Export) != "" {
+		if c.IsExportedAPI || ExternalEntryPointReason(c.Symbol, c.Receiver, c.Export, c.Handler) != "" {
 			roots = append(roots, c.ID)
 		}
 	}

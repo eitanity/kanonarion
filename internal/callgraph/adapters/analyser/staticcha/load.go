@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 
@@ -123,7 +124,7 @@ func (a *Analyser) loadAndBuildSSA(ctx context.Context, fset *token.FileSet, tem
 	}
 	res.Membership = res.Membership.withTinyGo(tinyGoPkgs)
 	// Read here for the same reason: the syntax is dropped once the packages build.
-	res.ExportDirectives = a.readExportDirectives(ctx, coord, loaded, fset)
+	a.readDirectives(ctx, coord, &res, slices.Concat(loaded, tinyGoPkgs), fset)
 
 	// Pass 1: register every target package from syntax. This must complete
 	// before any Build, and before the type-only dependency sweep below: a
@@ -205,6 +206,15 @@ func (a *Analyser) loadAndBuildSSA(ctx context.Context, fset *token.FileSet, tem
 	recordFailedPackages(&res, failedSet)
 
 	return res, nil
+}
+
+// readDirectives reads the export directives and, under a TinyGo frame, the
+// linknames. TinyGo's own packages carry the vector table's and the runtime's.
+func (a *Analyser) readDirectives(ctx context.Context, coord coordinate.ModuleCoordinate, res *ssaBuildResult, pkgs []*packages.Package, fset *token.FileSet) {
+	res.ExportDirectives = a.readExportDirectives(ctx, coord, pkgs, fset)
+	if a.tinygo.Declared() {
+		res.Linknames = readLinknames(pkgs)
+	}
 }
 
 // loadPackages is the go/packages load of the standard frame.
@@ -415,6 +425,9 @@ type ssaBuildResult struct {
 	// ExportDirectives is the export directive of each package-level function the
 	// analysed packages declare, keyed by node ID.
 	ExportDirectives map[string]domain.ExportDirective
+	// Linknames is what //go:linkname makes of each package-level function under
+	// a TinyGo frame, keyed by node ID; nil under any other.
+	Linknames map[string]linknameDecl
 }
 
 // Registered returns every package registered from syntax, production and test

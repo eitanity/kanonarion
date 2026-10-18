@@ -64,7 +64,9 @@ func exportDirectives(loaded []*packages.Package, fset *token.FileSet) (map[stri
 
 // declExportDirective returns the directive fd's doc comment carries. A method
 // records none, because neither toolchain exports one. Where both are present
-// //go:wasmexport wins over //export, as it does in TinyGo.
+// //go:wasmexport wins over //export, as it does in TinyGo. An //export or
+// //go:export on a declaration without a body records none: it imports a
+// foreign symbol, so nothing outside Go calls the declaration.
 func declExportDirective(fd *ast.FuncDecl, fset *token.FileSet) (domain.ExportDirective, []string) {
 	var found []domain.ExportDirective
 	var problems []string
@@ -74,6 +76,7 @@ func declExportDirective(fd *ast.FuncDecl, fset *token.FileSet) (domain.ExportDi
 		case !matched:
 		case err != nil:
 			problems = append(problems, fset.Position(c.Pos()).String()+": "+err.Error())
+		case d.Kind == domain.ExportC && fd.Body == nil:
 		default:
 			found = append(found, d)
 		}

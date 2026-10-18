@@ -236,6 +236,10 @@ func rootCandidates(cg ports.CallGraphProjection) []callgraphdomain.RootCandidat
 				Kind: callgraphdomain.ExportKind(node.ExportKind),
 				Name: node.ExportName,
 			},
+			Handler: callgraphdomain.InterruptHandler{
+				Kind: callgraphdomain.HandlerKind(node.HandlerKind),
+				Site: callgraphdomain.SourcePosition{File: node.HandlerFile, Line: node.HandlerLine},
+			},
 		})
 	}
 	return candidates

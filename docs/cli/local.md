@@ -58,7 +58,9 @@ tree are two records, and a later run of either reuses its own.
 Under `--tinygo`, TinyGo's own packages (`machine`, `device/arm`, `runtime` and
 the rest of `TINYGOROOT/src`) are analysed with bodies, so a callback the
 firmware registers with `machine` has the `machine` function that calls it as a
-caller. A file among them that references C names needs `clang` (or a versioned
+caller. The record also holds the calls TinyGo's compiler inserts, the bodies
+`//go:linkname` supplies, and the interrupt handlers `interrupt.New` installs.
+A file among them that references C names needs `clang` (or a versioned
 `clang-<N>`) on `PATH`; without one, or when clang rejects the file's preamble,
 the record is `Partial` and says which. See
 [Under a TinyGo target](callgraph.md#under-a-tinygo-target).

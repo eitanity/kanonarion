@@ -1,0 +1,21 @@
+package main
+
+import (
+	"device/arm"
+	"machine"
+	"time"
+)
+
+var ticks uint32
+
+func onPin(p machine.Pin) { ticks++ }
+
+func main() {
+	btn := machine.GPIO15
+	btn.Configure(machine.PinConfig{Mode: machine.PinInputPullup})
+	_ = btn.SetInterrupt(machine.PinFalling, onPin)
+	for {
+		arm.Asm("nop")
+		time.Sleep(time.Second)
+	}
+}

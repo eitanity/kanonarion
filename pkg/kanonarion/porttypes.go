@@ -379,6 +379,20 @@ type ExportDirective = callgraphdomain.ExportDirective
 // Values may be added within a major version (§4).
 type ExportKind = callgraphdomain.ExportKind
 
+// HandlerKind names the call that installs a function as a hardware interrupt
+// handler by value.
+//
+// Stability: supporting type of the CallGraphStore port; unstable pre-v1.
+// Values may be added within a major version (§4).
+type HandlerKind = callgraphdomain.HandlerKind
+
+// InterruptHandler records that a function is installed as a hardware interrupt
+// handler by value, and where.
+//
+// Stability: supporting type of the CallGraphStore port; unstable pre-v1.
+// Fields may be added within a major version (§4).
+type InterruptHandler = callgraphdomain.InterruptHandler
+
 // ExtractionRunFilter constrains ListExtractionRuns results.
 //
 // Stability: supporting type of the ExtractionStore port; unstable pre-v1.

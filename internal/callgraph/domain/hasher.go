@@ -140,8 +140,15 @@ func (CallGraphRecordHasher) Unmarshal(data []byte) (CallGraphRecord, error) {
 			UsesPlugin:           cn.UsesPlugin,
 			IsTest:               cn.IsTest,
 			ExportDirective:      ExportDirective{Kind: ExportKind(cn.ExportDirective.Kind), Name: cn.ExportDirective.Name},
+			InterruptHandler: InterruptHandler{
+				Kind: HandlerKind(cn.InterruptHandler.Kind),
+				Site: SourcePosition{File: cn.InterruptHandler.Site.File, Line: cn.InterruptHandler.Site.Line},
+			},
 		}
 		if err := nodes[i].ExportDirective.Validate(); err != nil {
+			return CallGraphRecord{}, fmt.Errorf("node %s: %w", cn.ID, err)
+		}
+		if err := nodes[i].InterruptHandler.Validate(); err != nil {
 			return CallGraphRecord{}, fmt.Errorf("node %s: %w", cn.ID, err)
 		}
 	}
@@ -364,13 +371,15 @@ type canonicalNode struct {
 	IsExportedAPI        bool                     `json:"is_exported_api"`
 	IsExternal           bool                     `json:"is_external"`
 	IsTest               bool                     `json:"is_test"`
-	Module               string                   `json:"module"`
-	Package              string                   `json:"package"`
-	Position             canonicalPos             `json:"position"`
-	Receiver             string                   `json:"receiver"`
-	Symbol               string                   `json:"symbol"`
-	UsesPlugin           bool                     `json:"uses_plugin"`
-	UsesUnsafePointer    bool                     `json:"uses_unsafe_pointer"`
+	// InterruptHandler is omitted when absent, as ExportDirective is.
+	InterruptHandler  canonicalInterruptHandler `json:"interrupt_handler,omitzero"`
+	Module            string                    `json:"module"`
+	Package           string                    `json:"package"`
+	Position          canonicalPos              `json:"position"`
+	Receiver          string                    `json:"receiver"`
+	Symbol            string                    `json:"symbol"`
+	UsesPlugin        bool                      `json:"uses_plugin"`
+	UsesUnsafePointer bool                      `json:"uses_unsafe_pointer"`
 }
 
 // validateExportDirectives refuses a record whose node carries a directive this
@@ -380,8 +389,17 @@ func validateExportDirectives(nodes []CallNode) error {
 		if err := n.ExportDirective.Validate(); err != nil {
 			return fmt.Errorf("node %s: %w", n.ID, err)
 		}
+		if err := n.InterruptHandler.Validate(); err != nil {
+			return fmt.Errorf("node %s: %w", n.ID, err)
+		}
 	}
 	return nil
+}
+
+// canonicalInterruptHandler is the wire shape of domain.InterruptHandler.
+type canonicalInterruptHandler struct {
+	Kind string       `json:"kind"`
+	Site canonicalPos `json:"site"`
 }
 
 // canonicalExportDirective is the wire shape of domain.ExportDirective.
@@ -678,6 +696,10 @@ func canonicalShell(r CallGraphRecord) canonicalRecord {
 			UsesPlugin:           n.UsesPlugin,
 			UsesUnsafePointer:    n.UsesUnsafePointer,
 			ExportDirective:      canonicalExportDirective{Kind: string(n.ExportDirective.Kind), Name: n.ExportDirective.Name},
+			InterruptHandler: canonicalInterruptHandler{
+				Kind: string(n.InterruptHandler.Kind),
+				Site: canonicalPos{File: n.InterruptHandler.Site.File, Line: n.InterruptHandler.Site.Line},
+			},
 		}
 	}
 	var cIfaces []canonicalInterface

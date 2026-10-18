@@ -1,0 +1,3 @@
+package fxtime
+
+func Sleep(d int64)

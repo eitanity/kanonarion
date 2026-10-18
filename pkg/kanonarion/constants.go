@@ -233,8 +233,10 @@ const (
 // Values may be added within a major version; treat an unrecognised value
 // conservatively (§4).
 const (
-	EdgeKindCall      = callgraphdomain.EdgeKindCall
-	EdgeKindReference = callgraphdomain.EdgeKindReference
+	EdgeKindCall             = callgraphdomain.EdgeKindCall
+	EdgeKindCompilerInserted = callgraphdomain.EdgeKindCompilerInserted
+	EdgeKindLinkname         = callgraphdomain.EdgeKindLinkname
+	EdgeKindReference        = callgraphdomain.EdgeKindReference
 )
 
 // The values of ExampleStatus, as the internal package defines them.
@@ -259,6 +261,15 @@ const (
 	ExportC         = callgraphdomain.ExportC
 	ExportInterrupt = callgraphdomain.ExportInterrupt
 	ExportWasm      = callgraphdomain.ExportWasm
+)
+
+// The values of HandlerKind, as the internal package defines them.
+//
+// Stability: supporting constants of the HandlerKind type; unstable pre-v1.
+// Values may be added within a major version; treat an unrecognised value
+// conservatively (§4).
+const (
+	HandlerInterruptNew = callgraphdomain.HandlerInterruptNew
 )
 
 // The values of ExtractionRunStatus, as the internal package defines them.

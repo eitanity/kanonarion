@@ -128,7 +128,11 @@ import (
 // Bumped to "0.12.0" when TinyGo's own packages started being analysed with
 // bodies under a TinyGo frame. A 0.11.0 TinyGo-frame record holds them as
 // bodiless externals, so it must not be served as the same derivation.
-const PipelineVersion = "0.12.0"
+//
+// Bumped to "0.13.0" when a TinyGo-frame record started carrying the calls
+// TinyGo's compiler inserts, the edges //go:linkname supplies and the interrupt
+// handlers installed by value. A 0.12.0 TinyGo-frame record lacks all three.
+const PipelineVersion = "0.13.0"
 
 // ExtractCallGraphUseCase extracts the call graph of a module and persists a
 // CallGraphRecord.

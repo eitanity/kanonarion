@@ -73,9 +73,9 @@ const usageSatisfactionNote = "not measured: whether this project's own types sa
 	"The satisfaction relation is computed within a single module, so no stored record holds it " +
 	"across the project/dependency boundary — including the embedding case, which no text search finds either."
 
-// usageEdgeKindCall and usageEdgeKindReference are how a site is labelled. A
-// reference is the function VALUE being taken, which is use of the symbol and is
-// never an invocation.
+// usageEdgeKindCall and usageEdgeKindReference are how a site is labelled, as
+// edgeKindLabel spells them. A reference is the function VALUE being taken,
+// which is use of the symbol and is never an invocation.
 const (
 	usageEdgeKindCall      = "call"
 	usageEdgeKindReference = "reference"
@@ -351,10 +351,7 @@ func joinUsage(
 			File:   e.CallSite.File,
 			Line:   e.CallSite.Line,
 			IsTest: caller.IsTest,
-			Kind:   usageEdgeKindCall,
-		}
-		if e.Kind.IsReference() {
-			site.Kind = usageEdgeKindReference
+			Kind:   edgeKindLabel(e.Kind),
 		}
 
 		switch {

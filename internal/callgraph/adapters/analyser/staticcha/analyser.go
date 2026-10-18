@@ -791,6 +791,12 @@ func (a *Analyser) analyseDirOnce(
 	// call's key rather than being recorded twice under two kinds.
 	nodes, edges = a.collectReferenceEdges(ctx, prog, ordered, mem, fset, roots, nodes, edges)
 
+	// Under a TinyGo frame the compiler, //go:linkname and interrupt.New supply
+	// edges and entry points the source's calls do not show.
+	tg := newTinyGoGraph(mem, fset, roots, nodes, edges)
+	loweringGap := a.addTinyGoEdges(ctx, prog, ordered, tg, build.Linknames)
+	nodes, edges = tg.nodes, tg.edges
+
 	// Stamped once every node exists, so a node any pass added carries its
 	// directive too.
 	attachExportDirectives(nodes, build.ExportDirectives)
@@ -813,12 +819,28 @@ func (a *Analyser) analyseDirOnce(
 
 	rec = a.newCallGraphRecord(coord, build, nodes, edges, ifaces, impls, overallStatus, allLoadErrs, failedPkgs)
 	rec = stateGraphIncompleteness(rec, overallStatus, mode, tempDir, metaErrs, allLoadErrs, failedPkgs, build, mem)
+	rec = stateLoweringGap(rec, loweringGap)
 	// The last thing the analysis says. What follows is the caller sealing and
 	// storing the record, which on a large graph is the longest stretch after this
 	// point; a reader watching a run should see where it got to before it goes
 	// quiet.
 	a.step(coord, fmt.Sprintf("graph assembled (%d nodes, %d edges); storing", len(nodes), len(edges)))
 	return rec, nil
+}
+
+// stateLoweringGap makes a record that lacks one edge class Partial and leads
+// its detail with why. The cause is this run: a kanonarion whose table covers
+// the TinyGo version measures the class.
+func stateLoweringGap(rec domain.CallGraphRecord, gap string) domain.CallGraphRecord {
+	if gap == "" {
+		return rec
+	}
+	if rec.OverallStatus == domain.CallGraphStatusExtracted {
+		rec.OverallStatus = domain.CallGraphStatusPartial
+	}
+	rec.FailureDetail = strings.TrimSuffix(gap+"; "+rec.FailureDetail, "; ")
+	rec.FailureCause = domain.FailureCauseEnvironment
+	return rec
 }
 
 // newCallGraphRecord assembles the record over a walked graph.

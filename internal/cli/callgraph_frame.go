@@ -36,7 +36,7 @@ func writeFrameLine(stdout io.Writer, r cgdomain.CallGraphRecord) error {
 	if r.Frame.IsZero() {
 		return nil
 	}
-	if _, err := fmt.Fprintf(stdout, "  frame: %s\n", frameDescription(r.Frame)); err != nil {
+	if _, err := fmt.Fprintf(stdout, "  frame: %s%s\n", frameDescription(r.Frame), tinyGoEdgeCounts(r)); err != nil {
 		return fmt.Errorf("writing frame: %w", err)
 	}
 	return nil
@@ -236,4 +236,22 @@ func adoptNamedWalkFrame(ctx context.Context, walks QueryWalksUseCase, walkID st
 		return nil
 	}
 	return adoptBuildEnv(ctx, env)
+}
+
+// tinyGoEdgeCounts is the frame line's count of the edges TinyGo supplies, ""
+// when the record holds none.
+func tinyGoEdgeCounts(r cgdomain.CallGraphRecord) string {
+	var compiler, linkname int
+	for i := range r.Edges {
+		switch r.Edges[i].Kind {
+		case cgdomain.EdgeKindCompilerInserted:
+			compiler++
+		case cgdomain.EdgeKindLinkname:
+			linkname++
+		}
+	}
+	if compiler == 0 && linkname == 0 {
+		return ""
+	}
+	return fmt.Sprintf(" — %d compiler-inserted and %d linkname edges", compiler, linkname)
 }

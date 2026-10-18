@@ -1,0 +1,31 @@
+package runtime
+
+import (
+	"internal/task"
+	"unsafe"
+)
+
+func hashmapStringGet(m unsafe.Pointer, key string, value unsafe.Pointer, size uintptr) bool { return false }
+
+func stringConcat(x, y string) string { return x }
+
+func alloc(size uintptr, layout unsafe.Pointer) unsafe.Pointer { return nil }
+
+func nilPanic() { task.Pause() }
+
+//go:linkname timeSleep fxtime.Sleep
+func timeSleep(d int64) { task.Pause() }
+
+//go:linkname callMain main.main
+func callMain()
+
+//export Reset_Handler
+func main() { callMain() }
+
+func wasmEntryCommand() { callMain() }
+
+//export strlen
+func strlen(p unsafe.Pointer) uintptr
+
+//go:export memcmp
+func memcmp(a, b unsafe.Pointer, n uintptr) int
