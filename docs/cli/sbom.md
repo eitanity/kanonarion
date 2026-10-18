@@ -224,6 +224,21 @@ from a gap.
 
 The same statement is reported by [`kanonarion vendor`](vendor.md#scope-statement).
 
+### TinyGo builds
+
+A walk taken with `--tinygo` adds the component
+`pkg:golang/github.com/tinygo-org/tinygo@v<release>` (type `library`), with an
+edge from the root in the dependency graph. Its properties are
+`kanonarion:component:tinygo` (`true`), `kanonarion:tinygo:target`,
+`kanonarion:tinygo:packages` (the standard packages TinyGo supplies,
+comma-separated) and, when a package holds files of both, `kanonarion:tinygo:mixed`
+(`pkg:file,file;pkg:file`, naming the files Go supplies). The `stdlib` component
+gains `kanonarion:stdlib:packages`: the standard packages Go supplies.
+
+The TinyGo component carries no hashes, licence or external references:
+kanonarion does not yet acquire TinyGo's source. It is therefore named in the
+licence-completeness statement like any component with no licence identity.
+
 ### Standard-library chain of custody
 
 The synthetic `stdlib` component is toolchain-provided, not a proxy module, so it

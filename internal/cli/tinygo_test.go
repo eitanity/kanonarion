@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -311,8 +312,9 @@ func TestTinyGoWalk_RealToolchainSelectsTheTaggedDependency(t *testing.T) {
 	}
 
 	text, tinyGoModules := nodes("--tinygo", "wasip1")
-	if strings.Join(tinyGoModules, ",") != "golang.org/x/mod" {
-		t.Errorf("the TinyGo walk's code scope holds %v, want golang.org/x/mod", tinyGoModules)
+	// TinyGo's own node rides beside the module the tag selected.
+	if strings.Join(tinyGoModules, ",") != "github.com/tinygo-org/tinygo,golang.org/x/mod" {
+		t.Errorf("the TinyGo walk's code scope holds %v, want TinyGo's node and golang.org/x/mod", tinyGoModules)
 	}
 	if !strings.Contains(text, "tinygo/wasip1 (wasip1/wasm) under ") {
 		t.Errorf("the TinyGo walk's frame is not tinygo/wasip1 (wasip1/wasm):\n%s", text)
@@ -543,4 +545,97 @@ func writeStub(t *testing.T, path, body string) {
 	if err := os.WriteFile(path, []byte(body), 0o700); err != nil { // #nosec G306 -- a stub this test execs
 		t.Fatal(err)
 	}
+}
+
+// The split, measured with the real tinygo: under pico TinyGo supplies machine,
+// device/arm and runtime and Go supplies time; under wasip1 TinyGo supplies os
+// and Go supplies strconv. Both halves are recorded and never overlap.
+func TestTinyGoWalk_RealToolchainSplitsTheStandardLibrary(t *testing.T) {
+	if _, err := exec.LookPath("tinygo"); err != nil {
+		t.Skip("tinygo is not on PATH; this test measures what it defines")
+	}
+	requireGoOnPath(t)
+	modcache, err := exec.Command("go", "env", "GOMODCACHE").Output() // #nosec G204 -- fixed binary, literal arguments
+	if err != nil {
+		t.Fatalf("go env GOMODCACHE: %v", err)
+	}
+	t.Setenv("GOPROXY", "off")
+	for target, tc := range map[string]struct {
+		main        string
+		tinygo, gos []string
+	}{
+		"pico": {
+			main:   "package main\n\nimport (\n\t\"device/arm\"\n\t\"machine\"\n\t\"time\"\n)\n\nfunc main() {\n\tmachine.GPIO15.Configure(machine.PinConfig{Mode: machine.PinInputPullup})\n\tarm.Asm(\"nop\")\n\ttime.Sleep(time.Second)\n}\n",
+			tinygo: []string{"device/arm", "machine", "runtime"}, gos: []string{"time"},
+		},
+		"wasip1": {
+			main:   "package main\n\nimport (\n\t\"os\"\n\t\"strconv\"\n)\n\nfunc main() { os.Stdout.WriteString(strconv.Itoa(len(os.Args))) }\n",
+			tinygo: []string{"os", "runtime"}, gos: []string{"strconv"},
+		},
+	} {
+		t.Run(target, func(t *testing.T) {
+			tinygoPkgs, goPkgs := realTinyGoSplit(t, target, tc.main, strings.TrimSpace(string(modcache)))
+			for _, p := range tc.tinygo {
+				if !slices.Contains(tinygoPkgs, p) {
+					t.Errorf("TinyGo's packages %v lack %s", tinygoPkgs, p)
+				}
+			}
+			for _, p := range tc.gos {
+				if !slices.Contains(goPkgs, p) {
+					t.Errorf("Go's packages %v lack %s", goPkgs, p)
+				}
+			}
+			for _, p := range tinygoPkgs {
+				if slices.Contains(goPkgs, p) {
+					t.Errorf("%s is attributed to both TinyGo and Go", p)
+				}
+			}
+		})
+	}
+}
+
+// realTinyGoSplit walks a one-file project under the real tinygo target and
+// returns the split the walk recorded: TinyGo's packages, then Go's.
+func realTinyGoSplit(t *testing.T, target, main, modcache string) (tinygoPkgs, goPkgs []string) {
+	t.Helper()
+	dir := t.TempDir()
+	for name, content := range map[string]string{"go.mod": "module example.com/split\n\ngo 1.24\n", "go.sum": "", "main.go": main} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	root := t.TempDir()
+	if _, stderr, code := runTinyGoCLI(t, root, "walk", "--gomod", filepath.Join(dir, "go.mod"), "--tinygo", target,
+		"--from-modcache="+modcache, "--no-progress"); code != ExitOK {
+		t.Fatalf("walk exited %d: %s", code, stderr)
+	}
+	out, _, _ := runTinyGoCLI(t, root, "walk-list", "--json", "--tinygo", target)
+	show, _, _ := runTinyGoCLI(t, root, "walk-show", onlyWalk(t, out), "--json")
+	var rec struct {
+		Graph struct {
+			Nodes []struct {
+				Coordinate struct{ Path string } `json:"coordinate"`
+				Source     string                `json:"resolution_source"`
+				Packages   []string              `json:"packages"`
+				TinyGo     *struct {
+					Target   string   `json:"target"`
+					Packages []string `json:"packages"`
+				} `json:"tinygo"`
+			} `json:"nodes"`
+		} `json:"graph"`
+	}
+	if err := json.Unmarshal([]byte(show), &rec); err != nil {
+		t.Fatalf("walk-show --json: %v", err)
+	}
+	for _, n := range rec.Graph.Nodes {
+		switch {
+		case n.Source == "tinygo" && n.TinyGo != nil && n.TinyGo.Target == target && n.Coordinate.Path == "github.com/tinygo-org/tinygo":
+			tinygoPkgs = n.TinyGo.Packages
+		case n.Source == "tinygo":
+			t.Errorf("TinyGo node = %+v", n)
+		case n.Source == "stdlib":
+			goPkgs = n.Packages
+		}
+	}
+	return tinygoPkgs, goPkgs
 }

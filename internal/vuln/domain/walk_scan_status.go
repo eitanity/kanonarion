@@ -8,6 +8,7 @@ package domain
 // - every module failed (failed == total) -> Failed
 // - some failed or unscannable -> Partial
 // - any module is affected (affected > 0) -> Affected
+// - any module's findings were not established (inconclusive > 0) -> Inconclusive
 // - otherwise -> AllClean
 //
 // Incomplete coverage outranks findings. A run that both found something and
@@ -26,7 +27,7 @@ package domain
 // Note the failed == total branch is evaluated first, so a zero-module walk
 // (total == 0, failed == 0) yields Failed — this preserves the existing
 // scan-walk behavior unchanged.
-func DetermineWalkScanStatus(failed, affected, unscannable, total int) WalkScanStatus {
+func DetermineWalkScanStatus(failed, affected, inconclusive, unscannable, total int) WalkScanStatus {
 	switch {
 	case failed == total:
 		return WalkStatusFailed
@@ -34,6 +35,8 @@ func DetermineWalkScanStatus(failed, affected, unscannable, total int) WalkScanS
 		return WalkStatusPartial
 	case affected > 0:
 		return WalkStatusAffected
+	case inconclusive > 0:
+		return WalkStatusInconclusive
 	default:
 		return WalkStatusAllClean
 	}
@@ -58,10 +61,16 @@ func DetermineCoverageStatus(failed, unscannable, total int) CoverageStatus {
 // DetermineFindingsStatus computes the findings axis alone: whether any module
 // was affected. It is blind to coverage, so a run that could not analyse part of
 // the build list still reports Affected here when a finding exists — the fact
-// DetermineWalkScanStatus discards when coverage is incomplete.
-func DetermineFindingsStatus(affected int) FindingsStatus {
-	if affected > 0 {
+// DetermineWalkScanStatus discards when coverage is incomplete. A run with no
+// affected module and one whose findings were not established is Inconclusive,
+// never Clean.
+func DetermineFindingsStatus(affected, inconclusive int) FindingsStatus {
+	switch {
+	case affected > 0:
 		return FindingsAffected
+	case inconclusive > 0:
+		return FindingsInconclusive
+	default:
+		return FindingsClean
 	}
-	return FindingsClean
 }

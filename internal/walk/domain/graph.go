@@ -2,6 +2,7 @@ package domain
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -114,6 +115,10 @@ const (
 	// OSV metadata by coordinate. Without it, stdlib advisories for the build
 	// toolchain are invisible to both vuln-scan and the SBOM.
 	ResolutionStdlib ResolutionSource = "stdlib"
+	// ResolutionTinyGo marks the node a walk under a declared TinyGo target gains
+	// for TinyGo itself: it ships the standard packages it replaces with its
+	// compiler, so like the stdlib node it is never fetched or extracted.
+	ResolutionTinyGo ResolutionSource = "tinygo"
 )
 
 // HasFetchedArtefact reports whether a node resolved this way owes the walk that
@@ -136,7 +141,7 @@ const (
 // assumed to owe an artefact, so a genuine miss is reported rather than hidden.
 func (s ResolutionSource) HasFetchedArtefact() bool {
 	switch s {
-	case ResolutionLocalMainModule, ResolutionLocalReplace, ResolutionStdlib, ResolutionDepthBounded:
+	case ResolutionLocalMainModule, ResolutionLocalReplace, ResolutionStdlib, ResolutionTinyGo, ResolutionDepthBounded:
 		return false
 	default:
 		return true
@@ -155,6 +160,8 @@ func (s ResolutionSource) ArtefactAbsenceNoun() string {
 		return "local replace"
 	case ResolutionStdlib:
 		return "Go standard library"
+	case ResolutionTinyGo:
+		return "TinyGo toolchain"
 	case ResolutionDepthBounded:
 		return "requirement beyond the depth bound"
 	default:
@@ -209,6 +216,76 @@ func StdlibNode(goVersion string) (GraphNode, bool) {
 		DirectDependency: true,
 		ResolutionSource: ResolutionStdlib,
 	}, true
+}
+
+// TinyGoModulePath is the module path TinyGo's own repository publishes under,
+// the name its node carries in a walk and in an SBOM.
+const TinyGoModulePath = "github.com/tinygo-org/tinygo"
+
+// TinyGoFacts is which standard packages of a TinyGo build TinyGo supplies,
+// measured at walk time from where each package's files really live. Packages
+// is sorted; Mixed names, per package, the files of it Go supplies.
+type TinyGoFacts struct {
+	Target   string
+	Packages []string
+	Mixed    map[string][]string
+}
+
+// TinyGoNode builds the node a TinyGo walk records for TinyGo itself, at the
+// release tinygo reported. The bool is false when that release is not a version.
+func TinyGoNode(tinygoVersion string, facts TinyGoFacts) (GraphNode, bool) {
+	v := strings.TrimSpace(tinygoVersion)
+	if v == "" {
+		return GraphNode{}, false
+	}
+	if !strings.HasPrefix(v, "v") {
+		v = "v" + v
+	}
+	coord, err := coordinate.NewModuleCoordinate(TinyGoModulePath, v)
+	if err != nil {
+		return GraphNode{}, false
+	}
+	return GraphNode{Coordinate: coord, ResolutionSource: ResolutionTinyGo, TinyGo: &facts}, true
+}
+
+// TinyGoPartition is a TinyGo walk's standard packages split by supplier.
+type TinyGoPartition struct {
+	// Node is the node the facts ride on: the injected TinyGo node, or the
+	// project's own dependency on TinyGo's module.
+	Node     coordinate.ModuleCoordinate
+	Version  string
+	Target   string
+	TinyGo   []string
+	Go       []string
+	Mixed    map[string][]string
+	StdlibAt coordinate.ModuleCoordinate
+}
+
+// Total is how many standard packages the build lists.
+func (p TinyGoPartition) Total() int { return len(p.TinyGo) + len(p.Go) }
+
+// SuppliesTinyGo reports whether TinyGo supplies pkg in this build.
+func (p TinyGoPartition) SuppliesTinyGo(pkg string) bool { return slices.Contains(p.TinyGo, pkg) }
+
+// SuppliesGo reports whether Go supplies pkg in this build.
+func (p TinyGoPartition) SuppliesGo(pkg string) bool { return slices.Contains(p.Go, pkg) }
+
+// TinyGoPartition returns the partition a TinyGo walk recorded, false on any
+// other walk.
+func (g Graph) TinyGoPartition() (TinyGoPartition, bool) {
+	var p TinyGoPartition
+	found := false
+	for _, n := range g.Nodes {
+		switch {
+		case n.TinyGo != nil:
+			found = true
+			p.Node, p.Version, p.Target = n.Coordinate, n.Coordinate.Version(), n.TinyGo.Target
+			p.TinyGo, p.Mixed = n.TinyGo.Packages, n.TinyGo.Mixed
+		case n.ResolutionSource == ResolutionStdlib:
+			p.StdlibAt, p.Go = n.Coordinate, n.Packages
+		}
+	}
+	return p, found
 }
 
 // Graph is the resolved transitive dependency closure for a target module.
@@ -385,6 +462,12 @@ type GraphNode struct {
 	// every other node, and nil on a stdlib node whose facts could not be
 	// acquired (an offline run) — a best-effort coverage gap, not an error.
 	Stdlib *StdlibFacts
+	// Packages is, on the stdlib node of a TinyGo walk only, the standard
+	// packages of the build Go supplies rather than TinyGo. Nil everywhere else.
+	Packages []string
+	// TinyGo is the measured split of a TinyGo walk's standard packages, on the
+	// node for TinyGo itself. Nil on every other node and every other walk.
+	TinyGo *TinyGoFacts
 }
 
 // GraphEdge is a directed dependency relationship between two modules.
@@ -517,14 +600,14 @@ func (g Graph) KnownVersions() map[coordinate.ModuleCoordinate]struct{} {
 // synthesised go.mod's require directives must name. Requiring a replaced-from
 // coordinate would demand source that was never fetched and fail every scan
 // that depends on it.
-// The synthetic standard-library node and a project walk's local root are
-// excluded for the same reason: neither has a proxy artefact behind it, so
-// neither can be resolved from the store — matching the set the scan's
+// The synthetic standard-library and TinyGo nodes and a project walk's local
+// root are excluded for the same reason: none has a proxy artefact behind it,
+// so none can be resolved from the store — matching the set the scan's
 // GOMODCACHE is populated from.
 func (g Graph) SelectedVersions() map[coordinate.ModuleCoordinate]struct{} {
 	selected := make(map[coordinate.ModuleCoordinate]struct{}, len(g.Nodes))
 	for _, n := range g.Nodes {
-		if n.ResolutionSource == ResolutionStdlib || n.Coordinate.IsLocal() {
+		if n.ResolutionSource == ResolutionStdlib || n.ResolutionSource == ResolutionTinyGo || n.Coordinate.IsLocal() {
 			continue
 		}
 		selected[n.Coordinate] = struct{}{}

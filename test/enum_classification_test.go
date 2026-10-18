@@ -227,6 +227,8 @@ func TestResolutionSourceArtefactClassification(t *testing.T) {
 		// Ingested from disk into the blob store, so it does have a zip.
 		{"ResolutionLocalAnalysed", walkdomain.ResolutionLocalAnalysed, true, ""},
 		{"ResolutionStdlib", walkdomain.ResolutionStdlib, false, "Go standard library"},
+		// TinyGo ships with its toolchain, as the standard library does.
+		{"ResolutionTinyGo", walkdomain.ResolutionTinyGo, false, "TinyGo toolchain"},
 		// The depth policy stopped the walk before this requirement. Its bytes are
 		// published and another walk may hold them, so the classification is not
 		// "no artefact exists" but "this walk was told not to acquire one": the

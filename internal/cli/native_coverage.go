@@ -9,6 +9,7 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	nativedomain "github.com/eitanity/kanonarion/internal/native/domain"
+	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 )
 
 // This file states, on the read surfaces, what kanonarion knows and does not
@@ -285,6 +286,11 @@ func nativeWalkCoords(ctx context.Context, walks QueryWalksUseCase, walkID strin
 	}
 	coords := make([]coordinate.ModuleCoordinate, 0, len(rec.Graph.Nodes))
 	for _, n := range rec.Graph.Nodes {
+		// TinyGo's code is stated by its own line, not as a module to examine:
+		// what it compiles comes from TINYGOROOT, not from a module artefact.
+		if n.ResolutionSource == walkdomain.ResolutionTinyGo {
+			continue
+		}
 		coords = append(coords, n.Coordinate)
 	}
 	return coords
@@ -392,6 +398,45 @@ type nativeWalkRollup struct {
 	// without shipping, across every module in LinkedNotShipped. Distinct across
 	// the build, because two modules linking libxml2 link one libxml2.
 	Libraries int `json:"libraries"`
+	// TinyGo is, on a TinyGo walk only, the standard packages TinyGo's own code
+	// supplies: like native code, covered by no advisory source kanonarion reads.
+	TinyGo *tinygoCodeCoverage `json:"tinygo,omitempty"`
+}
+
+// tinygoCodeCoverage is a TinyGo walk's split of its standard packages.
+type tinygoCodeCoverage struct {
+	Version  string   `json:"version"`
+	Target   string   `json:"target"`
+	Standard int      `json:"standard_packages"`
+	TinyGo   []string `json:"tinygo_packages"`
+	Go       []string `json:"go_packages"`
+}
+
+// withTinyGoCode attaches a TinyGo walk's split to the rollup. Any other walk,
+// and a rollup the producer does not derive, is returned as it came.
+func withTinyGoCode(r *nativeWalkRollup, rec walkdomain.WalkRecord) *nativeWalkRollup {
+	p, ok := rec.Graph.TinyGoPartition()
+	if r == nil || !ok {
+		return r
+	}
+	r.TinyGo = &tinygoCodeCoverage{
+		Version: rec.Graph.BuildEnv.TinyGoVersion, Target: p.Target, Standard: p.Total(),
+		TinyGo: append([]string{}, p.TinyGo...), Go: append([]string{}, p.Go...),
+	}
+	return r
+}
+
+// withTinyGoCodeOf is withTinyGoCode for a walk named by id; a walk that cannot
+// be read adds nothing, as nativeWalkCoords does.
+func withTinyGoCodeOf(ctx context.Context, walks QueryWalksUseCase, walkID string, r *nativeWalkRollup) *nativeWalkRollup {
+	if walks == nil || walkID == "" {
+		return r
+	}
+	rec, err := walks.GetWalk(ctx, walkID)
+	if err != nil {
+		return r
+	}
+	return withTinyGoCode(r, rec)
 }
 
 // nativeWalkLinked is one module in the rollup and the external native
@@ -522,6 +567,13 @@ func writeNativeCoverageSummary(w io.Writer, r *nativeWalkRollup) error {
 		return fmt.Errorf("writing native coverage summary: %w", err)
 	}
 	writeNativeRollup(w, r)
+	if t := r.TinyGo; t != nil {
+		if _, err := fmt.Fprintf(w, "tinygo code: %d of %d standard-library package(s) in this build are TinyGo's code, "+
+			"covered by no advisory source kanonarion reads; %d are Go's and are judged against Go's advisories\n  %s\n",
+			len(t.TinyGo), t.Standard, len(t.Go), strings.Join(t.TinyGo, " ")); err != nil {
+			return fmt.Errorf("writing TinyGo coverage summary: %w", err)
+		}
+	}
 	return nil
 }
 

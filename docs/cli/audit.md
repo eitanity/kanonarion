@@ -719,6 +719,11 @@ The advisory database keys the toolchain — `cmd/go`, the compiler, the linker 
 `cmd/*`, so no module scan and no reachability analysis of project code can ever
 reach a toolchain advisory. The line is the only place they appear.
 
+On a walk taken with `--tinygo`, a second line states TinyGo beside Go, as
+`vuln-scan` does (see [Scanning under a TinyGo frame](vuln.md#scanning-under-a-tinygo-frame)),
+and the native-code coverage lines are followed by the `tinygo code:` block;
+TinyGo's node is stated there and is not a module row.
+
 Reading it:
 
 | the line says | it means |

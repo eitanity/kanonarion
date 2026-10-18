@@ -162,6 +162,11 @@ type BuildList struct {
 	TinyGoTarget  string
 	TinyGoVersion string
 	TinyGoTags    []string
+	// TinyGo is, under a declared TinyGo target, which standard packages of the
+	// closure TinyGo supplies; GoPackages is the ones Go supplies. Both are nil
+	// on any other build list.
+	TinyGo     *walkdomain.TinyGoFacts
+	GoPackages []string
 }
 
 // BuildListResolver computes the authoritative build list for a project from the

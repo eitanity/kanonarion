@@ -27,6 +27,17 @@ func toolchainVersionOf(rec walkdomain.WalkRecord) string { return rec.Graph.Bui
 // an unjudged judgment rather than failing the command: the toolchain axis is
 // evidence beside the module evidence, and losing it must not cost the report.
 func judgeWalkToolchain(ctx context.Context, ctr *Container, rec walkdomain.WalkRecord, snapshot vulndomain.DatabaseSnapshot) vulndomain.ToolchainJudgment {
+	j := judgeGoToolchain(ctx, ctr, rec, snapshot)
+	if p, ok := rec.Graph.TinyGoPartition(); ok {
+		j.TinyGo = &vulndomain.TinyGoToolchain{
+			Version: rec.Graph.BuildEnv.TinyGoVersion, TinyGoPackages: len(p.TinyGo), StandardPackages: p.Total(),
+		}
+	}
+	return j
+}
+
+// judgeGoToolchain is the Go half of judgeWalkToolchain.
+func judgeGoToolchain(ctx context.Context, ctr *Container, rec walkdomain.WalkRecord, snapshot vulndomain.DatabaseSnapshot) vulndomain.ToolchainJudgment {
 	version := toolchainVersionOf(rec)
 	if ctr.ScanWalk == nil {
 		return vulndomain.ToolchainJudgment{
@@ -103,7 +114,11 @@ func storedSnapshotFor(ctx context.Context, ctr *Container, run vulndomain.WalkS
 // the unjudged case is printed rather than omitted for the same reason: a
 // silently missing line reads as a clear.
 func writeToolchainJudgment(w io.Writer, j vulndomain.ToolchainJudgment) error {
-	if _, err := fmt.Fprintf(w, "toolchain:\n  %s\n", strings.Join(toolchainLines(j), "\n  ")); err != nil {
+	lines := toolchainLines(j)
+	if j.TinyGo != nil {
+		lines = append(lines, tinygoToolchainLine(*j.TinyGo))
+	}
+	if _, err := fmt.Fprintf(w, "toolchain:\n  %s\n", strings.Join(lines, "\n  ")); err != nil {
 		return fmt.Errorf("writing output: %w", err)
 	}
 	return nil
@@ -142,6 +157,13 @@ func toolchainLines(j vulndomain.ToolchainJudgment) []string {
 		return []string{fmt.Sprintf("%s: none of the %d toolchain advisories in %s covers it",
 			version, j.Judged, snapshot)}
 	}
+}
+
+// tinygoToolchainLine states the TinyGo release beside the Go judgment. It is
+// never a clear and never a cover: nothing kanonarion reads judges TinyGo.
+func tinygoToolchainLine(t vulndomain.TinyGoToolchain) string {
+	return fmt.Sprintf("tinygo %s: %s; %d of %d standard packages in this build are TinyGo's",
+		t.Version, vulndomain.TinyGoToolchainReason, t.TinyGoPackages, t.StandardPackages)
 }
 
 // toolchainAxisNote is printed whenever an advisory matched, because that is

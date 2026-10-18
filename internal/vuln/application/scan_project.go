@@ -135,6 +135,8 @@ func (uc *ScanWalkUseCase) scanProjectRooted(
 			continue
 		}
 
+		findings = partitionStdlibUnderTinyGo(walk, coord, findings)
+
 		// The findings decide the word, not their count: every match may name an
 		// advisory that has since been retracted, and that is not an Affected verdict.
 		status := domain.DetermineRecordOverallStatus(
@@ -247,6 +249,20 @@ func (uc *ScanWalkUseCase) mergeCoordinateFindings(
 			"coordinate", coord, "matched", added, "reported_by_analysis", analysed)
 	}
 	return merged, nil
+}
+
+// partitionStdlibUnderTinyGo judges a TinyGo walk's stdlib findings by who
+// supplies the affected packages, from the split the walk recorded. Every other
+// coordinate, and every other walk, is returned as it came.
+func partitionStdlibUnderTinyGo(walk walkdomain.WalkRecord, coord coordinate.ModuleCoordinate, findings []domain.VulnerabilityFinding) []domain.VulnerabilityFinding {
+	if coord.Path() != domain.StdlibModulePath {
+		return findings
+	}
+	p, ok := walk.Graph.TinyGoPartition()
+	if !ok {
+		return findings
+	}
+	return domain.PartitionTinyGoFindings(findings, domain.TinyGoSupply{TinyGo: p.TinyGo})
 }
 
 // projectFindingsFor returns the findings a project scan attributed to coord.

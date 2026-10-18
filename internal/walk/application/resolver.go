@@ -257,6 +257,7 @@ func (r *GraphResolver) ResolveProject(ctx context.Context, target coordinate.Mo
 	)
 
 	var g domain3.Graph
+	var tinygo walkports.BuildList
 	if r.buildList != nil && projectDir != "" {
 		bl, blErr := r.buildList.Resolve(ctx, projectDir)
 		if interrupt.Cancelled(ctx, blErr) {
@@ -277,6 +278,7 @@ func (r *GraphResolver) ResolveProject(ctx context.Context, target coordinate.Mo
 			}
 		} else {
 			g = r.resolveFromBuildList(ctx, target, bl, scopeModules)
+			tinygo = bl
 		}
 	} else {
 		var err error
@@ -301,8 +303,44 @@ func (r *GraphResolver) ResolveProject(ctx context.Context, target coordinate.Mo
 	// links against it — so it must never be filtered out with the out-of-scope
 	// modules. Skipped silently when no toolchain version can be determined.
 	r.injectStdlib(ctx, &g, target, goModBytes, stdlibFromGoMod, force)
+	injectTinyGo(&g, target, tinygo)
 
 	return g, nil
+}
+
+// injectTinyGo records a TinyGo build list's split of the standard library: the
+// Go-served packages on the stdlib node and TinyGo's on a node for TinyGo itself,
+// or on the project's own dependency on TinyGo's module where it has one. Like
+// the stdlib node it is added after scope filtering, since every scope links it.
+func injectTinyGo(g *domain3.Graph, target coordinate.ModuleCoordinate, bl walkports.BuildList) {
+	if bl.TinyGo == nil {
+		return
+	}
+	facts := *bl.TinyGo
+	at := -1
+	for i := range g.Nodes {
+		if g.Nodes[i].Coordinate.Path() == domain3.TinyGoModulePath {
+			at = i
+		}
+	}
+	if at < 0 {
+		// A release that is no version names no node; the split is then not
+		// recorded at all rather than recorded half.
+		node, ok := domain3.TinyGoNode(bl.TinyGoVersion, facts)
+		if !ok {
+			return
+		}
+		g.Nodes = append(g.Nodes, node)
+		g.Edges = append(g.Edges, domain3.GraphEdge{From: target, To: node.Coordinate})
+	} else {
+		g.Nodes[at].TinyGo = &facts
+	}
+	for i := range g.Nodes {
+		if g.Nodes[i].ResolutionSource == domain3.ResolutionStdlib {
+			g.Nodes[i].Packages = bl.GoPackages
+		}
+	}
+	g.Sort()
 }
 
 // injectStdlib adds the synthetic standard-library node and a root→stdlib edge to

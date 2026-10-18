@@ -9,6 +9,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"maps"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -141,12 +143,14 @@ func (g *Generator) buildBOM(
 	// failed fetches) simply have no entry and emit no hashes.
 	digestsByRef := make(map[domain.ModuleRef]fetchdomain.ArtifactDigests, len(walk.Graph.Nodes))
 	stdlibFactsByRef := make(map[domain.ModuleRef]*walkdomain.StdlibFacts, 1)
+	nodeByRef := make(map[domain.ModuleRef]walkdomain.GraphNode, len(walk.Graph.Nodes))
 	// The assembly policy speaks in ModuleRefs; the recorded origins are keyed by
 	// the coordinate the fetch ledger measured. This carries one back to the
 	// other so a component can be matched to its own origin fact.
 	coordByRef := make(map[domain.ModuleRef]coordinate.ModuleCoordinate, len(walk.Graph.Nodes))
 	for _, node := range walk.Graph.Nodes {
 		coordByRef[moduleRef(node.Coordinate)] = node.Coordinate
+		nodeByRef[moduleRef(node.Coordinate)] = node
 		if !node.Digests.IsZero() {
 			digestsByRef[moduleRef(node.Coordinate)] = node.Digests
 		}
@@ -166,6 +170,7 @@ func (g *Generator) buildBOM(
 		if subj.isRef(c.Module) && subj.isApplication {
 			comp.Type = cdx.ComponentTypeApplication
 		}
+		appendTinyGoProperties(&comp, nodeByRef[c.Module])
 		if !strings.HasPrefix(comp.PackageURL, "pkg:"+purlTypeGolang+"/") {
 			return nil, nil, fmt.Errorf("%w: %q", domain.ErrNonGoComponent, comp.PackageURL)
 		}
@@ -721,6 +726,40 @@ func stdlibProperties(pipelineVersion string, facts *walkdomain.StdlibFacts) *[]
 		})
 	}
 	return &props
+}
+
+// appendTinyGoProperties states a TinyGo walk's split of the standard library on
+// the component it belongs to: TinyGo's packages on TinyGo's component, Go's on
+// the stdlib component. Every other component is left as it was.
+func appendTinyGoProperties(comp *cdx.Component, node walkdomain.GraphNode) {
+	var props []cdx.Property
+	if node.ResolutionSource == walkdomain.ResolutionStdlib && node.Packages != nil {
+		props = append(props, cdx.Property{Name: "kanonarion:stdlib:packages", Value: strings.Join(node.Packages, ",")})
+	}
+	if f := node.TinyGo; f != nil {
+		props = append(props,
+			cdx.Property{Name: "kanonarion:component:tinygo", Value: "true"},
+			cdx.Property{Name: "kanonarion:tinygo:target", Value: f.Target},
+			cdx.Property{Name: "kanonarion:tinygo:packages", Value: strings.Join(f.Packages, ",")},
+		)
+		if len(f.Mixed) > 0 {
+			pkgs := slices.Sorted(maps.Keys(f.Mixed))
+			parts := make([]string, 0, len(pkgs))
+			for _, p := range pkgs {
+				parts = append(parts, p+":"+strings.Join(f.Mixed[p], ","))
+			}
+			props = append(props, cdx.Property{Name: "kanonarion:tinygo:mixed", Value: strings.Join(parts, ";")})
+		}
+	}
+	if len(props) == 0 {
+		return
+	}
+	var all []cdx.Property
+	if comp.Properties != nil {
+		all = *comp.Properties
+	}
+	all = append(all, props...)
+	comp.Properties = &all
 }
 
 // buildEnvProperties renders the resolved build environment as CycloneDX

@@ -1,0 +1,211 @@
+{
+  "$schema": "http://cyclonedx.org/schema/bom-1.6.schema.json",
+  "annotations": [
+    {
+      "annotator": {
+        "component": {
+          "name": "kanonarion",
+          "type": "application",
+          "version": "0.3.0-test"
+        }
+      },
+      "bom-ref": "kanonarion:licence-completeness",
+      "subjects": [
+        "pkg:golang/github.com/tinygo-org/tinygo@v0.42.0"
+      ],
+      "text": "Licence completeness of this document: 1 of the 3 component(s) inventoried here carry no licence identity, and are named as this annotation's subjects. A component with no licences block is one whose licence kanonarion could not determine — no licence file was found for it, or the files that were found match no known SPDX licence text. It is not a statement that the component is unlicensed, and it must not be read as permission to use it: pkg:golang/github.com/tinygo-org/tinygo@v0.42.0;",
+      "timestamp": "2026-10-18T09:15:00Z"
+    }
+  ],
+  "bomFormat": "CycloneDX",
+  "components": [
+    {
+      "bom-ref": "pkg:golang/example.com/wexp@local",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "name": "example.com/wexp",
+      "properties": [
+        {
+          "name": "kanonarion:ecosystem",
+          "value": "go"
+        },
+        {
+          "name": "kanonarion:pipeline_version",
+          "value": "0.3.0-test"
+        }
+      ],
+      "purl": "pkg:golang/example.com/wexp@local",
+      "type": "application",
+      "version": "local"
+    },
+    {
+      "bom-ref": "pkg:golang/github.com/tinygo-org/tinygo@v0.42.0",
+      "name": "github.com/tinygo-org/tinygo",
+      "properties": [
+        {
+          "name": "kanonarion:ecosystem",
+          "value": "go"
+        },
+        {
+          "name": "kanonarion:pipeline_version",
+          "value": "0.3.0-test"
+        },
+        {
+          "name": "kanonarion:component:tinygo",
+          "value": "true"
+        },
+        {
+          "name": "kanonarion:tinygo:target",
+          "value": "wasip1"
+        },
+        {
+          "name": "kanonarion:tinygo:packages",
+          "value": "os,runtime,sync"
+        },
+        {
+          "name": "kanonarion:tinygo:mixed",
+          "value": "sync:once.go,pool.go"
+        }
+      ],
+      "purl": "pkg:golang/github.com/tinygo-org/tinygo@v0.42.0",
+      "type": "library",
+      "version": "v0.42.0"
+    },
+    {
+      "bom-ref": "pkg:golang/stdlib@v1.27.2",
+      "description": "Go standard library (toolchain-provided); not a fetched module. Included so vulnerability and platform coverage span the standard library.",
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://go.googlesource.com/go"
+        },
+        {
+          "type": "website",
+          "url": "https://go.dev/"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-3-Clause"
+          }
+        }
+      ],
+      "name": "stdlib",
+      "properties": [
+        {
+          "name": "kanonarion:ecosystem",
+          "value": "go"
+        },
+        {
+          "name": "kanonarion:pipeline_version",
+          "value": "0.3.0-test"
+        },
+        {
+          "name": "kanonarion:component:stdlib",
+          "value": "true"
+        },
+        {
+          "name": "kanonarion:stdlib:packages",
+          "value": "io,strconv"
+        }
+      ],
+      "purl": "pkg:golang/stdlib@v1.27.2",
+      "type": "library",
+      "version": "v1.27.2"
+    }
+  ],
+  "dependencies": [
+    {
+      "dependsOn": [
+        "pkg:golang/github.com/tinygo-org/tinygo@v0.42.0",
+        "pkg:golang/stdlib@v1.27.2"
+      ],
+      "ref": "pkg:golang/example.com/wexp@local"
+    },
+    {
+      "ref": "pkg:golang/github.com/tinygo-org/tinygo@v0.42.0"
+    },
+    {
+      "ref": "pkg:golang/stdlib@v1.27.2"
+    }
+  ],
+  "metadata": {
+    "component": {
+      "bom-ref": "pkg:golang/example.com/wexp@local",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "name": "example.com/wexp",
+      "properties": [
+        {
+          "name": "kanonarion:ecosystem",
+          "value": "go"
+        },
+        {
+          "name": "kanonarion:pipeline_version",
+          "value": "0.3.0-test"
+        }
+      ],
+      "purl": "pkg:golang/example.com/wexp@local",
+      "type": "application",
+      "version": "local"
+    },
+    "properties": [
+      {
+        "name": "kanonarion:build:goos",
+        "value": "wasip1"
+      },
+      {
+        "name": "kanonarion:build:goarch",
+        "value": "wasm"
+      },
+      {
+        "name": "kanonarion:build:go_version",
+        "value": "go1.27.2"
+      },
+      {
+        "name": "kanonarion:build:tinygo_target",
+        "value": "wasip1"
+      },
+      {
+        "name": "kanonarion:build:tinygo_version",
+        "value": "0.42.0"
+      },
+      {
+        "name": "kanonarion:build:tinygo_tags",
+        "value": "tinygo.wasm,tinygo"
+      },
+      {
+        "name": "kanonarion:document:timestamp_basis",
+        "value": "caller-supplied document creation time"
+      },
+      {
+        "name": "kanonarion:licence:newest_extraction",
+        "value": "2026-10-18T09:00:00Z"
+      }
+    ],
+    "timestamp": "2026-10-18T09:15:00Z",
+    "tools": {
+      "components": [
+        {
+          "name": "kanonarion",
+          "type": "application",
+          "version": "0.3.0-test"
+        }
+      ]
+    }
+  },
+  "serialNumber": "urn:uuid:e84aeeea-fa9b-4075-7e98-018be0fe4c1b",
+  "specVersion": "1.6",
+  "version": 1
+}

@@ -191,8 +191,8 @@ func (w walkProjectDirs) WalkProjectDir(ctx context.Context, walkID string) (str
 	return rec.ProjectDir, true, nil
 }
 
-// WalkModules returns the modules the walk selected, the standard library and
-// the walk's own target excluded. It reads the same record WalkProjectDir does.
+// WalkModules returns the modules the walk selected, the standard library,
+// TinyGo and the walk's own target excluded. It reads the same record WalkProjectDir does.
 func (w walkProjectDirs) WalkModules(ctx context.Context, walkID string) ([]vulnports.BuildModule, bool, error) {
 	if w.walks == nil || walkID == "" {
 		return nil, false, nil
@@ -206,7 +206,7 @@ func (w walkProjectDirs) WalkModules(ctx context.Context, walkID string) ([]vuln
 	}
 	var out []vulnports.BuildModule
 	for _, n := range rec.Graph.Nodes {
-		if n.ResolutionSource == walkdomain.ResolutionStdlib || n.Coordinate.IsLocal() || n.Coordinate.IsZero() {
+		if n.ResolutionSource == walkdomain.ResolutionStdlib || n.ResolutionSource == walkdomain.ResolutionTinyGo || n.Coordinate.IsLocal() || n.Coordinate.IsZero() {
 			continue
 		}
 		out = append(out, vulnports.BuildModule{

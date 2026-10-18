@@ -258,7 +258,8 @@ func byFindingRanksBefore(a, b domain.VulnerabilityRecord) bool {
 	return a.ContentHash < b.ContentHash
 }
 
-// reportsAdvisoryOrWithdrawal is the first ranking tier: Affected and Withdrawn.
+// reportsAdvisoryOrWithdrawal is the first ranking tier: Affected, Withdrawn and
+// Inconclusive, each of which reports a matched advisory.
 func reportsAdvisoryOrWithdrawal(f domain.RecordFindingsStatus) bool {
-	return f == domain.FindingsRecordAffected || f == domain.FindingsRecordWithdrawn
+	return f == domain.FindingsRecordAffected || f == domain.FindingsRecordWithdrawn || f == domain.FindingsRecordInconclusive
 }

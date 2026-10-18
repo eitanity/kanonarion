@@ -173,6 +173,7 @@ func (uc *ScanWalkUseCase) scanProjectDiverged(
 			out[coord] = moduleResult{coord: coord, record: rec}
 			continue
 		}
+		findings = partitionStdlibUnderTinyGo(walk, coord, findings)
 		rec, perr := uc.persistProjectRecord(ctx, root, coord, findings,
 			// No analysis of this build ran, so nothing establishes a toolchain.
 			domain.StatusUnscannable, domain.UnscanReasonProjectBuildDiverged, reason, "",

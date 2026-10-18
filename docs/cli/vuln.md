@@ -156,6 +156,53 @@ the `go list` error and the declared `--tinygo` target named. `--binary-pre-pass
 is refused under `--tinygo`: `go build` cannot produce the TinyGo binary, and a
 test binary built for the host would describe a different build.
 
+**Standard-library advisories under TinyGo.** The walk records which standard
+packages TinyGo supplies and which Go supplies (see
+[Declaring a TinyGo target](walk.md#declaring-a-tinygo-target---tinygo)). Go's
+advisories describe Go's code, so each `stdlib` finding is judged by the
+packages it names (`affected_packages`):
+
+| the advisory names | the finding |
+|---|---|
+| only packages Go supplies | judged as in any other build |
+| only packages TinyGo supplies | not established: `not_established: true`, `reachability_state: not_determined`, `soundness: unconfirmed`, `tinygo_note` "TinyGo supplies os; Go's affected range describes Go's code" |
+| both | judged on Go's packages; `tinygo_note` names TinyGo's |
+| no package | not established, `tinygo_note` "the advisory names no package, so it cannot be told whether Go or TinyGo supplies the code" |
+
+A finding that is not established is never counted as affected and never as
+clean. A module whose findings are all of that kind reads `Inconclusive`, is
+listed under `Not established under the TinyGo frame`, and the summary line
+says `Inconclusive (N module(s) not established)` instead of `Clean`. The run
+records the same: `findings_status` and `overall_status` read `Inconclusive`
+when no module is affected and one is Inconclusive, and `counts.inconclusive`
+names how many. A run with an affected module stays `Affected`. The split is
+applied the same way when the project directory is gone and the scan falls back
+to scanning each module in isolation. The
+`github.com/tinygo-org/tinygo` node is not scanned as a module and is not counted
+in the module totals.
+
+The toolchain block states TinyGo beside Go. It is never a clear and never a
+cover:
+
+```
+toolchain:
+  go1.27.2: none of the 34 toolchain advisories in vuln.go.dev@2026-10-08T22:31:09Z covers it
+  tinygo 0.42.0: no advisory source kanonarion reads covers TinyGo; 16 of 39 standard packages in this build are TinyGo's
+```
+
+`--json` carries it as `toolchain.tinygo`, in the toolchain section's own shape
+with `status: unjudged`.
+
+After the native-code lines, the coverage block names TinyGo's packages:
+
+```
+tinygo code: 16 of 39 standard-library package(s) in this build are TinyGo's code, covered by no advisory source kanonarion reads; 23 are Go's and are judged against Go's advisories
+  internal/abi internal/bytealg internal/gclayout internal/itoa internal/poll internal/reflectlite internal/task os reflect runtime runtime/interrupt runtime/volatile sync syscall tinygo unicode/utf8
+```
+
+`--json` carries it as `native_coverage.tinygo` (`version`, `target`,
+`standard_packages`, `tinygo_packages`, `go_packages`).
+
 `vuln-scan <walk-id>` refuses a walk recorded under a TinyGo frame (exit `20`),
 before anything runs, and names the command that scans it:
 

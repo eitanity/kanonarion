@@ -390,9 +390,10 @@ func servesBefore(a, b VulnerabilityRecord) bool {
 }
 
 // reportsAdvisory reports whether a findings axis states that an advisory
-// matched this module — live or retracted — as opposed to reporting none.
+// matched this module — live, retracted or not established — as opposed to
+// reporting none.
 func reportsAdvisory(f RecordFindingsStatus) bool {
-	return f == FindingsRecordAffected || f == FindingsRecordWithdrawn
+	return f == FindingsRecordAffected || f == FindingsRecordWithdrawn || f == FindingsRecordInconclusive
 }
 
 // completenessRung orders the call-graph fidelity a record's reachability

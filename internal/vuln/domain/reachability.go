@@ -563,6 +563,10 @@ const completenessBuiltWithBodies = "BUILT_WITH_BODIES"
 // the producing analyser's own terms. A bare rung is a label, and a label is what
 // turns a measurement into a verdict.
 func NegativeSoundness(f VulnerabilityFinding) (soundness ReachabilitySoundness, reason string) {
+	// A finding about code the build does not compile has no search to weigh.
+	if f.NotEstablished {
+		return SoundnessUnconfirmed, f.TinyGoNote
+	}
 	if f.Reachable == nil || f.Reachable.IsReachable {
 		return SoundnessNotStated, ""
 	}

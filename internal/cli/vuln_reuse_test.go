@@ -174,7 +174,7 @@ func TestVulnScanJSON_CarriesTheReachabilityBasis(t *testing.T) {
 	run := reusedRunForBasis()
 
 	var served bytes.Buffer
-	if err := printVulnScanResult(run, nil, nil, nil, nil,
+	if err := printVulnScanResult(run, nil, nil, nil, nil, nil,
 		vulnScanReachability{Answers: 3}, vulnScanToolchainJSON{}, nil, true, &served); err != nil {
 		t.Fatalf("printVulnScanResult: %v", err)
 	}
@@ -200,7 +200,7 @@ func TestVulnScanJSON_CarriesTheReachabilityBasis(t *testing.T) {
 	// Emitted always, not only on a reused run: a consumer reads one key rather
 	// than inferring the fact from a key's absence.
 	var fresh bytes.Buffer
-	if err := printVulnScanResult(run, nil, nil, nil, nil,
+	if err := printVulnScanResult(run, nil, nil, nil, nil, nil,
 		vulnScanReachability{Answers: 3, SourceReadByThisRun: true}, vulnScanToolchainJSON{}, nil, true, &fresh); err != nil {
 		t.Fatalf("printVulnScanResult: %v", err)
 	}

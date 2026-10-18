@@ -1017,6 +1017,13 @@ type StdlibCustodyFacts = stdlibdomain.Facts
 // may be added within a major version (§4).
 type StdlibFacts = walkdomain.StdlibFacts
 
+// TinyGoFacts is which standard packages of a TinyGo build TinyGo supplies,
+// carried on the TinyGo node of a walk taken under a TinyGo target.
+//
+// Stability: supporting type of the WalkStore port; unstable pre-v1. Fields
+// may be added within a major version (§4).
+type TinyGoFacts = walkdomain.TinyGoFacts
+
 // StdlibVerificationStatus records how far the standard-library source
 // tarball was verified.
 //

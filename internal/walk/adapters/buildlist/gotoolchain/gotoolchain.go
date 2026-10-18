@@ -108,7 +108,7 @@ func (r *Resolver) Resolve(ctx context.Context, projectDir string) (walkports.Bu
 		return walkports.BuildList{}, fmt.Errorf("probing the build environment: %w", ctx.Err())
 	}
 
-	return walkports.BuildList{
+	bl := walkports.BuildList{
 		Modules:       modules,
 		Edges:         edges,
 		GoVersion:     goVersion,
@@ -118,7 +118,18 @@ func (r *Resolver) Resolve(ctx context.Context, projectDir string) (walkports.Bu
 		TinyGoTarget:  r.tinygo.Target(),
 		TinyGoVersion: r.tinygo.Version(),
 		TinyGoTags:    r.tinygo.Tags(),
-	}, nil
+	}
+	// Under TinyGo the standard library is part TinyGo's, part Go's, and which is
+	// which decides how its advisories read. A listing that fails fails the build
+	// list rather than yielding a walk that silently holds no split.
+	if r.tinygo.Declared() {
+		facts, goPkgs, aerr := r.attributeTinyGo(ctx, projectDir)
+		if aerr != nil {
+			return walkports.BuildList{}, aerr
+		}
+		bl.TinyGo, bl.GoPackages = facts, goPkgs
+	}
+	return bl, nil
 }
 
 // BuildEnvironment returns the toolchain version and target platform a Resolve

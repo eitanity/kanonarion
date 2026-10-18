@@ -234,15 +234,32 @@ func TestResolve_UnderATinyGoFrame(t *testing.T) {
 		bl.TinyGoVersion != "0.42.0" || strings.Join(bl.TinyGoTags, ",") != "tinygo,pico" {
 		t.Errorf("build list frame = %+v", bl)
 	}
+	if bl.TinyGo == nil || bl.TinyGo.Target != "pico" {
+		t.Errorf("build list TinyGo facts = %+v, want the pico split recorded", bl.TinyGo)
+	}
 	raw, err := os.ReadFile(log) // #nosec G304 -- the test's own log
 	if err != nil {
 		t.Fatal(err)
 	}
-	calls := strings.Split(strings.TrimSpace(string(raw)), "\n")
-	if len(calls) != 3 {
-		t.Fatalf("children = %q, want list, mod graph and env", calls)
+	assertTinyGoChildren(t, strings.Split(strings.TrimSpace(string(raw)), "\n"), root)
+}
+
+// assertTinyGoChildren holds each child to the frame: TinyGo's environment on
+// every one but the probe of Go's own GOROOT, and the tags on the lists alone.
+func assertTinyGoChildren(t *testing.T, calls []string, root string) {
+	t.Helper()
+	if len(calls) != 5 {
+		t.Fatalf("children = %q, want list, mod graph, env, the package listing and Go's GOROOT", calls)
 	}
 	for _, c := range calls {
+		// Go's own GOROOT is asked outside the frame: under it GOROOT is TinyGo's
+		// merged tree, which is the thing being told apart from Go's.
+		if strings.HasPrefix(c, "env GOROOT ") {
+			if strings.Contains(c, "GOROOT="+root+" ") {
+				t.Errorf("child %q asked Go's GOROOT under the TinyGo frame", c)
+			}
+			continue
+		}
 		if !strings.HasSuffix(c, "| GOROOT="+root+" GOARM=6 CGO_ENABLED=1") {
 			t.Errorf("child %q did not see the TinyGo environment", c)
 		}
@@ -273,9 +290,12 @@ func loggingFakeGo(t *testing.T) (bin, log string) {
 	dir := t.TempDir()
 	log = filepath.Join(dir, "calls.log")
 	bin = filepath.Join(dir, "go")
+	if err := os.MkdirAll(filepath.Join(dir, "src"), 0o750); err != nil {
+		t.Fatal(err)
+	}
 	script := "#!/bin/sh\n" +
 		`echo "$* | GOROOT=$GOROOT GOARM=$GOARM CGO_ENABLED=$CGO_ENABLED" >> ` + log + "\n" +
-		`case "$1" in list) echo '{"Path":"example.com/frame","Main":true}' ;; env) printf 'go1.27.2\n%s\n%s\n' "$GOOS" "$GOARCH" ;; esac` + "\n"
+		`case "$*" in *-deps*) ;; list*) echo '{"Path":"example.com/frame","Main":true}' ;; "env GOROOT") echo ` + dir + ` ;; env*) printf 'go1.27.2\n%s\n%s\n' "$GOOS" "$GOARCH" ;; esac` + "\n"
 	if err := os.WriteFile(bin, []byte(script), 0o700); err != nil { // #nosec G306 -- a test stand-in that must be executable
 		t.Fatal(err)
 	}

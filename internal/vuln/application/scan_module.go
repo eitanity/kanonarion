@@ -1389,6 +1389,8 @@ func (uc *ScanModuleUseCase) scanMetadataOnly(ctx context.Context, params ScanMo
 		status = domain.StatusAffected
 	case domain.FindingsRecordWithdrawn:
 		status = domain.StatusWithdrawn
+	case domain.FindingsRecordInconclusive:
+		status = domain.StatusInconclusive
 	case domain.FindingsRecordClean:
 		// No match: the caller's emptyStatus is the answer, and it is a coverage
 		// word on every entry point that is not a genuine clean.

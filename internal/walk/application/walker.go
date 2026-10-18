@@ -363,11 +363,11 @@ func (w *Walker) classifyGraphNodes(req WalkRequest, graph domain2.Graph, record
 			continue
 		}
 		switch node.ResolutionSource {
-		case domain2.ResolutionStdlib:
-			// The synthetic standard-library node has no fetchable artefact — it
-			// ships with the toolchain. Record it as succeeded (no fetch record) so
-			// it anchors the graph for the SBOM and vuln-scan without a spurious
-			// fetch-failure that would partial-ise the walk.
+		case domain2.ResolutionStdlib, domain2.ResolutionTinyGo:
+			// The synthetic standard-library and TinyGo nodes have no fetchable
+			// artefact — they ship with the toolchain. Record each as succeeded (no
+			// fetch record) so it anchors the graph for the SBOM and vuln-scan
+			// without a spurious fetch-failure that would partial-ise the walk.
 			outcome.PerNodeResults[node.Coordinate] = domain2.NodeResult{
 				Coordinate: node.Coordinate,
 				Status:     domain2.NodeSucceeded,

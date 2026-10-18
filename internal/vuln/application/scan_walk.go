@@ -405,7 +405,7 @@ func (uc *ScanWalkUseCase) Scan(ctx context.Context, params ScanWalkParams) (dom
 
 	// emit a deterministic StatusUnscannable record for each
 	// local-replace node so absence isn't silently dropped.
-	localReplaceCount, err := uc.recordLocalReplaceUnscannable(ctx, localReplaceNodes, &run, params, snapshot, runSurface, &progressCount, len(walk.Graph.Nodes))
+	localReplaceCount, err := uc.recordLocalReplaceUnscannable(ctx, localReplaceNodes, &run, params, snapshot, runSurface, &progressCount, len(scannedNodes(walk)))
 	if err != nil {
 		return domain.WalkScanRun{}, err
 	}
@@ -425,12 +425,61 @@ func (uc *ScanWalkUseCase) Scan(ctx context.Context, params ScanWalkParams) (dom
 	return uc.completeRun(ctx, run, walk, counts, allCoords, finalResults)
 }
 
+// partitionIsolatedStdlib judges a TinyGo walk's stdlib findings by supplier
+// when the isolated pool answered for them, as the project-rooted path does. The
+// pool's record is shared by every walk at that coordinate, so the partitioned
+// one is written rooted at this walk's target and the shared one is left as it
+// was.
+func (uc *ScanWalkUseCase) partitionIsolatedStdlib(ctx context.Context, walk walkdomain.WalkRecord, params ScanWalkParams, snapshot *domain.DatabaseSnapshot, results map[coordinate.ModuleCoordinate]moduleResult) error {
+	if _, ok := walk.Graph.TinyGoPartition(); !ok {
+		return nil
+	}
+	for coord, r := range results {
+		if coord.Path() != domain.StdlibModulePath || r.err != nil || r.record.Rooting != domain.RootingIsolated {
+			continue
+		}
+		findings := partitionStdlibUnderTinyGo(walk, coord, r.record.Findings)
+		status := r.record.OverallStatus
+		if axis := domain.DetermineFindingsAxis(findings); axis != domain.FindingsRecordClean {
+			// The findings word stays in the summary over a coverage gap, as the
+			// metadata-only path writes it.
+			status = domain.DetermineRecordOverallStatus(domain.CoverageAnalysed, axis)
+		}
+		rec, err := uc.persistProjectRecord(ctx, walk.Target, coord, findings, status, r.record.UnscanReason,
+			r.record.UnscannableReason, r.record.ErrorDetail, r.record.FailureCause, r.record.AnalysisSurface, r.record.Toolchain, params, snapshot)
+		if err != nil {
+			return err
+		}
+		results[coord] = moduleResult{coord: coord, record: rec}
+	}
+	return nil
+}
+
+// scannedNodes is the walk's nodes a scan records a verdict for. The TinyGo node
+// is not one: no advisory source covers TinyGo, so it is judged beside the
+// toolchain at read time rather than given a module record that would read Clean.
+func scannedNodes(walk walkdomain.WalkRecord) []walkdomain.GraphNode {
+	out := make([]walkdomain.GraphNode, 0, len(walk.Graph.Nodes))
+	for _, n := range walk.Graph.Nodes {
+		if n.ResolutionSource != walkdomain.ResolutionTinyGo {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// toolchainProvided reports a node that ships with the toolchain and so has no
+// proxy artefact: the stdlib node and TinyGo's.
+func toolchainProvided(n walkdomain.GraphNode) bool {
+	return n.ResolutionSource == walkdomain.ResolutionStdlib || n.ResolutionSource == walkdomain.ResolutionTinyGo
+}
+
 // splitLocalReplaceNodes separates the walk's local-replace nodes, which have
 // no artefact to scan, from the coordinates that are scanned.
 func splitLocalReplaceNodes(walk walkdomain.WalkRecord) ([]coordinate.ModuleCoordinate, []walkdomain.GraphNode) {
 	allCoords := make([]coordinate.ModuleCoordinate, 0, len(walk.Graph.Nodes))
 	localReplaceNodes := make([]walkdomain.GraphNode, 0)
-	for _, node := range walk.Graph.Nodes {
+	for _, node := range scannedNodes(walk) {
 		if node.ResolutionSource == walkdomain.ResolutionLocalReplace {
 			localReplaceNodes = append(localReplaceNodes, node)
 			continue
@@ -480,28 +529,29 @@ func (uc *ScanWalkUseCase) dispatchModuleScans(ctx context.Context, walk walkdom
 			finalResults[r.coord] = r
 		}
 	}
-	return nil
+	return uc.partitionIsolatedStdlib(ctx, walk, params, snapshot, finalResults)
 }
 
 // completeRun derives the run's status and counts, seals and persists it, and
 // appends its audit events.
 func (uc *ScanWalkUseCase) completeRun(ctx context.Context, run domain.WalkScanRun, walk walkdomain.WalkRecord, counts scanCounts, allCoords []coordinate.ModuleCoordinate, finalResults map[coordinate.ModuleCoordinate]moduleResult) (domain.WalkScanRun, error) {
 	run.CompletedAt = uc.clock.Now()
-	nodeCount := len(walk.Graph.Nodes)
+	nodeCount := len(scannedNodes(walk))
 	run.OverallStatus = domain.DetermineWalkScanStatus(
-		counts.failed, counts.affected, counts.unscannable, nodeCount,
+		counts.failed, counts.affected, counts.inconclusive, counts.unscannable, nodeCount,
 	)
 	run.CoverageStatus = domain.DetermineCoverageStatus(counts.failed, counts.unscannable, nodeCount)
-	run.FindingsStatus = domain.DetermineFindingsStatus(counts.affected)
+	run.FindingsStatus = domain.DetermineFindingsStatus(counts.affected, counts.inconclusive)
 	run.Counts = domain.WalkScanCounts{
 		Total: nodeCount,
 		// The coverage axis's own count, not clean+affected. A coordinate-matched
 		// module reports a finding without having been analysed, so adding the
 		// affected tally here counted it as read.
-		Analysed:    counts.analysed,
-		Affected:    counts.affected,
-		Unscannable: counts.unscannable,
-		Failed:      counts.failed,
+		Analysed:     counts.analysed,
+		Affected:     counts.affected,
+		Unscannable:  counts.unscannable,
+		Failed:       counts.failed,
+		Inconclusive: counts.inconclusive,
 	}
 
 	// 6. Hash & Persist
@@ -598,7 +648,8 @@ func (uc *ScanWalkUseCase) verifyRecordsPersisted(
 	snapshot *domain.DatabaseSnapshot,
 ) error {
 	var missing []coordinate.ModuleCoordinate
-	for _, node := range walk.Graph.Nodes {
+	nodes := scannedNodes(walk)
+	for _, node := range nodes {
 		contentHash, claimed := run.PerModuleResults[node.Coordinate]
 		if !claimed {
 			// The run reported a result for every node and kept no record for this
@@ -627,7 +678,7 @@ func (uc *ScanWalkUseCase) verifyRecordsPersisted(
 	}
 	return fmt.Errorf(
 		"vuln scan of walk %s reported a status for %d modules but stored only %d: no record persisted for %v (and %d more)",
-		run.WalkID, len(walk.Graph.Nodes), len(walk.Graph.Nodes)-len(missing), named, len(missing)-len(named),
+		run.WalkID, len(nodes), len(nodes)-len(missing), named, len(missing)-len(named),
 	)
 }
 
@@ -653,6 +704,9 @@ type scanCounts struct {
 	// was read. Such a module is not affected, so it does not degrade the run's
 	// findings word; it is reported so the transition is visible rather than silent.
 	withdrawn int
+	// inconclusive counts modules whose findings were not established under a
+	// TinyGo frame, across all three coverage buckets as affected is.
+	inconclusive int
 }
 
 // applyFrameGaps replaces the run's counted result for every module the run
@@ -766,6 +820,9 @@ func (uc *ScanWalkUseCase) tallyModuleResults(
 		if findings == domain.FindingsRecordAffected {
 			counts.affected++
 		}
+		if findings == domain.FindingsRecordInconclusive {
+			counts.inconclusive++
+		}
 		switch coverage {
 		case domain.CoverageAnalysed:
 			counts.analysed++
@@ -836,7 +893,7 @@ func (uc *ScanWalkUseCase) emitAuditEvents(
 
 // scanCompletedEvent builds the summary envelope for a completed scan run.
 func scanCompletedEvent(run domain.WalkScanRun, counts scanCounts) audit.Event {
-	return audit.Event{
+	ev := audit.Event{
 		Type: audit.EventVulnScanCompleted,
 		Payload: map[string]any{
 			"walk_id":          run.WalkID,
@@ -851,6 +908,11 @@ func scanCompletedEvent(run domain.WalkScanRun, counts scanCounts) audit.Event {
 			"failed":           counts.failed,
 		},
 	}
+	// Stated only where one exists, so every other run's event is unchanged.
+	if counts.inconclusive > 0 {
+		ev.Payload["inconclusive"] = counts.inconclusive
+	}
+	return ev
 }
 
 // findingObservedEvent builds the envelope for a single observed finding.
@@ -1614,10 +1676,10 @@ func (uc *ScanWalkUseCase) prepareModCache(ctx context.Context, walk walkdomain.
 			if node.ResolutionSource == walkdomain.ResolutionLocalReplace {
 				continue
 			}
-			// The synthetic standard-library node ships with the toolchain and has
-			// no proxy artefact; it is scanned from advisory metadata, so exclude it
-			// from the module cache prefetch/populate.
-			if node.ResolutionSource == walkdomain.ResolutionStdlib {
+			// The synthetic standard-library and TinyGo nodes ship with the
+			// toolchain and have no proxy artefact, so exclude them from the module
+			// cache prefetch/populate.
+			if toolchainProvided(node) {
 				continue
 			}
 			// The local main module (a project walk's root) has no proxy artefact

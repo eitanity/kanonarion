@@ -154,6 +154,16 @@ values there, as they did when `verdict` and `reachability_state` gained theirs)
   and the SBOM's `kanonarion:build:*` properties gain `goarm`, `tinygo_target`,
   `tinygo_version` and `tinygo_tags` on a TinyGo walk only. They are absent on
   every other walk, so those documents are unchanged.
+- On a TinyGo walk only: a `stdlib` finding gains `not_established` and
+  `tinygo_note`; a vulnerability record's status and findings axis may read
+  `Inconclusive`, and so may a scan run's `findings_status` and
+  `overall_status`, with `counts.inconclusive` and an `inconclusive` key on the
+  `vuln_scan_completed` event; the `toolchain` section of `vuln-scan --json` and `audit --json`
+  gains `tinygo`, in the section's own shape; `native_coverage` gains `tinygo`;
+  `vuln-scan-show --json` gains `inconclusive_modules`; and the SBOM gains the
+  `github.com/tinygo-org/tinygo` component with `kanonarion:component:tinygo`,
+  `kanonarion:tinygo:*` and, on the stdlib component, `kanonarion:stdlib:packages`.
+  All are absent on every other walk.
 - The call-graph record document (`callgraph-show --json`, and the `local` and
   `callgraph` summary documents) gains `frame`: `text`, `goos`, `goarch`, and
   `goarm`, `tinygo_target`, `tinygo_version`, `tinygo_tags` where set. Absent on
@@ -1162,6 +1172,20 @@ nothing selects only walks whose `tinygo_target` is empty.
 
 **No back-fill.** No stored walk carries the fields, and the empty string is the
 recorded value "not a TinyGo walk".
+
+## Walk record: a TinyGo walk records who supplies the standard library — no migration and no bump (2026-10-18)
+
+**No store migration, no schema-version bump, no pipeline bump.** A walk taken
+with `--tinygo` gains one node, `github.com/tinygo-org/tinygo@v<release>`
+(resolution source `tinygo`), carrying the standard packages TinyGo supplies,
+and the `stdlib` node gains `packages`, the ones Go supplies. Both live in the
+sealed blob and are omitted when empty, so every other walk marshals and hashes
+exactly as before.
+
+A TinyGo walk's identity hash changes once, because a node is added: the first
+`--tinygo` walk of each project after upgrading is a cache miss and is taken
+again. Nothing is purged; the earlier TinyGo walk stays in the store and still
+verifies.
 
 ## Call graph store: module `callgraph`, migration 12
 

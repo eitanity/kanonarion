@@ -325,8 +325,9 @@ const (
 // Values may be added within a major version; treat an unrecognised value
 // conservatively (§4).
 const (
-	FindingsAffected = vulndomain.FindingsAffected
-	FindingsClean    = vulndomain.FindingsClean
+	FindingsAffected     = vulndomain.FindingsAffected
+	FindingsClean        = vulndomain.FindingsClean
+	FindingsInconclusive = vulndomain.FindingsInconclusive
 )
 
 // The values of GateOutcome, as the internal package defines them.
@@ -530,9 +531,10 @@ const (
 // Values may be added within a major version; treat an unrecognised value
 // conservatively (§4).
 const (
-	FindingsRecordAffected  = vulndomain.FindingsRecordAffected
-	FindingsRecordClean     = vulndomain.FindingsRecordClean
-	FindingsRecordWithdrawn = vulndomain.FindingsRecordWithdrawn
+	FindingsRecordAffected     = vulndomain.FindingsRecordAffected
+	FindingsRecordClean        = vulndomain.FindingsRecordClean
+	FindingsRecordInconclusive = vulndomain.FindingsRecordInconclusive
+	FindingsRecordWithdrawn    = vulndomain.FindingsRecordWithdrawn
 )
 
 // The values of ReferenceScope, as the internal package defines them.
@@ -561,6 +563,7 @@ const (
 	ResolutionReplace         = walkdomain.ResolutionReplace
 	ResolutionStdlib          = walkdomain.ResolutionStdlib
 	ResolutionTarget          = walkdomain.ResolutionTarget
+	ResolutionTinyGo          = walkdomain.ResolutionTinyGo
 )
 
 // The values of ReuseGate, as the internal package defines them.
@@ -766,11 +769,12 @@ const (
 // Values may be added within a major version; treat an unrecognised value
 // conservatively (§4).
 const (
-	VulnerabilityStatusAffected    = vulndomain.StatusAffected
-	VulnerabilityStatusClean       = vulndomain.StatusClean
-	VulnerabilityStatusScanFailed  = vulndomain.StatusScanFailed
-	VulnerabilityStatusUnscannable = vulndomain.StatusUnscannable
-	VulnerabilityStatusWithdrawn   = vulndomain.StatusWithdrawn
+	VulnerabilityStatusAffected     = vulndomain.StatusAffected
+	VulnerabilityStatusClean        = vulndomain.StatusClean
+	VulnerabilityStatusInconclusive = vulndomain.StatusInconclusive
+	VulnerabilityStatusScanFailed   = vulndomain.StatusScanFailed
+	VulnerabilityStatusUnscannable  = vulndomain.StatusUnscannable
+	VulnerabilityStatusWithdrawn    = vulndomain.StatusWithdrawn
 )
 
 // The values of WalkDepth, as the internal package defines them.
@@ -789,10 +793,11 @@ const (
 // Values may be added within a major version; treat an unrecognised value
 // conservatively (§4).
 const (
-	WalkStatusAffected = vulndomain.WalkStatusAffected
-	WalkStatusAllClean = vulndomain.WalkStatusAllClean
-	WalkStatusFailed   = vulndomain.WalkStatusFailed
-	WalkStatusPartial  = vulndomain.WalkStatusPartial
+	WalkStatusAffected     = vulndomain.WalkStatusAffected
+	WalkStatusAllClean     = vulndomain.WalkStatusAllClean
+	WalkStatusFailed       = vulndomain.WalkStatusFailed
+	WalkStatusPartial      = vulndomain.WalkStatusPartial
+	WalkStatusInconclusive = vulndomain.WalkStatusInconclusive
 )
 
 // The values of WalkScope, as the internal package defines them.

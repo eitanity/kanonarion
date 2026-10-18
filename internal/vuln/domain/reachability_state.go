@@ -106,6 +106,9 @@ func FindingReachabilityState(f VulnerabilityFinding) ReachabilityState {
 	if f.IsWithdrawn() {
 		return StateWithdrawn
 	}
+	if f.NotEstablished {
+		return StateNotDetermined
+	}
 	if f.Reachable == nil {
 		if f.ReachabilityAttemptFailed() {
 			return StateNotComputed

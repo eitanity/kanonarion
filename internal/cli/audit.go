@@ -471,7 +471,7 @@ func runAudit(ctx context.Context, f auditFlags, stdout, stderr io.Writer) error
 	// cover Go code; this states which part of the build they do not reach. It
 	// is derived from the rows themselves, so the set it describes is exactly
 	// the set the table lists.
-	native := nativeRollupOver(ctx, ctr.QueryNative, nativeCoordsOf(auditCoordinateStrings(results)))
+	native := withTinyGoCode(nativeRollupOver(ctx, ctr.QueryNative, nativeCoordsOf(auditCoordinateStrings(results))), derivation.walkRecord)
 	if nerr := writeNativeCoverageSummary(stderr, native); nerr != nil {
 		return nerr
 	}
@@ -939,7 +939,9 @@ func stopIfInterrupted(ctx context.Context, step string, err error) error {
 func auditDependencyNodes(rec walkdomain.WalkRecord, local coordinate.ModuleCoordinate) []walkdomain.GraphNode {
 	nodes := make([]walkdomain.GraphNode, 0, len(rec.Graph.Nodes))
 	for _, node := range rec.Graph.Nodes {
-		if node.Coordinate == local {
+		// TinyGo is stated in the toolchain and coverage blocks, as vuln-scan
+		// states it: it is not a module row with records to look up.
+		if node.Coordinate == local || node.ResolutionSource == walkdomain.ResolutionTinyGo {
 			continue
 		}
 		nodes = append(nodes, node)

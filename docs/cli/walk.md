@@ -583,6 +583,30 @@ $ kanonarion walk-list --tinygo wasip1
 01M545ASCP97M7N350S3VBAQHW  example.com/tagdep@local  2026-10-17T05:28:38.550365743Z  succeeded  scope=code  platform=tinygo/wasip1 (wasip1/wasm)  depth=full  nodes=3 failures=0
 ```
 
+**The walk records who supplies the standard library.** TinyGo replaces part
+of the standard library with its own packages. The walk lists the build's
+packages under the frame (`go list -deps -json ./...`, as `vuln-scan` does) and
+follows each standard package's files to where they really live: in TinyGo's
+`TINYGOROOT` or in Go's `GOROOT`. It records the split in two places:
+
+- a node `github.com/tinygo-org/tinygo@v<release>`, resolution source `tinygo`,
+  not a direct dependency, with an edge from the root as the `stdlib` node has.
+  It carries `tinygo.target`, `tinygo.packages` (TinyGo's packages) and, for a
+  package holding files of both, `tinygo.mixed`: that package's files Go
+  supplies. Such a package counts as TinyGo's.
+- `packages` on the `stdlib` node: the standard packages Go supplies.
+
+```console
+$ kanonarion walk-show 01M574CJB0W75P6DEF00F3V1EM --json | jq '.graph.nodes[] | select(.resolution_source=="tinygo") | .tinygo.packages | length'
+16
+```
+
+The node is never fetched, extracted or scanned as a module: TinyGo ships with
+its toolchain. If the project itself requires `github.com/tinygo-org/tinygo`,
+the split rides on that dependency's node and no second node is added. If the
+package listing fails, the build list fails with the `go list` error, as any
+other build-list failure does; no walk is recorded with the split missing.
+
 **Only the same declaration selects it.** Every command that takes `--target`
 takes `--tinygo`, and a read declaring `--tinygo pico` answers only from a walk
 taken with `--tinygo pico`. A read declaring `--target linux/arm`, or nothing,

@@ -535,6 +535,8 @@ func inspectSummaryStatus(nodeFails, extractFails, scanFails int, scanStatus vul
 		return string(vuldomain.WalkStatusAffected)
 	case scanStatus == vuldomain.WalkStatusAllClean:
 		return string(vuldomain.WalkStatusAllClean)
+	case scanStatus == vuldomain.WalkStatusInconclusive:
+		return string(vuldomain.WalkStatusInconclusive)
 	default:
 		return string(vuldomain.WalkStatusPartial)
 	}
