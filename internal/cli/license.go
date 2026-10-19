@@ -94,7 +94,11 @@ func runLicenseExtract(ctx context.Context, arg string, f licenseFlags, stdout, 
 	}
 
 	if f.history {
-		return runLicenseHistory(ctx, coord, ctr.QueryLicense, stdout)
+		uc := ctr.QueryLicense
+		if r, ok := asSupersededReader(ctr.QueryFetch); ok {
+			uc = licenceHistoryUC{ctr.QueryLicense, r}
+		}
+		return runLicenseHistory(ctx, coord, uc, stdout)
 	}
 
 	result, err := ctr.ExtractLicense.Execute(ctx, licapp.ExtractRequest{
@@ -324,7 +328,8 @@ func runStdlibLicenceHistory(
 // what was believed before and on the strength of which bytes.
 func runLicenseHistory(ctx context.Context, coord coordinate.ModuleCoordinate, uc QueryLicenseUseCase, stdout io.Writer) error {
 	recs, err := uc.LicenseHistory(ctx, coord, licapp.PipelineVersion)
-	if err != nil {
+	superseded, serr := supersededFor(ctx, uc, coord)
+	if err = errors.Join(err, serr); err != nil {
 		return fmt.Errorf("reading license history: %w", err)
 	}
 	if len(recs) == 0 {
@@ -364,9 +369,9 @@ func runLicenseHistory(ctx context.Context, coord coordinate.ModuleCoordinate, u
 		if spdx == "" {
 			spdx = "-"
 		}
-		if _, werr := fmt.Fprintf(stdout, "%s %s  %-20s conf=%.2f  %s\n    artefact: %s\n    record:   %s\n",
+		if _, werr := fmt.Fprintf(stdout, "%s %s  %-20s conf=%.2f  %s\n    artefact: %s\n    record:   %s\n%s",
 			marker, ledgerStamp(r.ExtractedAt), spdx, r.PrimaryConfidence,
-			r.OverallStatus.String(), artefact, r.ContentHash); werr != nil {
+			r.OverallStatus.String(), artefact, r.ContentHash, supersededNote(superseded, r.ArtefactIdentity)); werr != nil {
 			return fmt.Errorf("writing output: %w", werr)
 		}
 	}

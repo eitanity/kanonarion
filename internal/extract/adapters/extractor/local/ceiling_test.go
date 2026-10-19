@@ -35,7 +35,7 @@ func TestCallgraphCeiling_AReachedCeilingIsRecordedAsSuchAndNotAsAKill(t *testin
 	}
 	chosen := &fakeSubprocessExecutor{err: errors.New("signal: killed")}
 
-	res, eerr := newCallgraphAdapter(reached, extractedOutcome()).Extract(t.Context(), coord, "callgraph", false, "")
+	res, eerr := newCallgraphAdapter(reached, extractedOutcome()).Extract(t.Context(), coord, "callgraph", false, "", false)
 	if eerr != nil {
 		t.Fatalf("Extract failed: %v", eerr)
 	}
@@ -60,7 +60,7 @@ func TestCallgraphCeiling_AReachedCeilingIsRecordedAsSuchAndNotAsAKill(t *testin
 
 	// The control that must stay different: the kernel choosing this process is
 	// not a ceiling anyone set, and its remedy is not a flag.
-	killed, eerr := newCallgraphAdapter(chosen, extractedOutcome()).Extract(t.Context(), coord, "callgraph", false, "")
+	killed, eerr := newCallgraphAdapter(chosen, extractedOutcome()).Extract(t.Context(), coord, "callgraph", false, "", false)
 	if eerr != nil {
 		t.Fatalf("Extract failed: %v", eerr)
 	}

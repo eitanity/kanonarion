@@ -280,10 +280,10 @@ func (a *AdapterExtractor) awaitCallgraphHeadroom(ctx context.Context) bool {
 	}
 }
 
-func (a *AdapterExtractor) Extract(ctx context.Context, coord coordinate.ModuleCoordinate, stage string, force bool, walkID string) (ports.StageResult, error) {
+func (a *AdapterExtractor) Extract(ctx context.Context, coord coordinate.ModuleCoordinate, stage string, force bool, walkID string, localDependency bool) (ports.StageResult, error) {
 	switch stage {
 	case "license":
-		res, err := a.license.Execute(ctx, licapp.ExtractRequest{Coordinate: coord, Force: force})
+		res, err := a.license.Execute(ctx, licapp.ExtractRequest{Coordinate: coord, Force: force, LocalDependency: localDependency})
 		if err != nil {
 			return ports.StageResult{}, fmt.Errorf("license extraction failed: %w", err)
 		}

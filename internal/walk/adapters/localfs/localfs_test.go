@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -130,7 +131,7 @@ func writeLocalModule(t *testing.T, dir, modulePath, version string) {
 
 func TestEnsureFetchedFromPath_OK(t *testing.T) {
 	dir := t.TempDir()
-	coord := coordinatetest.MustNew("example.com/local", "v1.0.0")
+	coord := coordinatetest.MustNew("example.com/local", coordinate.LocalVersion)
 	writeLocalModule(t, dir, coord.Path(), coord.Version())
 
 	blobs := newFakeBlob()
@@ -176,39 +177,27 @@ func TestEnsureFetchedFromPath_OK(t *testing.T) {
 	}
 }
 
-func TestEnsureFetchedFromPath_Cache(t *testing.T) {
+// Code read from disk is never filed under a published version: that is the
+// key the published module's own record lives under.
+func TestEnsureFetchedFromPath_RefusesAPublishedCoordinate(t *testing.T) {
 	dir := t.TempDir()
 	coord := coordinatetest.MustNew("example.com/local", "v1.0.0")
 	writeLocalModule(t, dir, coord.Path(), coord.Version())
 
-	blobs := newFakeBlob()
 	facts := newFakeFacts()
-	clk := fixedClock{t: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)}
-	f := localfs.New(blobs, facts, clk)
+	f := localfs.New(newFakeBlob(), facts, fixedClock{t: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)})
 
-	first, err := f.EnsureFetchedFromPath(context.Background(), coord, dir, "")
-	if err != nil {
-		t.Fatalf("first call: %v", err)
+	if _, err := f.EnsureFetchedFromPath(context.Background(), coord, dir, "../local"); !errors.Is(err, localfs.ErrPublishedCoordinate) {
+		t.Fatalf("EnsureFetchedFromPath(%s) error = %v, want ErrPublishedCoordinate", coord, err)
 	}
-	if first.FromCache {
-		t.Error("first call: expected FromCache=false")
-	}
-
-	second, err := f.EnsureFetchedFromPath(context.Background(), coord, dir, "")
-	if err != nil {
-		t.Fatalf("second call: %v", err)
-	}
-	if !second.FromCache {
-		t.Error("second call: expected FromCache=true")
-	}
-	if second.Record.ContentHash != first.Record.ContentHash {
-		t.Errorf("cached record ContentHash differs: %q vs %q", second.Record.ContentHash, first.Record.ContentHash)
+	if _, ok, err := facts.GetFetchRecord(context.Background(), coord, localfs.PipelineVersion); err != nil || ok {
+		t.Errorf("a record was written for %s (found %v, err %v)", coord, ok, err)
 	}
 }
 
 func TestEnsureFetchedFromPath_MissingGoMod(t *testing.T) {
 	dir := t.TempDir()
-	coord := coordinatetest.MustNew("example.com/local", "v1.0.0")
+	coord := coordinatetest.MustNew("example.com/local", coordinate.LocalVersion)
 	// Do NOT write go.mod.
 
 	f := localfs.New(newFakeBlob(), newFakeFacts(), fixedClock{t: time.Now()})
@@ -219,7 +208,7 @@ func TestEnsureFetchedFromPath_MissingGoMod(t *testing.T) {
 }
 
 func TestEnsureFetchedFromPath_NonexistentDir(t *testing.T) {
-	coord := coordinatetest.MustNew("example.com/local", "v1.0.0")
+	coord := coordinatetest.MustNew("example.com/local", coordinate.LocalVersion)
 	f := localfs.New(newFakeBlob(), newFakeFacts(), fixedClock{t: time.Now()})
 	_, err := f.EnsureFetchedFromPath(context.Background(), coord, "/nonexistent/does/not/exist", "")
 	if err == nil {
@@ -229,7 +218,7 @@ func TestEnsureFetchedFromPath_NonexistentDir(t *testing.T) {
 
 func TestEnsureFetchedFromPath_HashStability(t *testing.T) {
 	dir := t.TempDir()
-	coord := coordinatetest.MustNew("example.com/local", "v1.2.3")
+	coord := coordinatetest.MustNew("example.com/local", coordinate.LocalVersion)
 	writeLocalModule(t, dir, coord.Path(), coord.Version())
 
 	clk := fixedClock{t: time.Date(2024, 6, 1, 12, 0, 0, 0, time.UTC)}
@@ -334,8 +323,8 @@ func TestEnsureFetchedFromPath_StatesThatNoChecksumWasAvailable(t *testing.T) {
 	cases := []struct {
 		name, version, written, want string
 	}{
-		{"local replace", "v1.0.0", "../local", "local directory ../local (local source, nothing to verify)"},
-		{"absolute local replace", "v1.0.0", "/srv/src/local", "local directory /srv/src/local (local source, nothing to verify)"},
+		{"local replace", coordinate.LocalVersion, "../local", "local directory ../local (local source, nothing to verify)"},
+		{"absolute local replace", coordinate.LocalVersion, "/srv/src/local", "local directory /srv/src/local (local source, nothing to verify)"},
 		{"project root", coordinate.LocalVersion, "", "analysed from the working tree (local source, nothing to verify)"},
 	}
 	for _, tc := range cases {

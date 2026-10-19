@@ -161,6 +161,12 @@ func resolveWorkers(reqWorkers, ucWorkers, nodeCount int) int {
 func unfetchableReason(node walkdomain.GraphNode) (string, bool) {
 	switch node.ResolutionSource {
 	case walkdomain.ResolutionLocalReplace:
+		// At its local identity the walk read it from disk and it is extracted
+		// like the root; under the published coordinate it predates that and
+		// was never read.
+		if node.Coordinate.IsLocal() {
+			return "", false
+		}
 		return "local replace at " + node.LocalPath, true
 	case walkdomain.ResolutionLocalMainModule:
 		return "local main module (project-walk root); has no fetched artefact — analyse its own source with the local call-graph command", true
@@ -171,6 +177,12 @@ func unfetchableReason(node walkdomain.GraphNode) (string, bool) {
 	default:
 		return "", false
 	}
+}
+
+// isLocalDependency reports a node read from disk that is not the walk's root:
+// a local replacement or a go.work member.
+func isLocalDependency(node walkdomain.GraphNode, root coordinate.ModuleCoordinate) bool {
+	return node.Coordinate.IsLocal() && node.Coordinate != root
 }
 
 func (uc *ExtractUseCase) Execute(ctx context.Context, req ExtractRequest) (domain.ExtractionRun, error) {
@@ -253,8 +265,9 @@ func (uc *ExtractUseCase) Execute(ctx context.Context, req ExtractRequest) (doma
 				// never proxy-fetched). Emit a deterministic skip-with-reason for
 				// every requested stage so the run is succeeded, not failed, and
 				// the absence is auditable rather than presented as an error.
-				// Nodes promoted to ResolutionLocalAnalysed have a real FactRecord
-				// and proceed normally through the extraction pipeline.
+				// Nodes promoted to ResolutionLocalAnalysed, and local replacements
+				// and workspace members at their local identity, have a real
+				// FactRecord and proceed normally through the extraction pipeline.
 				if reason, unfetchable := unfetchableReason(j.node); unfetchable {
 					for _, stage := range runStages {
 						modRes.Stages[stage] = domain.StageResult{
@@ -271,7 +284,7 @@ func (uc *ExtractUseCase) Execute(ctx context.Context, req ExtractRequest) (doma
 					continue
 				}
 
-				uc.runModuleStages(ctx, req, j.node.Coordinate, runStages, modRes, &partial, &cancelled, &refused)
+				uc.runModuleStages(ctx, req, j.node.Coordinate, isLocalDependency(j.node, walk.Graph.Target), runStages, modRes, &partial, &cancelled, &refused)
 
 				outMu.Lock()
 				outcomes[j.idx] = outcome{coord: j.node.Coordinate, result: modRes, set: true}
@@ -362,14 +375,14 @@ func (uc *ExtractUseCase) orderedRunStages(req ExtractRequest) ([]string, error)
 // modRes; it stops at the run's cancellation. A stored artefact refused as
 // altered fails the module's remaining stages unrun: each would read the same
 // refused bytes.
-func (uc *ExtractUseCase) runModuleStages(ctx context.Context, req ExtractRequest, coord coordinate.ModuleCoordinate, runStages []string, modRes domain.ModuleExtractionResult, partial, cancelled *atomic.Bool, refused *firstError) {
+func (uc *ExtractUseCase) runModuleStages(ctx context.Context, req ExtractRequest, coord coordinate.ModuleCoordinate, localDependency bool, runStages []string, modRes domain.ModuleExtractionResult, partial, cancelled *atomic.Bool, refused *firstError) {
 	for i, stage := range runStages {
 		if ctx.Err() != nil {
 			cancelled.Store(true)
 			break
 		}
 		lap := uc.stopwatch.Start()
-		res, extractErr := uc.extractor.Extract(ctx, coord, stage, req.Force, req.WalkID)
+		res, extractErr := uc.extractor.Extract(ctx, coord, stage, req.Force, req.WalkID, localDependency)
 		duration := lap.Elapsed().Milliseconds()
 
 		stageRes := domain.StageResult{

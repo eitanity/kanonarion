@@ -279,3 +279,44 @@ func TestNewLocalWalkExtractUseCase_CopiesDefaultStages(t *testing.T) {
 		t.Errorf("constructor did not copy default stages; got %q after caller mutation", uc.defaultStages[0])
 	}
 }
+
+// fakeWorkspace answers the go.work probe with a canned directory or error.
+type fakeWorkspace struct {
+	dir string
+	err error
+}
+
+func (f fakeWorkspace) Workspace(context.Context, string) (string, error) { return f.dir, f.err }
+
+// A project inside a go.work resolves through the toolchain, the only resolver
+// that knows the members; one outside a workspace resolves as before; a probe
+// that could not answer stops the run rather than reading as "no workspace".
+func TestRun_WorkspaceProjectResolvesThroughTheToolchain(t *testing.T) {
+	dir := writeGoMod(t, "example.com/widget")
+	wantDir, err := filepath.Abs(dir)
+	if err != nil {
+		t.Fatalf("Abs: %v", err)
+	}
+	for _, tc := range []struct {
+		name    string
+		probe   fakeWorkspace
+		want    string
+		wantErr bool
+	}{
+		{"inside a workspace", fakeWorkspace{dir: "/ws"}, wantDir, false},
+		{"outside a workspace", fakeWorkspace{}, "", false},
+		{"probe failed", fakeWorkspace{err: errors.New("go: not found")}, "", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := &fakeWalk{rec: walkdomain.WalkRecord{ID: "w"}}
+			uc := newDriver(w, &fakeExtract{run: extractdomain.ExtractionRun{ID: "r"}}).WithWorkspaceProbe(tc.probe)
+			_, err := uc.Run(context.Background(), LocalWalkExtractRequest{Dir: dir})
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("Run error = %v, want error %v", err, tc.wantErr)
+			}
+			if !tc.wantErr && w.gotReq.ResolutionDir != tc.want {
+				t.Errorf("ResolutionDir = %q, want %q", w.gotReq.ResolutionDir, tc.want)
+			}
+		})
+	}
+}

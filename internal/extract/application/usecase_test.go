@@ -95,16 +95,17 @@ type mockExtractor struct {
 }
 
 type extractorCall struct {
-	coord coordinate.ModuleCoordinate
-	stage string
+	coord           coordinate.ModuleCoordinate
+	stage           string
+	localDependency bool
 }
 
-func (m *mockExtractor) Extract(ctx context.Context, coord coordinate.ModuleCoordinate, stage string, force bool, _ string) (ports.StageResult, error) {
+func (m *mockExtractor) Extract(ctx context.Context, coord coordinate.ModuleCoordinate, stage string, force bool, _ string, localDependency bool) (ports.StageResult, error) {
 	if m.onExtract != nil {
 		m.onExtract()
 	}
 	m.mu.Lock()
-	m.calls = append(m.calls, extractorCall{coord, stage})
+	m.calls = append(m.calls, extractorCall{coord, stage, localDependency})
 	m.mu.Unlock()
 	if stage == "license" && force {
 		return ports.StageResult{Status: domain.StageFailed, Error: "forced failure"}, nil
@@ -367,8 +368,9 @@ func runExecuteEdgeSubtests(ctx context.Context, t *testing.T, uc *ExtractUseCas
 	})
 }
 
-// nodes that arrived in the graph via a local-path replace have no
-// fetchable artefact; the extract use case must emit StageSkipped for every
+// a local-replace node recorded under the published coordinate (before local
+// code had its own identity) was never read from disk and has no fetchable
+// artefact; the extract use case must emit StageSkipped for every
 // requested stage rather than calling the extractor (which would fail with
 // ErrModuleNotFetched).
 func TestExtractUseCase_localReplaceNodesSkipped(t *testing.T) {
@@ -434,6 +436,56 @@ func TestExtractUseCase_localReplaceNodesSkipped(t *testing.T) {
 	}
 	if run.OverallStatus != domain.ExtractionRunSucceeded {
 		t.Errorf("OverallStatus = %v, want succeeded (skips are not failures)", run.OverallStatus)
+	}
+}
+
+// A local replacement and a go.work member at their local identity were read
+// from disk by the walk, so they are extracted like any module, and stated to
+// the stages as local dependencies; the analysed root is not one.
+func TestExtractUseCase_localIdentityNodesAreExtracted(t *testing.T) {
+	root := coordinatetest.MustNew("example.com/project", coordinate.LocalVersion)
+	replaced := coordinatetest.MustNew("example.com/dep", coordinate.LocalVersion)
+	member := coordinatetest.MustNew("example.com/member", coordinate.LocalVersion)
+	walkID := "walk-localidentity"
+	walk := walkdomain.WalkRecord{
+		Target: root,
+		Graph: walkdomain.Graph{
+			Target: root,
+			Nodes: []walkdomain.GraphNode{
+				{Coordinate: root, ResolutionSource: walkdomain.ResolutionLocalAnalysed},
+				{
+					Coordinate: replaced, ResolutionSource: walkdomain.ResolutionLocalReplace,
+					OriginalCoordinate: coordinatetest.MustNew("example.com/dep", "v1.0.0"), LocalPath: "../dep",
+				},
+				{Coordinate: member, ResolutionSource: walkdomain.ResolutionLocalWorkspaceMember},
+			},
+		},
+	}
+	extractor := &mockExtractor{}
+	uc := mustExtractUseCase(t, Config{
+		Runs:      &mockExtractionStore{runs: make(map[string]domain.ExtractionRun)},
+		Walks:     &mockWalkStore{walks: map[string]walkdomain.WalkRecord{walkID: walk}},
+		Extractor: extractor,
+		Stages:    mockStageRegistry{},
+		Clock:     fakeClock{t: testClockTime},
+		Stopwatch: fakeStopwatch{},
+	})
+	if _, err := uc.Execute(t.Context(), ExtractRequest{WalkID: walkID, Stages: []string{"interface"}}); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	got := map[coordinate.ModuleCoordinate]bool{}
+	for _, c := range extractor.calls {
+		got[c.coord] = c.localDependency
+	}
+	for c, want := range map[coordinate.ModuleCoordinate]bool{root: false, replaced: true, member: true} {
+		dep, called := got[c]
+		if !called {
+			t.Errorf("%s was not extracted", c)
+			continue
+		}
+		if dep != want {
+			t.Errorf("%s localDependency = %v, want %v", c, dep, want)
+		}
 	}
 }
 

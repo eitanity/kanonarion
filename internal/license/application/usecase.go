@@ -125,6 +125,10 @@ type ExtractRequest struct {
 	Coordinate coordinate.ModuleCoordinate
 	// Force re-extracts even if a record for this pipeline version exists.
 	Force bool
+	// LocalDependency marks a coordinate at the local version that is a
+	// dependency read from disk (a local replacement or a go.work member)
+	// rather than the project root, so its licence is not the root's declaration.
+	LocalDependency bool
 	// PerFile enables a second-pass scan of root-level.go source files when
 	// no dedicated license file is found (Pass 1). It detects SPDX-License-Identifier
 	// headers and high-confidence copyright blocks embedded in source.
@@ -352,12 +356,12 @@ func (uc *ExtractLicenseUseCase) measureLicence(ctx context.Context, log *slog.L
 		log.InfoContext(ctx, "license_extraction_failed", slog.String("error", extractErr.Error()))
 	}
 
-	// Step 7.5: a local coordinate is the project-walk root, so the extracted
-	// facts are the project's own outbound declaration (the licence it grants,
-	// the copyright it asserts), not an inbound dependency obligation. Mark
-	// the role so consumers (license-compat, sbom, notice) treat the record
-	// as the target rather than a constraint to satisfy.
-	if req.Coordinate.IsLocal() {
+	// Step 7.5: a local coordinate other than a local dependency is the
+	// project-walk root, so the extracted facts are the project's own outbound
+	// declaration (the licence it grants, the copyright it asserts), not an
+	// inbound dependency obligation. Mark the role so consumers (license-compat,
+	// sbom, notice) treat the record as the target rather than a constraint.
+	if req.Coordinate.IsLocal() && !req.LocalDependency {
 		record.Role = domain2.LicenseRoleRootDeclaration
 	}
 	return record, nil

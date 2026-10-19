@@ -21,6 +21,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
 
 	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
+	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
 	domain2 "github.com/eitanity/kanonarion/internal/iface/domain"
 	"github.com/eitanity/kanonarion/internal/iface/ports"
 )
@@ -28,6 +29,17 @@ import (
 // Store is the SQLite-backed interface store.
 type Store struct {
 	db sqlitestore.DB
+	// superseded names the artefacts a published coordinate's read leaves out;
+	// nil leaves every generation in. See WithSupersededArtefacts.
+	superseded fetchports.SupersededArtefacts
+}
+
+// WithSupersededArtefacts makes the store's reads of a published coordinate
+// leave out generations derived from a directory read under it before local
+// code had its own identity. The generations stay in the ledger.
+func (s *Store) WithSupersededArtefacts(fn fetchports.SupersededArtefacts) *Store {
+	s.superseded = fn
+	return s
 }
 
 // New returns a new Store using the provided database handle.
@@ -381,6 +393,10 @@ func (s *Store) GetInterfaceRecord(ctx context.Context, coord coordinate.ModuleC
 	if err != nil {
 		return domain2.InterfaceRecord{}, false, err
 	}
+	records, err = fetchports.DropSuperseded(ctx, s.superseded, coord, records, func(r domain2.InterfaceRecord) string { return r.ArtefactIdentity })
+	if err != nil {
+		return domain2.InterfaceRecord{}, false, fmt.Errorf("reading interface records of %s: %w", coord, err)
+	}
 	if len(records) == 0 {
 		return domain2.InterfaceRecord{}, false, nil
 	}
@@ -690,52 +706,58 @@ func (s *Store) ListInterfaceRecords(ctx context.Context, filter ports.Interface
 
 	out := make([]ports.InterfaceSummary, 0, len(order))
 	for _, k := range order {
-		if counts[k] == 1 {
-			// The overwhelming majority: one generation, so the columns already
-			// describe the served record and no blob is decoded to learn it —
-			// except a Partial one, the only status an analyser limit comes with.
-			sum, derr := withAnalyserLimit(first[k], partialBlobs)
-			if derr != nil {
-				return nil, derr
-			}
+		// The overwhelming majority have one generation, so the columns already
+		// describe the served record and no blob is decoded to learn it —
+		// except a Partial one, the only status an analyser limit comes with.
+		sum, listed, lerr := s.listedInterfaceSummary(ctx, k.path, k.version, k.pipeline, first[k], partialBlobs, counts[k] == 1)
+		if lerr != nil {
+			return nil, lerr
+		}
+		if listed {
 			out = append(out, sum)
-			continue
 		}
-		coord, cerr := coordinate.NewModuleCoordinate(k.path, k.version)
-		if cerr != nil {
-			return nil, fmt.Errorf("interface record %s@%s names no module: %w", k.path, k.version, cerr)
-		}
-		served, found, gerr := s.GetInterfaceRecord(ctx, coord, k.pipeline)
-		if errors.Is(gerr, ports.ErrInterfaceConflict) {
-			// Reported on the row, not raised as the list's error: see the comment
-			// on InterfaceSummary.Conflict.
-			out = append(out, ports.InterfaceSummary{
-				ModulePath:      k.path,
-				ModuleVersion:   k.version,
-				PipelineVersion: k.pipeline,
-				Conflict:        gerr,
-			})
-			continue
-		}
-		if gerr != nil {
-			return nil, gerr
-		}
-		if !found {
-			continue
-		}
-		out = append(out, ports.InterfaceSummary{
-			ModulePath:      k.path,
-			ModuleVersion:   k.version,
-			PipelineVersion: k.pipeline,
-			OverallStatus:   served.OverallStatus,
-			PackageCount:    len(served.Packages),
-			ExtractedAt:     served.ExtractedAt.UTC(),
-			ContentHash:     served.ContentHash,
-			AnalyserLimit:   served.AnalyserLimit,
-		})
 	}
 
 	return page(out, filter.Limit, filter.Offset), nil
+}
+
+// listedInterfaceSummary is the listing row for one key: the stored row when it
+// alone describes the served record, the composed read otherwise. A key holding
+// superseded generations is always composed, so they are left out.
+func (s *Store) listedInterfaceSummary(ctx context.Context, path, version, pipeline string, row ports.InterfaceSummary, partialBlobs map[string][]byte, rowServes bool) (ports.InterfaceSummary, bool, error) {
+	if rowServes {
+		held, err := fetchports.HoldsSuperseded(ctx, s.superseded, path, version)
+		if err != nil {
+			return ports.InterfaceSummary{}, false, err //nolint:wrapcheck // HoldsSuperseded names the coordinate
+		}
+		if !held {
+			sum, derr := withAnalyserLimit(row, partialBlobs)
+			return sum, derr == nil, derr
+		}
+	}
+	coord, cerr := coordinate.NewModuleCoordinate(path, version)
+	if cerr != nil {
+		return ports.InterfaceSummary{}, false, fmt.Errorf("interface record %s@%s names no module: %w", path, version, cerr)
+	}
+	served, found, gerr := s.GetInterfaceRecord(ctx, coord, pipeline)
+	if errors.Is(gerr, ports.ErrInterfaceConflict) {
+		// Reported on the row, not raised as the list's error: see the comment
+		// on InterfaceSummary.Conflict.
+		return ports.InterfaceSummary{ModulePath: path, ModuleVersion: version, PipelineVersion: pipeline, Conflict: gerr}, true, nil
+	}
+	if gerr != nil || !found {
+		return ports.InterfaceSummary{}, false, gerr
+	}
+	return ports.InterfaceSummary{
+		ModulePath:      path,
+		ModuleVersion:   version,
+		PipelineVersion: pipeline,
+		OverallStatus:   served.OverallStatus,
+		PackageCount:    len(served.Packages),
+		ExtractedAt:     served.ExtractedAt.UTC(),
+		ContentHash:     served.ContentHash,
+		AnalyserLimit:   served.AnalyserLimit,
+	}, true, nil
 }
 
 // ListInterfaceGenerations names every generation the ledger holds from the

@@ -19,7 +19,7 @@ func TestExtractCallgraph_AChildsRefusalIsTheStagesError(t *testing.T) {
 		stderr: []byte("phase: materialising\n" + line + "\n"),
 		err:    fakeExitStatus{code: 10},
 	}
-	_, err := newCallgraphAdapter(refusing, extractedOutcome()).Extract(t.Context(), coord, "callgraph", false, "")
+	_, err := newCallgraphAdapter(refusing, extractedOutcome()).Extract(t.Context(), coord, "callgraph", false, "", false)
 	if !errors.Is(err, fetchports.ErrBlobTampered) || !strings.HasSuffix(err.Error(), line) {
 		t.Fatalf("Extract err = %v, want the refusal carrying the child's line", err)
 	}
@@ -28,7 +28,7 @@ func TestExtractCallgraph_AChildsRefusalIsTheStagesError(t *testing.T) {
 		"integrity exit without a refusal": {stderr: []byte("two analyses disagree\n"), err: fakeExitStatus{code: 10}},
 		"refusal text on another exit":     {stderr: []byte(line + "\n"), err: fakeExitStatus{code: 2}},
 	} {
-		res, err := newCallgraphAdapter(exec, extractedOutcome()).Extract(t.Context(), coord, "callgraph", false, "")
+		res, err := newCallgraphAdapter(exec, extractedOutcome()).Extract(t.Context(), coord, "callgraph", false, "", false)
 		if err != nil || res.Error == "" {
 			t.Errorf("%s: res %+v, err %v; want a failed stage as before", name, res, err)
 		}

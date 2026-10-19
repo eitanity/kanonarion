@@ -293,7 +293,7 @@ func scanWalkForCurrentManifest(
 	// scanned for the ones that can, exactly as `audit` and `inspect` treat their
 	// own walks. A hard failure still stops here.
 	result, werr := runWalkProject(ctx, gomodPath, f.force, true, 0, f.operator, f.policyPath, false, scope,
-		walkdomain.WalkDepthFull, "", false, false, progress, ctr.ExecuteWalk, nil, io.Discard, stderr)
+		walkdomain.WalkDepthFull, false, false, progress, ctr.ExecuteWalk, nil, io.Discard, stderr)
 	if werr != nil {
 		return "", werr
 	}

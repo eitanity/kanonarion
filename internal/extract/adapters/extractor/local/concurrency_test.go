@@ -157,7 +157,7 @@ func peakConcurrency(t *testing.T, adapter *AdapterExtractor, exec *countingExec
 	var wg sync.WaitGroup
 	for range stages {
 		wg.Go(func() {
-			if _, eerr := adapter.Extract(t.Context(), coord, "callgraph", false, ""); eerr != nil {
+			if _, eerr := adapter.Extract(t.Context(), coord, "callgraph", false, "", false); eerr != nil {
 				t.Errorf("Extract returned error: %v", eerr)
 			}
 		})
@@ -237,14 +237,14 @@ func TestCallgraphConcurrency_ARunThatEndsWhileWaitingRecordsTheHost(t *testing.
 
 	// Fill the single slot with a subprocess that does not return until the
 	// deferred release at the end of the test.
-	go func() { _, _ = adapter.Extract(context.Background(), coord, "callgraph", false, "") }() //nolint:errcheck // only holds the slot; released at the end
+	go func() { _, _ = adapter.Extract(context.Background(), coord, "callgraph", false, "", false) }() //nolint:errcheck // only holds the slot; released at the end
 	for exec.inFlight.Load() == 0 {
 		runtime.Gosched()
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	res, err := adapter.Extract(ctx, coord, "callgraph", false, "")
+	res, err := adapter.Extract(ctx, coord, "callgraph", false, "", false)
 	if err != nil {
 		t.Fatalf("Extract returned error: %v", err)
 	}
@@ -276,13 +276,13 @@ func TestCallgraphConcurrency_CheapStagesAreNotBoundedByIt(t *testing.T) {
 	}
 
 	// One call-graph subprocess holds the only slot for the whole test.
-	go func() { _, _ = adapter.Extract(context.Background(), coord, "callgraph", false, "") }() //nolint:errcheck // only holds the slot; released at the end
+	go func() { _, _ = adapter.Extract(context.Background(), coord, "callgraph", false, "", false) }() //nolint:errcheck // only holds the slot; released at the end
 	for exec.inFlight.Load() == 0 {
 		runtime.Gosched()
 	}
 
 	for _, stage := range []string{"license", "interface", "example"} {
-		res, serr := adapter.Extract(t.Context(), coord, stage, false, "")
+		res, serr := adapter.Extract(t.Context(), coord, stage, false, "", false)
 		if serr != nil {
 			t.Fatalf("%s stage returned error while a subprocess held the slot: %v", stage, serr)
 		}

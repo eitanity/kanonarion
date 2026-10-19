@@ -79,7 +79,11 @@ func runExamplesExtract(ctx context.Context, arg string, f exampleFlags, stdout,
 	defer releaseStore(cleanup)
 
 	if f.history {
-		return runExamplesHistory(ctx, coord, ctr.QueryExamples, stdout)
+		uc := ctr.QueryExamples
+		if r, ok := asSupersededReader(ctr.QueryFetch); ok {
+			uc = examplesHistoryUC{ctr.QueryExamples, r}
+		}
+		return runExamplesHistory(ctx, coord, uc, stdout)
 	}
 
 	result, err := ctr.ExtractExample.Execute(ctx, application.ExtractRequest{
@@ -120,7 +124,8 @@ func runExamplesExtract(ctx context.Context, arg string, f exampleFlags, stdout,
 // was found before and on the strength of which bytes.
 func runExamplesHistory(ctx context.Context, coord coordinate.ModuleCoordinate, uc QueryExamplesUseCase, stdout io.Writer) error {
 	recs, err := uc.ExampleHistory(ctx, coord, application.PipelineVersion)
-	if err != nil {
+	superseded, serr := supersededFor(ctx, uc, coord)
+	if err = errors.Join(err, serr); err != nil {
 		return fmt.Errorf("reading example history: %w", err)
 	}
 	if len(recs) == 0 {
@@ -161,9 +166,9 @@ func runExamplesHistory(ctx context.Context, coord coordinate.ModuleCoordinate, 
 			unread = fmt.Sprintf(", %d file(s) not analysed (%s)", len(r.AnalyserLimit.Files), r.AnalyserLimit.Limit.Clause())
 		}
 		if _, werr := fmt.Fprintf(stdout,
-			"%s %s  %-16s %d example(s), %d parse failure(s)%s\n    artefact: %s\n    record:   %s\n",
+			"%s %s  %-16s %d example(s), %d parse failure(s)%s\n    artefact: %s\n    record:   %s\n%s",
 			marker, r.ExtractedAt.UTC().Format(time.RFC3339), r.OverallStatus.String(),
-			len(r.Examples), len(r.ParseFailures), unread, artefact, r.ContentHash); werr != nil {
+			len(r.Examples), len(r.ParseFailures), unread, artefact, r.ContentHash, supersededNote(superseded, r.ArtefactIdentity)); werr != nil {
 			return fmt.Errorf("writing output: %w", werr)
 		}
 	}
@@ -248,7 +253,8 @@ func newExamplesShowCmd(stdout, stderr io.Writer) *cobra.Command {
 				return fmt.Errorf("initialising store: %w", err)
 			}
 			defer releaseStore(cleanup)
-			return runExamplesShow(cmd.Context(), args[0], args[1], jsonOut, ctr.QueryExamples, stdout, stderr)
+			r, _ := asSupersededReader(ctr.QueryFetch)
+			return runExamplesShow(cmd.Context(), args[0], args[1], jsonOut, examplesHistoryUC{ctr.QueryExamples, r}, stdout, stderr)
 		},
 	}
 
@@ -423,6 +429,9 @@ func runExamplesFind(ctx context.Context, symbol string, jsonOut bool, uc QueryE
 func exampleRecordMiss(ctx context.Context, uc QueryExamplesUseCase, coord coordinate.ModuleCoordinate,
 	jsonOut bool, stderr io.Writer,
 ) error {
+	if refusal := examplesSupersededOnly(ctx, uc, coord); refusal != nil {
+		return refusal
+	}
 	all, err := uc.ListExampleRecords(ctx, ports.ExampleFilter{})
 	if err != nil {
 		return fmt.Errorf("counting example records for the not-found notice: %w", err)
@@ -511,7 +520,8 @@ query, so listing it beside the others would pad the count of what is known.
 			}
 			defer releaseStore(cleanup)
 			if len(args) == 1 {
-				return runExamplesListForModule(cmd.Context(), args[0], ctr.QueryExamples, stdout, stderr)
+				r, _ := asSupersededReader(ctr.QueryFetch)
+				return runExamplesListForModule(cmd.Context(), args[0], examplesHistoryUC{ctr.QueryExamples, r}, stdout, stderr)
 			}
 			return runExamplesList(cmd.Context(), limit, offset, allGenerations, ctr.QueryExamples, stdout, stderr)
 		},
@@ -711,4 +721,19 @@ func examplesListConflictErr(conflicts []error) error {
 	}
 	return fmt.Errorf("%d module(s) hold conflicting example records: %w",
 		len(conflicts), errors.Join(conflicts...))
+}
+
+// examplesSupersededOnly is the refusal for a coordinate whose every example
+// generation derives from a superseded artefact; nil otherwise. A history that
+// cannot be read leaves the ordinary miss to say what is absent.
+func examplesSupersededOnly(ctx context.Context, uc QueryExamplesUseCase, coord coordinate.ModuleCoordinate) error {
+	recs, err := uc.ExampleHistory(ctx, coord, application.PipelineVersion)
+	if err != nil {
+		return nil //nolint:nilerr // the ordinary miss says what is absent
+	}
+	ids := make([]string, 0, len(recs))
+	for _, r := range recs {
+		ids = append(ids, r.ArtefactIdentity)
+	}
+	return supersededOnlyRefusal(ctx, uc, coord, ids, "kanonarion examples "+coord.String())
 }

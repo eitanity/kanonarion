@@ -220,6 +220,9 @@ func TestResolutionSourceArtefactClassification(t *testing.T) {
 		{"ResolutionMVS", walkdomain.ResolutionMVS, true, ""},
 		{"ResolutionReplace", walkdomain.ResolutionReplace, true, ""},
 		{"ResolutionLocalReplace", walkdomain.ResolutionLocalReplace, false, "local replace"},
+		// A go.work member is read from its directory, as a local replace is;
+		// nothing published it, so there is no artefact to copy.
+		{"ResolutionLocalWorkspaceMember", walkdomain.ResolutionLocalWorkspaceMember, false, "workspace member"},
 		// A fetch that failed still named bytes that should be in the store, which
 		// is what distinguishes it from a node that never owed any.
 		{"ResolutionFetchFailed", walkdomain.ResolutionFetchFailed, true, ""},

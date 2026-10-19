@@ -56,7 +56,7 @@ kanonarion walk --gomod ./go.mod [flags]
 | `--shallow` | `false` | Fetch only the target; list its `go.mod` requires without recursing (positional module walk only) |
 | `--skip-vcs-verify` | `false` | Skip git cross-verification (checksum still runs) |
 | `--allow-verification-downgrade` | `false` | Permit a weaker re-measurement of a module to be recorded alongside a stronger stored one. Without it the weaker measurement is refused, the stronger record is kept and answers, and the run warns. See [Re-measuring with a weaker anchor](fetch.md#re-measuring-with-a-weaker-anchor---allow-verification-downgrade) |
-| `--analyse-local` | `false` | Ingest `replace` targets that point to local directories so callgraph/iface/license can analyse them. Requires `--gomod`; refused by name on a positional module walk, which has no local source context |
+| `--analyse-local` | `false` | No effect: every `--gomod` walk reads local-path `replace` targets from disk. Accepted so existing invocations still run, with a note on stderr; refused by name on a positional module walk, which has no local source context |
 | `--analyse-root` | `false` | Ingest the project's own working tree so all extraction stages analyse the project's own packages. Re-reads the tree fresh on every run. Requires a `go.mod` walk; incompatible with `--tool` (a tool walk does not cover the project's own packages). See [Analysing the project root](#analysing-the-project-root---analyse-root). |
 | `--stdlib-from-gomod` | `false` | Version the `stdlib` node from the `go.mod` directive, not the live toolchain. Requires a `go.mod` walk; refused by name on a positional module walk, which has no project `go.mod` to read the directive from. See [Standard-library version](#standard-library-version---stdlib-from-gomod). |
 | `--from-modcache[=dir]` | _(off)_ | Source modules from an existing Go module cache instead of the network proxy, verifying each against the project's local `go.sum` - the offline walk. Passed bare it uses `go env GOMODCACHE`; an optional value names the cache directory. A module missing from the cache, or whose bytes disagree with `go.sum`, fails the walk. Requires a `go.mod` walk; refused by name on a positional module walk, which has no project `go.sum` to verify the cache against. See [Offline and air-gapped walks](#offline-and-air-gapped-walks). |
@@ -711,10 +711,30 @@ nothing set in the shell. See
 ## Local-replace targets
 
 A `go.mod` file may redirect a dependency to a local path via a
-`replace example.com/foo => ../local/foo` directive. When the **local main
-module** carries such a directive (a `--gomod` project walk), the walk records
-the redirected node with resolution source `local_replace` and marks it as
-unscannable by default - there is no version to fetch from a proxy.
+`replace example.com/foo v1.2.3 => ../local/foo` directive. When the **local main
+module** carries such a directive (a `--gomod` project walk), the walk reads the
+directory from disk and records it under its own identity,
+`example.com/foo@local`, never under the published `example.com/foo@v1.2.3`:
+
+- the node's resolution source is `local_replace`, its `original_coordinate` is
+  the require it replaces (`example.com/foo@v1.2.3`), and its `local_path` is the
+  path as written in `go.mod`;
+- the directory is zipped, hashed and stored like a fetched module, and
+  `extract` analyses it (licence, interface, call graph, examples) as it does the
+  project root;
+- it is re-read on every walk and never served from cache, so an edit to the
+  directory is in its record on the next run, with or without `--force`.
+
+A published `example.com/foo@v1.2.3` held in the same store is untouched: its
+records keep their bytes and a read of that coordinate still serves them.
+
+A relative path is read the way the go command reads it: against the `go.work`
+directory when a workspace is in force, otherwise against the directory of the
+`go.mod` passed to `--gomod`. An absolute path is read where it is.
+
+If a directory cannot be read (missing, no `go.mod`, zip error), the node's
+result is `fetch_failed` with error type `local_fetch_failed` and the walk is
+`partial`.
 
 Local-path replaces are honoured only for the local main module, exactly as the
 Go toolchain does: it applies the *main* module's replaces and ignores a
@@ -726,26 +746,35 @@ why a multi-module repository member such as `go.opentelemetry.io/otel/trace`,
 whose published `go.mod` declares `replace go.opentelemetry.io/otel => ../`,
 does not strand its sibling as an unscannable `local_replace` node.
 
-Pass `--analyse-local` (with `--gomod`) to opt in to ingesting those directories
-from disk:
+`--analyse-local`, which used to opt in to reading these directories, is still
+accepted and has no effect.
+
+A walk recorded before this behaviour carries a `local_replace` node at the
+published coordinate (`example.com/foo@v1.2.3`); that node was never read from
+disk, and `extract` and `vuln-scan` still skip it with the reason.
+
+### Identity
+
+A project with a local replacement walks to a different identity than it did
+before local identities existed, because the node's coordinate changed: the
+first walk after the upgrade is a new walk, and later walks of an unchanged tree
+reuse it. A project with no local replacement and no workspace member walks to
+the same identity as before.
+
+## Workspace members
+
+When the project is inside a `go.work` workspace, every member module other than
+the one the walk starts from becomes a node at `<path>@local` with resolution
+source `local_workspace_member`, read from the member's directory and analysed
+like a local replacement. An edge from the root reaches it, and its own
+`go.mod` requirements are edges from it. Under the default code scope a member is
+kept only when the project's packages import it; `--project` keeps every member.
 
 ```
-kanonarion walk --gomod ./go.mod --analyse-local
+kanonarion walk --gomod ./a/go.mod     # inside a go.work that uses ./a and ./b
 ```
 
-When `--analyse-local` is set, the walker reads each local directory,
-creates an in-memory module zip with `golang.org/x/mod/zip.CreateFromDir`,
-hashes it, and stores it in the blob store exactly like a remotely-fetched
-module. The node is promoted to resolution source `local_analysed` and
-proceeds through `extract`, `callgraph`, `iface`, and `license` analysis
-as a normal dependency.
-
-If a local path cannot be read (directory missing, no `go.mod`, zip error),
-the walker falls back to `local_replace` with a warning log; the overall walk
-still succeeds.
-
-The base directory for resolving relative paths is the directory that contains
-the `go.mod` file supplied via `--gomod`.
+records `example.com/b@local` beside the root.
 
 ## Per-node fetch results
 
@@ -762,10 +791,10 @@ follow* below:
 | `fetch_record` | The full `FactRecord` for the successful fetch (null on failure) |
 
 The `N failed` on the walk line, and the `failures=` column in `walk-list`, count
-`fetch_failed` and `internal_panic` only. A `local_replace` node is a require
-redirected to a directory: there is no remote artefact to fetch, so it is not a
-fetch that failed and the walk is not partial because of one. A project with a
-local `replace` of its own subpackage reports `0 failed`.
+`fetch_failed` and `internal_panic` only. A local replacement or workspace
+member that was read from disk is `succeeded`; one that could not be read is
+`fetch_failed`. The `local_replace` status remains for a walk with no local
+reader wired, and for walks recorded before local identities existed.
 
 `from_cache` and `duration_ms` reflect the *first* call to the underlying
 fetcher for each coordinate during the walk. This means the cold-fetch

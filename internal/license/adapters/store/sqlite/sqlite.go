@@ -14,6 +14,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/recordstamp"
 
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
 
 	"github.com/eitanity/kanonarion/internal/adapters/blobcodec"
 	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
@@ -29,6 +30,17 @@ type Store struct {
 	// setAside receives the stored generations a read or a write left out
 	// because this build cannot reproduce them; see ReportSetAside.
 	setAside recordseal.Reporter
+	// superseded names the artefacts a published coordinate's read leaves out;
+	// nil leaves every generation in. See WithSupersededArtefacts.
+	superseded fetchports.SupersededArtefacts
+}
+
+// WithSupersededArtefacts makes the store's reads of a published coordinate
+// leave out generations derived from a directory read under it before local
+// code had its own identity. The generations stay in the ledger.
+func (s *Store) WithSupersededArtefacts(fn fetchports.SupersededArtefacts) *Store {
+	s.superseded = fn
+	return s
 }
 
 // RecordKind is how a set-aside licence generation names its kind.
@@ -286,6 +298,10 @@ func (s *Store) GetLicenseRecord(ctx context.Context, coord coordinate.ModuleCoo
 	records, err := s.ListLicenseRecordsFor(ctx, coord, pipelineVersion)
 	if err != nil {
 		return domain2.LicenseRecord{}, false, err
+	}
+	records, err = fetchports.DropSuperseded(ctx, s.superseded, coord, records, func(r domain2.LicenseRecord) string { return r.ArtefactIdentity })
+	if err != nil {
+		return domain2.LicenseRecord{}, false, fmt.Errorf("reading license records of %s: %w", coord, err)
 	}
 	if len(records) == 0 {
 		return domain2.LicenseRecord{}, false, nil
@@ -563,13 +579,10 @@ func (s *Store) ListLicenseRecords(ctx context.Context, filter ports.LicenseFilt
 
 	out := make([]ports.LicenseSummary, 0, len(order))
 	for _, k := range order {
-		if counts[k] == 1 && !rowFiltered && !asideFirst[k] {
-			// The overwhelming majority: one generation, so the columns already
-			// describe the served record and no blob is decoded to learn it.
-			out = append(out, first[k])
-			continue
-		}
-		sum, listed, lerr := s.composedSummary(ctx, k.path, k.version, k.pipeline)
+		// The overwhelming majority have one generation, so the columns already
+		// describe the served record and no blob is decoded to learn it.
+		sum, listed, lerr := s.listedSummary(ctx, k.path, k.version, k.pipeline, first[k],
+			counts[k] == 1 && !rowFiltered && !asideFirst[k])
 		if lerr != nil {
 			return nil, lerr
 		}
@@ -585,6 +598,22 @@ func (s *Store) ListLicenseRecords(ctx context.Context, filter ports.LicenseFilt
 // so a key's row count is over the rows it matched rather than the ledger's.
 func filtersOnRecordColumn(filter ports.LicenseFilter) bool {
 	return filter.SPDX != "" || filter.Status != nil || len(filter.CopyrightStatus) > 0
+}
+
+// listedSummary is the listing row for one key: the stored row when it alone
+// describes the served record, the composed read otherwise. A key holding
+// superseded generations is always composed, so they are left out.
+func (s *Store) listedSummary(ctx context.Context, path, version, pipeline string, row ports.LicenseSummary, rowServes bool) (ports.LicenseSummary, bool, error) {
+	if rowServes {
+		held, err := fetchports.HoldsSuperseded(ctx, s.superseded, path, version)
+		if err != nil {
+			return ports.LicenseSummary{}, false, err //nolint:wrapcheck // HoldsSuperseded names the coordinate
+		}
+		if !held {
+			return row, true, nil
+		}
+	}
+	return s.composedSummary(ctx, path, version, pipeline)
 }
 
 // composedSummary is the listing row for one key read through composition;

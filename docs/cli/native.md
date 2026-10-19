@@ -415,6 +415,11 @@ github.com/mattn/go-sqlite3@v1.14.12                    present_identified     4
   kanonarion native <module>@<version>
 ```
 
+A record of a directory read under a published coordinate, taken before a
+local-path replacement had its own `<path>@local` identity, answers no query
+either. The default listing leaves it out; `--all-generations` lists it marked
+`[superseded by identity]`, with `"superseded_by": "identity"` under `--json`.
+
 The first row is why this matters. At generation `0.2.0` that module read
 `absent`; `0.3.0` added `#cgo pkg-config` as a fourth operand form, and at the
 generation this build serves the same module reads `linked_not_shipped` and

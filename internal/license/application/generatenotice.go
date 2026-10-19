@@ -133,10 +133,13 @@ func (uc *GenerateNoticeUseCase) processModule(
 				Reason:     StdlibMissingRecordReason(coord),
 			}, nil
 		}
-		return nil, &licensedomain.ReviewItem{
-			Coordinate: coord,
-			Reason:     "no license record: run 'kanonarion license' first",
-		}, nil
+		reason := "no license record: run 'kanonarion license' first"
+		if n, serr := uc.supersededOnly(ctx, coord); serr != nil {
+			return nil, nil, serr
+		} else if n > 0 {
+			reason = fetchdomain.SupersededOnlyStatement(n, coord) + "; measure the published module: kanonarion license " + coord.String()
+		}
+		return nil, &licensedomain.ReviewItem{Coordinate: coord, Reason: reason}, nil
 	}
 
 	// The operator's recorded determination, resolved before the gate: it is the
@@ -521,4 +524,34 @@ func (uc *GenerateNoticeUseCase) noticeRequireFetchRecord(
 		return fetchdomain.FactRecord{}, fmt.Errorf("%w: %s: %s", licenseports.ErrModuleNotFetched, coord, fetchdomain.NotFetchedRemedy(coord))
 	}
 	return r.FactRecord, nil
+}
+
+// licenceGenerations is the optional store capability that lists every
+// generation held for a coordinate.
+type licenceGenerations interface {
+	ListLicenseRecordsFor(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) ([]licensedomain.LicenseRecord, error)
+}
+
+// supersededOnly counts the generations held for coord when every one derives
+// from a superseded artefact, and answers 0 otherwise or when the stores cannot
+// say.
+func (uc *GenerateNoticeUseCase) supersededOnly(ctx context.Context, coord coordinate.ModuleCoordinate) (int, error) {
+	lister, ok := uc.licenses.(licenceGenerations)
+	if !ok || coord.IsLocal() {
+		return 0, nil
+	}
+	recs, err := lister.ListLicenseRecordsFor(ctx, coord, uc.pipelineVersion)
+	if err != nil || len(recs) == 0 {
+		return 0, nil //nolint:nilerr // the plain absence is still true
+	}
+	ids, err := fetchports.SupersededArtefactsOf(ctx, uc.facts, coord)
+	if err != nil {
+		return 0, fmt.Errorf("reading superseded local generations of %s: %w", coord, err)
+	}
+	for _, r := range recs {
+		if !ids[r.ArtefactIdentity] {
+			return 0, nil
+		}
+	}
+	return len(recs), nil
 }

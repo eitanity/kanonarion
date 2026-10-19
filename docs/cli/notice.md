@@ -85,6 +85,15 @@ WALK_ID=$(kanonarion walk-list --latest-success --json | jq -r '.id')
 kanonarion notice --walk-id "$WALK_ID" > THIRD-PARTY-LICENSES
 ```
 
+### Local-path replacements and go.work members
+
+In every scope, a require that `go.mod` replaces with a local directory is
+attributed as `<path>@local`, the record a project walk and `extract` produce
+from that directory, and the entry names the require it replaces. Under
+`--gomod` inside a go.work workspace, each member the project's build reaches is
+attributed as `<path>@local` too. Run the walk and the extract first; until then
+such a module has no licence record and is listed for review.
+
 ## Output format
 
 The document is written to stdout in a fixed format:

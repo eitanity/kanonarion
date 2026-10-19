@@ -239,6 +239,18 @@ The TinyGo component carries no hashes, licence or external references:
 kanonarion does not yet acquire TinyGo's source. It is therefore named in the
 licence-completeness statement like any component with no licence identity.
 
+### Modules read from disk
+
+A local-path replacement and a `go.work` member are listed at `<path>@local`
+(`pkg:golang/example.com/foo@local`), with the licence extracted from the
+directory, and carry one property that says what they stand for:
+
+- `kanonarion:replaces` — the published require the directory replaces, for
+  example `example.com/foo@v1.2.3`;
+- `kanonarion:workspace_member` — `true` for a `go.work` member.
+
+They carry no hashes of a published artefact and no external references.
+
 ### Standard-library chain of custody
 
 The synthetic `stdlib` component is toolchain-provided, not a proxy module, so it
@@ -505,13 +517,14 @@ identity: github.com/eitanity/kanonarion@local (the document's subject) — run
 
 A component the build **replaces with a local path** (`replace example.com/mod
 => ./sub`) has no published source, so `kanonarion license` cannot reach it
-either. It is ingested from the directory that replaces it:
+either. A project walk reads it from the directory that replaces it, under
+`<path>@local`:
 
 ```
 sbom generated with undetermined licences: 1 component(s) with no licence
 identity: example.com/mod@v0.0.0-00010101000000-000000000000 — run
-'kanonarion walk --gomod /path/to/go.mod --analyse-local' then
-'kanonarion extract <walk-id>' to analyse example.com/mod from the local path
+'kanonarion walk --gomod /path/to/go.mod' then
+'kanonarion extract <walk-id>' to analyse example.com/mod@local from the local path
 this build replaces it with
 ```
 

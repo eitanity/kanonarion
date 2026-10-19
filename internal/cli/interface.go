@@ -68,7 +68,11 @@ func runInterfaceExtract(ctx context.Context, arg string, f ifaceFlags, stdout, 
 	defer releaseStore(cleanup)
 
 	if f.history {
-		return runInterfaceHistory(ctx, coord, ctr.QueryInterface, stdout)
+		uc := ctr.QueryInterface
+		if r, ok := asSupersededReader(ctr.QueryFetch); ok {
+			uc = interfaceHistoryUC{ctr.QueryInterface, r}
+		}
+		return runInterfaceHistory(ctx, coord, uc, stdout)
 	}
 
 	result, err := ctr.ExtractInterface.Execute(ctx, ifaceapp.ExtractRequest{
@@ -109,7 +113,8 @@ func runInterfaceExtract(ctx context.Context, arg string, f ifaceFlags, stdout, 
 // what each of them says the API is.
 func runInterfaceHistory(ctx context.Context, coord coordinate.ModuleCoordinate, uc QueryInterfaceUseCase, stdout io.Writer) error {
 	recs, err := uc.InterfaceHistory(ctx, coord, ifaceapp.PipelineVersion)
-	if err != nil {
+	superseded, serr := supersededFor(ctx, uc, coord)
+	if err = errors.Join(err, serr); err != nil {
 		return fmt.Errorf("reading interface history: %w", err)
 	}
 	if len(recs) == 0 {
@@ -150,9 +155,9 @@ func runInterfaceHistory(ctx context.Context, coord coordinate.ModuleCoordinate,
 			unread = fmt.Sprintf(", %d file(s) not analysed (%s)", len(r.AnalyserLimit.Files), r.AnalyserLimit.Limit.Clause())
 		}
 		if _, werr := fmt.Fprintf(stdout,
-			"%s %s  %-16s %d package(s)%s\n    artefact: %s\n    api:      %s\n    record:   %s\n",
+			"%s %s  %-16s %d package(s)%s\n    artefact: %s\n    api:      %s\n    record:   %s\n%s",
 			marker, r.ExtractedAt.UTC().Format(time.RFC3339), r.OverallStatus.String(),
-			len(r.Packages), unread, artefact, domain.APIDigest(r), r.ContentHash); werr != nil {
+			len(r.Packages), unread, artefact, domain.APIDigest(r), r.ContentHash, supersededNote(superseded, r.ArtefactIdentity)); werr != nil {
 			return fmt.Errorf("writing output: %w", werr)
 		}
 	}
@@ -272,7 +277,8 @@ func runInterfaceShow(ctx context.Context, moduleArg, pkgFilter, symbolFilter st
 		return fmt.Errorf("getting interface record: %w", err)
 	}
 	if !found {
-		return interfaceRecordMiss(ctx, ctr.QueryInterface, coord, jsonOut, stderr)
+		r, _ := asSupersededReader(ctr.QueryFetch)
+		return interfaceRecordMiss(ctx, interfaceHistoryUC{ctr.QueryInterface, r}, coord, jsonOut, stderr)
 	}
 
 	// Promotion is resolved against the whole record, before any filter: a type
@@ -587,7 +593,8 @@ func runInterfaceListForModule(ctx context.Context, moduleArg string, jsonOut bo
 		return fmt.Errorf("getting interface record: %w", err)
 	}
 	if !found {
-		return interfaceRecordMiss(ctx, ctr.QueryInterface, coord, jsonOut, stderr)
+		r, _ := asSupersededReader(ctr.QueryFetch)
+		return interfaceRecordMiss(ctx, interfaceHistoryUC{ctr.QueryInterface, r}, coord, jsonOut, stderr)
 	}
 	// On stderr: both outputs below are bare lists with no room for the fact.
 	if err := writeAnalyserLimit(stderr, "", r.AnalyserLimit, "kanonarion interface "+r.Coordinate.String()); err != nil {
@@ -712,6 +719,9 @@ func interfaceRecordMiss(ctx context.Context, uc QueryInterfaceUseCase, coord co
 	// returns here without the corpus survey the zero-result notice needs.
 	if pipelines, superseded := supersededInterfaceRecord(ctx, uc, coord); superseded {
 		return &exitError{code: ExitNotFound, msg: supersededInterfaceLine(coord, pipelines)}
+	}
+	if refusal := interfaceSupersededOnly(ctx, uc, coord); refusal != nil {
+		return refusal
 	}
 	all, err := uc.ListInterfaceRecords(ctx, ports.InterfaceFilter{})
 	if err != nil {
@@ -851,4 +861,19 @@ func interfaceListConflictErr(conflicts []error) error {
 	}
 	return fmt.Errorf("%d module(s) hold conflicting interface records: %w",
 		len(conflicts), errors.Join(conflicts...))
+}
+
+// interfaceSupersededOnly is the refusal for a coordinate whose every interface
+// generation derives from a superseded artefact; nil otherwise. A history that
+// cannot be read leaves the ordinary miss to say what is absent.
+func interfaceSupersededOnly(ctx context.Context, uc QueryInterfaceUseCase, coord coordinate.ModuleCoordinate) error {
+	recs, err := uc.InterfaceHistory(ctx, coord, ifaceapp.PipelineVersion)
+	if err != nil {
+		return nil //nolint:nilerr // the ordinary miss says what is absent
+	}
+	ids := make([]string, 0, len(recs))
+	for _, r := range recs {
+		ids = append(ids, r.ArtefactIdentity)
+	}
+	return supersededOnlyRefusal(ctx, uc, coord, ids, "kanonarion interface "+coord.String())
 }

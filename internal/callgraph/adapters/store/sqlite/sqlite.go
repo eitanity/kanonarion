@@ -21,6 +21,7 @@ import (
 	domain2 "github.com/eitanity/kanonarion/internal/callgraph/domain"
 	"github.com/eitanity/kanonarion/internal/callgraph/ports"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
 
 	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
 )
@@ -46,6 +47,17 @@ type Store struct {
 	// readFrame is the build frame a composing read selects when its request
 	// names none; zero leaves the read unrestricted. See WithReadFrame.
 	readFrame domain2.BuildFrame
+	// superseded names the artefacts a published coordinate's read leaves out;
+	// nil leaves every generation in. See WithSupersededArtefacts.
+	superseded fetchports.SupersededArtefacts
+}
+
+// WithSupersededArtefacts makes the store's reads of a published coordinate
+// leave out generations derived from a directory read under it before local
+// code had its own identity. The generations stay in the ledger.
+func (s *Store) WithSupersededArtefacts(fn fetchports.SupersededArtefacts) *Store {
+	s.superseded = fn
+	return s
 }
 
 // recordKind is how a set-aside call graph generation names its kind.
@@ -1142,6 +1154,10 @@ func (s *Store) composeFor(ctx context.Context, coord coordinate.ModuleCoordinat
 	if err != nil {
 		return domain2.CallGraphRecord{}, false, err
 	}
+	records, err = fetchports.DropSuperseded(ctx, s.superseded, coord, records, func(r domain2.CallGraphRecord) string { return r.ArtefactIdentity })
+	if err != nil {
+		return domain2.CallGraphRecord{}, false, fmt.Errorf("reading call graph records of %s: %w", coord, err)
+	}
 	if len(records) == 0 {
 		return domain2.CallGraphRecord{}, false, nil
 	}
@@ -2214,55 +2230,64 @@ func (s *Store) ListCallGraphRecords(ctx context.Context, filter ports.CallGraph
 
 	out := make([]ports.CallGraphSummary, 0, len(order))
 	for _, k := range order {
-		if counts[k] == 1 {
-			// The overwhelming majority: one generation, so the columns already
-			// describe the served record and no blob is decoded to learn it.
-			out = append(out, first[k])
-			continue
+		// The overwhelming majority have one generation, so the columns already
+		// describe the served record and no blob is decoded to learn it.
+		sum, listed, lerr := s.listedCallGraphSummary(ctx, k.path, k.version, k.pipeline, first[k], counts[k] == 1)
+		if lerr != nil {
+			return nil, lerr
 		}
-		coord, cerr := coordinate.NewModuleCoordinate(k.path, k.version)
-		if cerr != nil {
-			return nil, fmt.Errorf("callgraph record %s@%s names no module: %w", k.path, k.version, cerr)
+		if listed {
+			out = append(out, sum)
 		}
-		served, found, gerr := s.GetCallGraphRecord(ctx, coord, k.pipeline)
-		if errors.As(gerr, new(*recordseal.NothingServable)) {
-			// Every generation was set aside and named by the read; the listing
-			// keeps its other rows.
-			continue
-		}
-		if errors.Is(gerr, ports.ErrCallGraphConflict) {
-			// Reported on the row, not raised as the list's error: see the comment
-			// on CallGraphSummary.Conflict.
-			out = append(out, ports.CallGraphSummary{
-				ModulePath:      k.path,
-				ModuleVersion:   k.version,
-				PipelineVersion: k.pipeline,
-				Conflict:        gerr,
-			})
-			continue
-		}
-		if gerr != nil {
-			return nil, gerr
-		}
-		if !found {
-			continue
-		}
-		out = append(out, ports.CallGraphSummary{
-			ModulePath:      k.path,
-			ModuleVersion:   k.version,
-			PipelineVersion: k.pipeline,
-			Algorithm:       served.Algorithm,
-			OverallStatus:   served.OverallStatus,
-			Completeness:    served.Completeness,
-			AnalysisSource:  served.AnalysisSource,
-			NodeCount:       served.NodeCount,
-			EdgeCount:       served.EdgeCount,
-			ExtractedAt:     served.ExtractedAt.UTC(),
-			ContentHash:     served.ContentHash,
-		})
 	}
 
 	return pageSummaries(out, filter.Limit, filter.Offset), nil
+}
+
+// listedCallGraphSummary is the listing row for one key: the stored row when it
+// alone describes the served record, the composed read otherwise. A key holding
+// superseded generations is always composed, so they are left out.
+func (s *Store) listedCallGraphSummary(ctx context.Context, path, version, pipeline string, row ports.CallGraphSummary, rowServes bool) (ports.CallGraphSummary, bool, error) {
+	if rowServes {
+		held, err := fetchports.HoldsSuperseded(ctx, s.superseded, path, version)
+		if err != nil {
+			return ports.CallGraphSummary{}, false, err //nolint:wrapcheck // HoldsSuperseded names the coordinate
+		}
+		if !held {
+			return row, true, nil
+		}
+	}
+	coord, cerr := coordinate.NewModuleCoordinate(path, version)
+	if cerr != nil {
+		return ports.CallGraphSummary{}, false, fmt.Errorf("callgraph record %s@%s names no module: %w", path, version, cerr)
+	}
+	served, found, gerr := s.GetCallGraphRecord(ctx, coord, pipeline)
+	if errors.As(gerr, new(*recordseal.NothingServable)) {
+		// Every generation was set aside and named by the read; the listing
+		// keeps its other rows.
+		return ports.CallGraphSummary{}, false, nil
+	}
+	if errors.Is(gerr, ports.ErrCallGraphConflict) {
+		// Reported on the row, not raised as the list's error: see the comment
+		// on CallGraphSummary.Conflict.
+		return ports.CallGraphSummary{ModulePath: path, ModuleVersion: version, PipelineVersion: pipeline, Conflict: gerr}, true, nil
+	}
+	if gerr != nil || !found {
+		return ports.CallGraphSummary{}, false, gerr
+	}
+	return ports.CallGraphSummary{
+		ModulePath:      path,
+		ModuleVersion:   version,
+		PipelineVersion: pipeline,
+		Algorithm:       served.Algorithm,
+		OverallStatus:   served.OverallStatus,
+		Completeness:    served.Completeness,
+		AnalysisSource:  served.AnalysisSource,
+		NodeCount:       served.NodeCount,
+		EdgeCount:       served.EdgeCount,
+		ExtractedAt:     served.ExtractedAt.UTC(),
+		ContentHash:     served.ContentHash,
+	}, true, nil
 }
 
 // ListCallGraphCoordinates returns one entry per analysed (module, version,

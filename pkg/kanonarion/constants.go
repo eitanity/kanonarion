@@ -553,17 +553,18 @@ const (
 // Values may be added within a major version; treat an unrecognised value
 // conservatively (§4).
 const (
-	ResolutionDepthBounded    = walkdomain.ResolutionDepthBounded
-	ResolutionFetchFailed     = walkdomain.ResolutionFetchFailed
-	ResolutionLocalAnalysed   = walkdomain.ResolutionLocalAnalysed
-	ResolutionLocalMainModule = walkdomain.ResolutionLocalMainModule
-	ResolutionLocalReplace    = walkdomain.ResolutionLocalReplace
-	ResolutionMVS             = walkdomain.ResolutionMVS
-	ResolutionParseFailed     = walkdomain.ResolutionParseFailed
-	ResolutionReplace         = walkdomain.ResolutionReplace
-	ResolutionStdlib          = walkdomain.ResolutionStdlib
-	ResolutionTarget          = walkdomain.ResolutionTarget
-	ResolutionTinyGo          = walkdomain.ResolutionTinyGo
+	ResolutionDepthBounded         = walkdomain.ResolutionDepthBounded
+	ResolutionFetchFailed          = walkdomain.ResolutionFetchFailed
+	ResolutionLocalAnalysed        = walkdomain.ResolutionLocalAnalysed
+	ResolutionLocalMainModule      = walkdomain.ResolutionLocalMainModule
+	ResolutionLocalReplace         = walkdomain.ResolutionLocalReplace
+	ResolutionLocalWorkspaceMember = walkdomain.ResolutionLocalWorkspaceMember
+	ResolutionMVS                  = walkdomain.ResolutionMVS
+	ResolutionParseFailed          = walkdomain.ResolutionParseFailed
+	ResolutionReplace              = walkdomain.ResolutionReplace
+	ResolutionStdlib               = walkdomain.ResolutionStdlib
+	ResolutionTarget               = walkdomain.ResolutionTarget
+	ResolutionTinyGo               = walkdomain.ResolutionTinyGo
 )
 
 // The values of ReuseGate, as the internal package defines them.

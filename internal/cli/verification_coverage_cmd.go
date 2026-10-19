@@ -193,6 +193,12 @@ func writeVerificationDetail(stdout io.Writer, rows []moduleVerification) error 
 			r.Class, name, verificationReasonLine(r)); err != nil {
 			return fmt.Errorf("writing detail row: %w", err)
 		}
+		if r.SupersededLocal != nil {
+			if _, err := fmt.Fprintf(stdout, "    %s: %d record(s) read from a local directory under this coordinate, not composed\n",
+				r.SupersededLocal.Statement, r.SupersededLocal.Records); err != nil {
+				return fmt.Errorf("writing detail row: %w", err)
+			}
+		}
 	}
 	return nil
 }

@@ -57,7 +57,7 @@ type blockingExtractor struct {
 	release chan struct{}
 }
 
-func (b *blockingExtractor) Extract(ctx context.Context, _ coordinate.ModuleCoordinate, stage string, _ bool, _ string) (ports.StageResult, error) {
+func (b *blockingExtractor) Extract(ctx context.Context, _ coordinate.ModuleCoordinate, stage string, _ bool, _ string, _ bool) (ports.StageResult, error) {
 	select {
 	case b.entered <- struct{}{}:
 	case <-ctx.Done():

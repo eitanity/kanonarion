@@ -129,9 +129,9 @@ func binaryPrePassUnderTinyGo(f vulnScanFlags) []inapplicableFlag {
 
 // walkGoModOnlyFlags returns the walk flags that only a go.mod walk can act on,
 // for whichever of them the caller set. --stdlib-from-gomod reads a toolchain
-// directive out of a project go.mod, --analyse-local resolves local-replace
-// targets relative to one, and --from-modcache verifies the carried-in cache
-// bytes against the go.sum beside one; a positional walk has none of them.
+// directive out of a project go.mod, --analyse-local names the local-replace
+// reading every go.mod walk does, and --from-modcache verifies the carried-in
+// cache bytes against the go.sum beside one; a positional walk has none of them.
 func walkGoModOnlyFlags(f walkFlags) []inapplicableFlag {
 	const where = "walk --gomod"
 	var out []inapplicableFlag

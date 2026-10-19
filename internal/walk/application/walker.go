@@ -2,6 +2,7 @@ package application
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"path/filepath"
@@ -63,8 +64,8 @@ type Walker struct {
 }
 
 // NewWalker constructs a Walker. workerCount defaults to defaultWorkerCount if
-// ≤0. localFetcher may be nil; when nil, local-replace nodes are always skipped
-// regardless of WalkRequest.LocalReplaceBase.
+// ≤0. localFetcher may be nil; when nil, local-replace and workspace-member
+// nodes are skipped with a reason rather than read from disk.
 func NewWalker(
 	resolver *GraphResolver,
 	fetcher walkports.ModuleFetcher,
@@ -110,12 +111,6 @@ type WalkRequest struct {
 	// WalkDepthShallow fetches only the target, lists its go.mod require entries
 	// as unresolved nodes, and marks the resulting graph partial.
 	Depth domain2.WalkDepth
-	// LocalReplaceBase is the directory used to resolve local-path replace
-	// targets found in the graph (e.g. "../sibling"). When non-empty and the
-	// Walker has a LocalModuleFetcher wired, local-replace nodes are ingested
-	// from disk instead of being marked Skipped. Paths in GraphNode.LocalPath
-	// are joined with this base to form the absolute filesystem location.
-	LocalReplaceBase string
 	// ProjectMode roots the walk at the local main module rather than fetching
 	// Target. Target carries the main module path at coordinate.LocalVersion,
 	// and MainModuleGoMod holds the working tree's go.mod. The resulting record
@@ -138,7 +133,8 @@ type WalkRequest struct {
 	// project walk (the directory holding go.mod/go.sum). It is provenance: the
 	// place the walk happened, copied onto WalkRecord.ProjectDir so a later
 	// re-scan by walk id can reach the same analysis surface. It is also where
-	// AnalyseLocalRoot reads the project's own packages. Every project-rooted
+	// AnalyseLocalRoot reads the project's own packages, and the base of a
+	// relative local replace path outside a workspace. Every project-rooted
 	// caller sets it, unconditionally.
 	//
 	// It carries no resolution authority — see ResolutionDir. The two were one
@@ -257,11 +253,12 @@ func (w *Walker) Walk(ctx context.Context, req WalkRequest) (domain2.WalkOutcome
 	// with the walker, so every fetch is observed exactly once with accurate
 	// FromCache and duration_ms.
 	var graph domain2.Graph
+	var sources localSources
 	if req.ProjectMode {
 		// Project mode: root at the local main module. Its go.mod is read from
 		// the working tree, not fetched, so the closure is the union of all
 		// require directives rooted at the project itself.
-		g, perr := resolver.ResolveProject(ctx, req.Target, req.MainModuleGoMod, req.ResolutionDir, policy.FetchStage(), req.ScopeModules, req.StdlibFromGoMod, req.Force)
+		g, src, perr := resolver.resolveProject(ctx, req.Target, req.MainModuleGoMod, req.ResolutionDir, policy.FetchStage(), req.ScopeModules, req.StdlibFromGoMod, req.Force)
 		if perr != nil {
 			// The local go.mod could not be parsed — terminal, like a target
 			// fetch failure — unless the run was stopped while resolving.
@@ -273,7 +270,7 @@ func (w *Walker) Walk(ctx context.Context, req WalkRequest) (domain2.WalkOutcome
 			)
 			return outcome, nil
 		}
-		graph = g
+		graph, sources = g, src
 		// The main module is local and unfetched; synthesise a succeeded node
 		// result so it anchors the graph (and satisfies the target-succeeded
 		// invariant) without a fetch record.
@@ -325,9 +322,9 @@ func (w *Walker) Walk(ctx context.Context, req WalkRequest) (domain2.WalkOutcome
 	// the recorder captured.
 	toFetchLocal := w.classifyGraphNodes(req, graph, recorder, &outcome)
 
-	// Step 4: ingest local-replace nodes from the filesystem.
-	// Sequential: local I/O is fast and there are typically few local replaces.
-	w.fetchLocalReplaces(ctx, log, req, toFetchLocal, &outcome)
+	// Step 4: read local replacements and workspace members from disk.
+	// Sequential: local I/O is fast and there are typically few of them.
+	w.fetchLocalReplaces(ctx, log, req, sources, toFetchLocal, &outcome)
 
 	// Step 5: ingest the project root's own working tree when requested.
 	// Mirrors the local-replace ingest above: the root gets a real FactRecord
@@ -412,21 +409,18 @@ func (w *Walker) classifyGraphNodes(req WalkRequest, graph domain2.Graph, record
 				result.DurationMs = out.durationMs
 			}
 			outcome.PerNodeResults[node.Coordinate] = result
-		case domain2.ResolutionLocalReplace:
-			if w.localFetcher != nil && req.LocalReplaceBase != "" {
-				// local analysis enabled — queue for local ingestion.
+		case domain2.ResolutionLocalReplace, domain2.ResolutionLocalWorkspaceMember:
+			if w.localFetcher != nil {
 				toFetchLocal = append(toFetchLocal, node)
 			} else {
-				// local-path replacements have no remote artefact. Record
-				// a deterministic NodeLocalReplace result so downstream stages
-				// (extract, vuln-scan) can recognise and skip-with-reason instead
-				// of treating the missing fetch as an error.
+				// Nothing can read the directory, so the node is recorded as
+				// skipped with its reason rather than as a missing fetch.
 				outcome.PerNodeResults[node.Coordinate] = domain2.NodeResult{
 					Coordinate: node.Coordinate,
 					Status:     domain2.NodeLocalReplace,
 					Error: &domain2.StoredError{
-						Type:    string(domain2.ResolutionLocalReplace),
-						Message: "local replace at " + node.LocalPath,
+						Type:    string(node.ResolutionSource),
+						Message: "local source at " + localSourceName(node),
 					},
 				}
 			}
@@ -462,22 +456,23 @@ func (w *Walker) classifyGraphNodes(req WalkRequest, graph domain2.Graph, record
 	return toFetchLocal
 }
 
-// fetchLocalReplaces ingests each local-replace node from the filesystem and
-// records its result, marking the node locally analysed when it succeeds.
-func (w *Walker) fetchLocalReplaces(ctx context.Context, log *slog.Logger, req WalkRequest, toFetchLocal []domain2.GraphNode, outcome *domain2.WalkOutcome) {
+// fetchLocalReplaces reads each local replacement and workspace member from
+// disk under its local identity. The node keeps its resolution source; its
+// result says whether the read happened. A read that failed leaves a module of
+// the build unanalysed, so it marks the walk partial.
+func (w *Walker) fetchLocalReplaces(ctx context.Context, log *slog.Logger, req WalkRequest, sources localSources, toFetchLocal []domain2.GraphNode, outcome *domain2.WalkOutcome) {
 	for _, node := range toFetchLocal {
-		// An absolute replace target is used as written; joining it onto the
-		// base turned "/abs/c" into "base/abs/c" and the module went unanalysed.
-		absPath := node.LocalPath
-		if !filepath.IsAbs(absPath) {
-			absPath = filepath.Join(req.LocalReplaceBase, absPath)
+		absPath, writtenPath := localSourceDir(req, sources, node)
+		var fr walkports.LocalModuleFetchResult
+		ferr := errLocalSourceUnknown
+		if absPath != "" {
+			fr, ferr = w.localFetcher.EnsureFetchedFromPath(ctx, node.Coordinate, absPath, writtenPath)
 		}
-		fr, ferr := w.localFetcher.EnsureFetchedFromPath(ctx, node.Coordinate, absPath, node.LocalPath)
 		if ferr != nil {
 			logLocalFetchFailure(ctx, log, node.Coordinate, absPath, ferr)
 			outcome.PerNodeResults[node.Coordinate] = domain2.NodeResult{
 				Coordinate: node.Coordinate,
-				Status:     domain2.NodeLocalReplace,
+				Status:     domain2.NodeFetchFailed,
 				Error: &domain2.StoredError{
 					Type:    "local_fetch_failed",
 					Message: ferr.Error(),
@@ -492,20 +487,46 @@ func (w *Walker) fetchLocalReplaces(ctx context.Context, log *slog.Logger, req W
 			FetchRecord: &rec,
 			FromCache:   fr.FromCache,
 		}
-		// Promote the graph node to ResolutionLocalAnalysed so extract and
-		// vuln-scan treat it as a normal (analysable) module.
-		for i := range outcome.Graph.Nodes {
-			if outcome.Graph.Nodes[i].Coordinate == node.Coordinate {
-				outcome.Graph.Nodes[i].ResolutionSource = domain2.ResolutionLocalAnalysed
-				break
-			}
-		}
 		log.InfoContext(ctx, "walker.local_fetch.ok",
 			slog.String("module.path", node.Coordinate.Path()),
 			slog.String("local_path", absPath),
 			slog.Bool("from_cache", fr.FromCache),
 		)
 	}
+}
+
+// errLocalSourceUnknown is a local node whose directory the walk cannot name:
+// a member the toolchain reported no directory for, or a relative replace
+// path with no project directory to read it against.
+var errLocalSourceUnknown = errors.New("the directory of this local module is unknown to the walk")
+
+// localSourceDir returns the directory a local node is read from and the name
+// its fetch record states. A relative replace path is read against the go.work
+// directory inside a workspace and the go.mod directory outside one, as the go
+// command reads it; the record names the path as written.
+func localSourceDir(req WalkRequest, sources localSources, node domain2.GraphNode) (absPath, writtenPath string) {
+	if node.ResolutionSource == domain2.ResolutionLocalWorkspaceMember {
+		return sources.memberDirs[node.Coordinate], ""
+	}
+	if filepath.IsAbs(node.LocalPath) {
+		return node.LocalPath, node.LocalPath
+	}
+	base := sources.workDir
+	if base == "" {
+		base = req.ProjectDir
+	}
+	if base == "" {
+		return "", node.LocalPath
+	}
+	return filepath.Join(base, node.LocalPath), node.LocalPath
+}
+
+// localSourceName names a local node's source for a skip reason.
+func localSourceName(node domain2.GraphNode) string {
+	if node.LocalPath != "" {
+		return node.LocalPath
+	}
+	return node.Coordinate.Path()
 }
 
 // perWalkFetcher derives the fetcher this walk will use from the shared

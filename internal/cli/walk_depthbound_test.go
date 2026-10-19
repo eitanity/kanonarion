@@ -40,7 +40,7 @@ func walkOf(t *testing.T, rec walkdomain.WalkRecord) error {
 	uc := &testfakes.FakeExecuteWalk{Result: walkapp.ExecuteWalkResult{Record: rec}}
 	_, err := runWalk(context.Background(), "example.com/m@v1.0.0", commonWalkFlags{},
 		false, false, 0, "", "", false,
-		walkdomain.WalkScopeCode, walkdomain.WalkDepthFull, "", nil, uc, nil, io.Discard, io.Discard)
+		walkdomain.WalkScopeCode, walkdomain.WalkDepthFull, nil, uc, nil, io.Discard, io.Discard)
 	return err
 }
 

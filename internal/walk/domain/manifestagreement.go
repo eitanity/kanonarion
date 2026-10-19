@@ -9,14 +9,15 @@ import (
 // at, under the name the MANIFEST uses for it.
 //
 // Three node classes are dropped because no require line names them: the
-// synthetic standard-library and TinyGo nodes, and any local coordinate — the
-// main module itself and local-path replace targets, which carry no version. A replaced node is keyed
-// on the require entry the replace acted on rather than on the replacement that
-// was fetched, so a replace directive is not read as a disagreement.
+// synthetic standard-library and TinyGo nodes, and a local coordinate standing
+// for no require — the main module itself and go.work members. A replaced node,
+// a local-path replacement at <path>@local included, is keyed on the require
+// entry the replace acted on rather than on the replacement, so a replace
+// directive is not read as a disagreement.
 func NamedVersions(rec WalkRecord) map[string]string {
 	walked := make(map[string]string, len(rec.Graph.Nodes))
 	for _, n := range rec.Graph.Nodes {
-		if n.ResolutionSource == ResolutionStdlib || n.ResolutionSource == ResolutionTinyGo || n.Coordinate.IsLocal() {
+		if n.ResolutionSource == ResolutionStdlib || n.ResolutionSource == ResolutionTinyGo {
 			continue
 		}
 		named := n.Coordinate

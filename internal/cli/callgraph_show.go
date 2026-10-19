@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"sort"
@@ -95,7 +96,9 @@ func runCallGraphShowCmd(ctx context.Context, moduleArg string, f callGraphShowF
 		return fmt.Errorf("initialising store: %w", err)
 	}
 	defer releaseStore(cleanup)
-	return runCallGraphShow(ctx, moduleArg, f, jsonOut, ctr.QueryCallGraph, stdout)
+	r, _ := asSupersededReader(ctr.QueryFetch)
+	uc := callGraphShowUC{ctr.QueryCallGraph, r, localDependencyCheck{fetch: ctr.QueryFetch, walks: ctr.QueryWalks}}
+	return runCallGraphShow(ctx, moduleArg, f, jsonOut, uc, stdout)
 }
 
 // parseAnalysisSource maps the --source flag onto the domain value, refusing a
@@ -325,7 +328,8 @@ func analyserDisagreement(
 // the identical graph carry different content hashes.
 func runCallGraphHistory(ctx context.Context, coord coordinate.ModuleCoordinate, uc QueryCallGraphUseCase, stdout io.Writer) error {
 	recs, err := uc.CallGraphHistory(ctx, coord, cgapp.PipelineVersion)
-	if err != nil {
+	superseded, serr := supersededFor(ctx, uc, coord)
+	if err = errors.Join(err, serr); err != nil {
 		return fmt.Errorf("reading callgraph history: %w", err)
 	}
 	if len(recs) == 0 {
@@ -358,11 +362,12 @@ func runCallGraphHistory(ctx context.Context, coord coordinate.ModuleCoordinate,
 			marker = "*"
 		}
 		if _, werr := fmt.Fprintf(stdout,
-			"%s %s  %-16s %-17s %d node(s) / %d edge(s)\n    source:   %s\n    toolchain:%s\n%s    analyser: %s\n    from:     %s\n%s%s    graph:    %s\n    record:   %s\n",
+			"%s %s  %-16s %-17s %d node(s) / %d edge(s)\n    source:   %s\n    toolchain:%s\n%s    analyser: %s\n    from:     %s\n%s%s    graph:    %s\n    record:   %s\n%s",
 			marker, ledgerStamp(r.ExtractedAt), r.OverallStatus.String(),
 			r.Completeness.String(), r.NodeCount, r.EdgeCount,
 			r.AnalysisSource.String(), " "+domain.RecordToolchain(r).String(), historyFrame(r), r.Analyser.String(),
-			historyOrigin(r), historyDerivation(r), historyFailure(r), domain.GraphDigest(r), r.ContentHash); werr != nil {
+			historyOrigin(r), historyDerivation(r), historyFailure(r), domain.GraphDigest(r), r.ContentHash,
+			supersededNote(superseded, r.ArtefactIdentity)); werr != nil {
 			return fmt.Errorf("writing output: %w", werr)
 		}
 	}
@@ -1505,7 +1510,17 @@ func missingCallGraphRefusal(ctx context.Context, coord coordinate.ModuleCoordin
 	if err != nil {
 		return err
 	}
+	ids := make([]string, 0, len(recs))
+	for _, r := range recs {
+		ids = append(ids, r.ArtefactIdentity)
+	}
+	if refusal := supersededOnlyRefusal(ctx, uc, coord, ids, "kanonarion callgraph "+coord.String()+targetFlagHint()); refusal != nil {
+		return refusal
+	}
 	remedy := frameReanalysis(coord, domain.AgreedRoot(recs))
+	if dep, ok := localDependencyRemedy(ctx, uc, coord); ok {
+		remedy = dep
+	}
 	switch {
 	case len(otherFrames) > 0:
 		return &exitError{code: ExitNotFound, msg: fmt.Sprintf(

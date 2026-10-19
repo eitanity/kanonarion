@@ -155,3 +155,44 @@ func TestExecute_LocalCoordinateBypassesRecordCache(t *testing.T) {
 		t.Errorf("Role = %q, want %q for a local coordinate", result.Record.Role, domain2.LicenseRoleRootDeclaration)
 	}
 }
+
+// A local replacement or go.work member is at the local version too, but it is
+// a dependency of the project: its licence is an inbound obligation, never the
+// project's own declaration.
+func TestExecute_LocalDependencyIsNotTheRootDeclaration(t *testing.T) {
+	const localPipeline = "local-0.1.0"
+	coord := mustCoord(t, "example.com/replaced", coordinate.LocalVersion)
+	blobStore := &fakeBlobStore{}
+	factStore := &fakeFactStore{}
+	opts := []fetchtest.Option{
+		fetchtest.Coordinate(coord), fetchtest.PipelineVersion(localPipeline),
+		fetchtest.Content("zip"), fetchtest.Status(domain.LocalSource),
+	}
+	zipData := buildModuleZip(t, coord, map[string]string{"LICENSE": "MIT License text"})
+	if err := blobStore.Put(context.Background(), fetchtest.ZipIdentity(t, fetchtest.Record(t, opts...)), bytes.NewReader(zipData)); err != nil {
+		t.Fatalf("Put blob: %v", err)
+	}
+	if err := factStore.PutFetchRecord(context.Background(), fetchtest.Sealed(t, opts...)); err != nil {
+		t.Fatalf("PutFetchRecord: %v", err)
+	}
+	uc := application.NewExtractLicenseUseCase(application.Config{
+		Facts:     factStore,
+		Blobs:     blobStore,
+		Licenses:  &fakeLicenseStore{},
+		Detector:  &fakeDetector{match: ports.LicenseMatch{SPDX: "MIT", Confidence: 0.98}},
+		Clock:     fakeClock{t: time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)},
+		Stopwatch: fakeStopwatch{},
+		Logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+
+	result, err := uc.Execute(context.Background(), application.ExtractRequest{Coordinate: coord, LocalDependency: true})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if result.Record.Role != "" {
+		t.Errorf("Role = %q, want empty: a local dependency's licence is not the root's declaration", result.Record.Role)
+	}
+	if result.Record.PrimarySPDX != "MIT" {
+		t.Errorf("PrimarySPDX = %q, want MIT", result.Record.PrimarySPDX)
+	}
+}

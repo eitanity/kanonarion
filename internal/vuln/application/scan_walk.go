@@ -473,12 +473,14 @@ func toolchainProvided(n walkdomain.GraphNode) bool {
 }
 
 // splitLocalReplaceNodes separates the walk's local-replace nodes, which have
-// no artefact to scan, from the coordinates that are scanned.
+// no artefact to scan, from the coordinates that are scanned. A replacement at
+// its local identity is scanned through the build, as the root is; only one
+// recorded under the published coordinate, before that identity, has nothing.
 func splitLocalReplaceNodes(walk walkdomain.WalkRecord) ([]coordinate.ModuleCoordinate, []walkdomain.GraphNode) {
 	allCoords := make([]coordinate.ModuleCoordinate, 0, len(walk.Graph.Nodes))
 	localReplaceNodes := make([]walkdomain.GraphNode, 0)
 	for _, node := range scannedNodes(walk) {
-		if node.ResolutionSource == walkdomain.ResolutionLocalReplace {
+		if node.ResolutionSource == walkdomain.ResolutionLocalReplace && !node.Coordinate.IsLocal() {
 			localReplaceNodes = append(localReplaceNodes, node)
 			continue
 		}

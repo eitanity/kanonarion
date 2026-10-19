@@ -1205,6 +1205,35 @@ A local replace written as an absolute path is now read from that path under
 `--analyse-local`, where it used to fail and stay unanalysed, so such a walk's
 identity also changes once.
 
+## Walk record: modules read from disk have their own identity — no migration and no bump (2026-10-19)
+
+**No store migration, no schema-version bump, no pipeline bump, no purge.** A
+local-path replacement is now a node at `<path>@local` (resolution source
+`local_replace`, `original_coordinate` the require it replaces) and is read from
+disk on every `--gomod` walk; a `go.work` member other than the walk's root is a
+node at `<path>@local` with the new resolution source `local_workspace_member`.
+Their fetch records are written at `<path>@local` under the `local-0.1.0`
+generation, which a published coordinate never shares.
+
+A project with a local replacement or a workspace member walks to a new
+identity once, because the node's coordinate changed: the first walk after
+upgrading is a cache miss, and later walks of an unchanged tree reuse it. A
+project with neither walks to the same identity as before.
+
+A store used by an earlier build may hold a `local-0.1.0` fetch record under a
+published coordinate, written by `--analyse-local`. It stays in the ledger. The
+composed read of that published coordinate leaves it out, so it no longer
+reads as a divergence, and `verification-coverage` lists it as
+`local generation, superseded by identity`. The licence, interface, call-graph,
+example and native records an earlier build derived from that directory are
+left out of the published coordinate's reads in the same way: they stay in the
+store, `--history` marks them `superseded by identity`, and `native-list
+--all-generations` lists them with that mark. Where they were the only records,
+a read of the coordinate says "the store holds N generation(s) of <coord>, all
+derived from a directory read under this published coordinate and superseded by
+identity" and names the command that measures the published module; that
+command, or the next `extract` of a walk that includes it, does.
+
 ## Call graph store: module `callgraph`, migration 12
 
 Adds `callgraph_edges.kind`: whether an edge is a call, or a REFERENCE to a

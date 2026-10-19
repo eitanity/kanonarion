@@ -88,6 +88,10 @@ type moduleVerification struct {
 	// It is the per-module form of the class split in the totals, so a reader
 	// can name the modules behind a count instead of inferring them.
 	VCSURLBinding string `json:"vcs_url_binding,omitempty"`
+	// SupersededLocal names the rows read from a local directory under this
+	// published coordinate before such code had its own @local identity. They
+	// stay in the ledger and take no part in this answer; nil when there are none.
+	SupersededLocal *supersededLocalGeneration `json:"superseded_local_generation,omitempty"`
 
 	// observation is the row's contribution to the aggregate. It is unexported
 	// and derived here, beside the row, so the per-module report and the totals
@@ -130,7 +134,7 @@ func graphVerificationRows(
 		// A module built from a local source tree has no remote artefact and so
 		// no fetch record. Counting it as an absent measurement would report a
 		// project walk as short of its own main module on every run.
-		case walkdomain.ResolutionLocalMainModule, walkdomain.ResolutionLocalReplace:
+		case walkdomain.ResolutionLocalMainModule, walkdomain.ResolutionLocalReplace, walkdomain.ResolutionLocalWorkspaceMember:
 			row.observation = fetchdomain.CoverageObservation{
 				Bucket:   fetchdomain.BucketLocalSource,
 				Recorded: true,
@@ -176,6 +180,9 @@ func graphVerificationRows(
 				row.Status = rec.VerificationStatus
 				row.Reason = rec.VerificationDetail
 				row.VCSURLBinding = rec.VCSURLBinding
+				if n := rec.SupersededLocalGenerations; n > 0 {
+					row.SupersededLocal = &supersededLocalGeneration{Records: n, Statement: supersededLocalStatement}
+				}
 			}
 		}
 		row.Class = row.observation.Bucket.String()
@@ -185,6 +192,17 @@ func graphVerificationRows(
 		rows = append(rows, row)
 	}
 	return rows
+}
+
+// supersededLocalStatement is how every surface names a local-source row left
+// out of a published coordinate's composed record.
+const supersededLocalStatement = "local generation, superseded by identity"
+
+// supersededLocalGeneration is the local-source rows a published coordinate's
+// read left out: how many, and what they are.
+type supersededLocalGeneration struct {
+	Records   int    `json:"records"`
+	Statement string `json:"statement"`
 }
 
 // stdlibCoverageObservation reads the standard library's custody off the graph

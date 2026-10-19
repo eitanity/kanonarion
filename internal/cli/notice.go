@@ -422,7 +422,7 @@ func partitionNoticeModules(mods []scopeModule) (
 	replaced := make(map[coordinate.ModuleCoordinate]coordinate.ModuleCoordinate)
 	var reviews []licensedomain.ReviewItem
 	for _, m := range mods {
-		if m.localPath != "" {
+		if m.localPath != "" && m.coord.IsZero() {
 			reviews = append(reviews, licensedomain.ReviewItem{
 				Coordinate: m.original,
 				Reason: fmt.Sprintf(
@@ -478,10 +478,11 @@ func resolveNoticeModules(
 		}
 		mods := make([]scopeModule, 0, len(rec.Graph.Nodes))
 		for _, n := range rec.Graph.Nodes {
-			if n.ResolutionSource == walkdomain.ResolutionLocalReplace {
-				// Such a node keeps the original require as its Coordinate:
-				// no fetchable replacement exists, and LocalPath records what
-				// the build actually compiles.
+			if n.ResolutionSource == walkdomain.ResolutionLocalReplace && !n.Coordinate.IsLocal() {
+				// A node recorded before local identity keeps the original require
+				// as its Coordinate: nothing analysed the directory the build
+				// compiles, which LocalPath names. At <path>@local it was analysed
+				// and is attributed below like any node.
 				mods = append(mods, scopeModule{original: n.Coordinate, localPath: n.LocalPath})
 				continue
 			}
@@ -499,7 +500,21 @@ func resolveNoticeModules(
 	// --gomod: the project's code dependencies (consistent with every other
 	// go.mod command).
 	mods, err := goListNoticeModules(ctx, filepath.Dir(gomodPath), []string{"./..."}, true)
-	return mods, "go.mod " + gomodPath, err
+	if err != nil {
+		return nil, "", err
+	}
+	// The module records drop every main module, and inside a go.work that is
+	// each member the build reaches; they are named as the walk names them.
+	members, err := workspaceMembersInScope(ctx, gomodPath, scopeCode, newScopeResolution(scopeCode, false).Tests)
+	if err != nil {
+		return nil, "", err
+	}
+	for _, path := range members {
+		if local, lerr := coordinate.NewLocalCoordinate(path); lerr == nil {
+			mods = append(mods, scopeModule{coord: local})
+		}
+	}
+	return mods, "go.mod " + gomodPath, nil
 }
 
 // goListNoticeModules runs `go list -deps [-test] <patterns>` in dir and returns
@@ -517,7 +532,27 @@ func goListNoticeModules(ctx context.Context, dir string, patterns []string, wit
 	if err != nil {
 		return nil, err
 	}
-	return parseGoListModuleRecords(out)
+	mods, err := parseGoListModuleRecords(out)
+	if err != nil {
+		return nil, err
+	}
+	return withLocalIdentity(mods), nil
+}
+
+// withLocalIdentity names a local-path replacement by the node a project walk
+// records for it, <path>@local, where its analysed records live; the require it
+// replaces stays as the original. A path the coordinate type refuses is left
+// as it was, with no coordinate.
+func withLocalIdentity(mods []scopeModule) []scopeModule {
+	for i, m := range mods {
+		if m.localPath == "" || !m.coord.IsZero() || m.original.IsZero() {
+			continue
+		}
+		if local, err := coordinate.NewLocalCoordinate(m.original.Path()); err == nil {
+			mods[i].coord = local
+		}
+	}
+	return mods
 }
 
 // writeNoticeLicenseFile renders one file's attribution block, headed by what

@@ -249,6 +249,23 @@ func (r *GraphResolver) Resolve(ctx context.Context, target coordinate.ModuleCoo
 // toolchain — code or tool scope) to retain, alongside the main anchor. A nil
 // scopeModules keeps the whole build list (the complete scope).
 func (r *GraphResolver) ResolveProject(ctx context.Context, target coordinate.ModuleCoordinate, goModBytes []byte, projectDir string, depth domain3.StageDepth, scopeModules []string, stdlibFromGoMod, force bool) (domain3.Graph, error) {
+	g, _, err := r.resolveProject(ctx, target, goModBytes, projectDir, depth, scopeModules, stdlibFromGoMod, force)
+	return g, err
+}
+
+// localSources says where on disk the modules a project walk reads from disk
+// live. It travels beside the graph, never in it: the directories are
+// machine-specific and the graph is sealed.
+type localSources struct {
+	// workDir is the go.work directory, empty outside a workspace. A relative
+	// replace path inside a workspace is relative to it, as the go command reads it.
+	workDir string
+	// memberDirs is each workspace member node's module directory.
+	memberDirs map[coordinate.ModuleCoordinate]string
+}
+
+// resolveProject is ResolveProject that also reports the local sources.
+func (r *GraphResolver) resolveProject(ctx context.Context, target coordinate.ModuleCoordinate, goModBytes []byte, projectDir string, depth domain3.StageDepth, scopeModules []string, stdlibFromGoMod, force bool) (domain3.Graph, localSources, error) {
 	r.logger.InfoContext(ctx, "walk.resolve_project.start",
 		slog.String("module.path", target.Path()),
 		slog.String("module.version", target.Version()),
@@ -257,11 +274,12 @@ func (r *GraphResolver) ResolveProject(ctx context.Context, target coordinate.Mo
 	)
 
 	var g domain3.Graph
+	var sources localSources
 	var tinygo walkports.BuildList
 	if r.buildList != nil && projectDir != "" {
 		bl, blErr := r.buildList.Resolve(ctx, projectDir)
 		if interrupt.Cancelled(ctx, blErr) {
-			return domain3.Graph{}, fmt.Errorf("resolving the build list: %w", blErr)
+			return domain3.Graph{}, localSources{}, fmt.Errorf("resolving the build list: %w", blErr)
 		}
 		if blErr != nil {
 			r.logger.WarnContext(ctx, "walk.build_list.unavailable",
@@ -274,17 +292,17 @@ func (r *GraphResolver) ResolveProject(ctx context.Context, target coordinate.Mo
 			var err error
 			g, err = r.resolveProjectFallback(ctx, target, goModBytes, depth, strings.TrimSpace(blErr.Error()))
 			if err != nil {
-				return domain3.Graph{}, err
+				return domain3.Graph{}, localSources{}, err
 			}
 		} else {
-			g = r.resolveFromBuildList(ctx, target, bl, scopeModules)
+			g, sources = r.resolveFromBuildList(ctx, target, bl, scopeModules)
 			tinygo = bl
 		}
 	} else {
 		var err error
 		g, err = r.resolveProjectFallback(ctx, target, goModBytes, depth, "")
 		if err != nil {
-			return domain3.Graph{}, err
+			return domain3.Graph{}, localSources{}, err
 		}
 	}
 
@@ -305,7 +323,7 @@ func (r *GraphResolver) ResolveProject(ctx context.Context, target coordinate.Mo
 	r.injectStdlib(ctx, &g, target, goModBytes, stdlibFromGoMod, force)
 	injectTinyGo(&g, target, tinygo)
 
-	return g, nil
+	return g, sources, nil
 }
 
 // injectTinyGo records a TinyGo build list's split of the standard library: the
@@ -501,7 +519,8 @@ func (r *GraphResolver) resolveProjectFallback(ctx context.Context, target coord
 // FilterGraphToScope afterwards, so fetching it is pure wasted work and log noise.
 // A nil scopeModules (complete-scope walk) fetches the whole build list. Out-of-scope
 // nodes are never fetched, so they never mark the graph Partial.
-func (r *GraphResolver) resolveFromBuildList(ctx context.Context, target coordinate.ModuleCoordinate, bl walkports.BuildList, scopeModules []string) domain3.Graph {
+func (r *GraphResolver) resolveFromBuildList(ctx context.Context, target coordinate.ModuleCoordinate, bl walkports.BuildList, scopeModules []string) (domain3.Graph, localSources) {
+	sources := localSources{workDir: bl.WorkDir}
 	st := &resolveState{
 		selected: map[string]string{target.Path(): target.Version()},
 		nodes:    map[string]domain3.GraphNode{},
@@ -542,11 +561,15 @@ func (r *GraphResolver) resolveFromBuildList(ctx context.Context, target coordin
 	}
 	var fetchTasks []blFetch
 	for _, m := range bl.Modules {
-		if m.Main {
+		if m.Main && m.Path == target.Path() {
 			// The toolchain main module is the project itself; the anchor above
 			// already represents it at the synthetic LocalVersion. Map its path so
 			// edges rooted at the main module normalise to the anchor.
 			nodeByPath[m.Path] = target
+			continue
+		}
+		if m.Main {
+			nodeByPath[m.Path] = addWorkspaceMember(st, &sources, target, m)
 			continue
 		}
 		node, needFetch := r.buildListNodeSkeleton(m, st)
@@ -589,26 +612,7 @@ func (r *GraphResolver) resolveFromBuildList(ctx context.Context, target coordin
 		st.nodes[t.path] = node
 	}
 
-	// Edges: normalise endpoints, drop pseudo-nodes, dedupe.
-	seen := make(map[string]bool, len(bl.Edges))
-	for _, e := range bl.Edges {
-		from := normaliseEndpoint(e.From, nodeByPath)
-		toRaw := parseGraphToken(e.To)
-		if isPseudoNode(from.Path()) || isPseudoNode(toRaw.Path()) {
-			continue
-		}
-		to := toRaw
-		if c, ok := nodeByPath[toRaw.Path()]; ok {
-			to = c
-		}
-		edge := domain3.GraphEdge{From: from, To: to, ConstraintVersion: toRaw.Version()}
-		key := edge.From.String() + " -> " + edge.To.String()
-		if seen[key] {
-			continue
-		}
-		seen[key] = true
-		st.edges = append(st.edges, edge)
-	}
+	appendBuildListEdges(st, bl.Edges, nodeByPath)
 
 	g := domain3.Graph{
 		Target:          target,
@@ -637,7 +641,53 @@ func (r *GraphResolver) resolveFromBuildList(ctx context.Context, target coordin
 		slog.Int("edge_count", len(g.Edges)),
 		slog.Bool("partial", g.Partial),
 	)
-	return g
+	return g, sources
+}
+
+// appendBuildListEdges adds the `go mod graph` edges to st: endpoints normalised
+// to the build list's nodes, pseudo-nodes dropped, duplicates of each other and
+// of the edges st already holds removed.
+func appendBuildListEdges(st *resolveState, edges []walkports.BuildListEdge, nodeByPath map[string]coordinate.ModuleCoordinate) {
+	seen := make(map[string]bool, len(edges)+len(st.edges))
+	for _, e := range st.edges {
+		seen[e.From.String()+" -> "+e.To.String()] = true
+	}
+	for _, e := range edges {
+		from := normaliseEndpoint(e.From, nodeByPath)
+		toRaw := parseGraphToken(e.To)
+		if isPseudoNode(from.Path()) || isPseudoNode(toRaw.Path()) {
+			continue
+		}
+		to := toRaw
+		if c, ok := nodeByPath[toRaw.Path()]; ok {
+			to = c
+		}
+		edge := domain3.GraphEdge{From: from, To: to, ConstraintVersion: toRaw.Version()}
+		key := edge.From.String() + " -> " + edge.To.String()
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		st.edges = append(st.edges, edge)
+	}
+}
+
+// addWorkspaceMember records another go.work member: a main module of this
+// build read from its directory. The target's build reaches it through go.work,
+// not a require, so the edge to it is stated here as the stdlib's is.
+func addWorkspaceMember(st *resolveState, sources *localSources, target coordinate.ModuleCoordinate, m walkports.BuildListModule) coordinate.ModuleCoordinate {
+	coord := localIdentity(coordOrPathOnly(m.Path, ""))
+	st.nodes[m.Path] = domain3.GraphNode{
+		Coordinate:       coord,
+		DirectDependency: true,
+		ResolutionSource: domain3.ResolutionLocalWorkspaceMember,
+	}
+	st.edges = append(st.edges, domain3.GraphEdge{From: target, To: coord})
+	if sources.memberDirs == nil {
+		sources.memberDirs = map[coordinate.ModuleCoordinate]string{}
+	}
+	sources.memberDirs[coord] = m.Dir
+	return coord
 }
 
 // buildListNodeSkeleton turns one (non-main) build-list module into a GraphNode
@@ -669,13 +719,13 @@ func (r *GraphResolver) buildListNodeSkeleton(m walkports.BuildListModule, st *r
 	direct := !m.Indirect
 	orig := coordOrPathOnly(m.Path, m.Version)
 
-	// Filesystem replacement: a directory target with no version. Not fetchable —
-	// recorded as a local-replace node for downstream skip-with-reason.
+	// Filesystem replacement: a directory target with no version. Not fetchable;
+	// the walker reads it from disk under its local identity.
 	if m.Replace != nil && m.Replace.Version == "" {
 		st.hasLocalReplace = true
 		st.selected[orig.Path()] = orig.Version()
 		return domain3.GraphNode{
-			Coordinate:         orig,
+			Coordinate:         localIdentity(orig),
 			DirectDependency:   direct,
 			ResolutionSource:   domain3.ResolutionLocalReplace,
 			OriginalCoordinate: orig,
@@ -708,6 +758,17 @@ func (r *GraphResolver) buildListNodeSkeleton(m walkports.BuildListModule, st *r
 	}, effective.HasVersion()
 }
 
+// localIdentity is the coordinate a module read from disk is recorded under:
+// <path>@local, which no published record can share. A path the coordinate
+// type refuses keeps the coordinate it had.
+func localIdentity(c coordinate.ModuleCoordinate) coordinate.ModuleCoordinate {
+	local, err := coordinate.NewLocalCoordinate(c.Path())
+	if err != nil {
+		return c
+	}
+	return local
+}
+
 // repinEdgesToSelected rewrites each edge's target to the MVS-selected version
 // of its path, leaving edges into replaced modules alone.
 //
@@ -718,9 +779,15 @@ func (r *GraphResolver) buildListNodeSkeleton(m walkports.BuildListModule, st *r
 // to the version the graph already had.
 func repinEdgesToSelected(st *resolveState) {
 	pinnedTargets := make(map[string]bool, len(st.nodes))
+	// A selection that a local replacement satisfies lands on the local node,
+	// since the require it was selected under names no node of its own.
+	localByOriginal := make(map[string]coordinate.ModuleCoordinate)
 	for _, n := range st.nodes {
 		if n.OriginalCoordinate.Path() != "" {
 			pinnedTargets[n.Coordinate.String()] = true
+		}
+		if n.ResolutionSource == domain3.ResolutionLocalReplace && n.Coordinate.IsLocal() {
+			localByOriginal[n.OriginalCoordinate.String()] = n.Coordinate
 		}
 	}
 	for i := range st.edges {
@@ -732,6 +799,9 @@ func repinEdgesToSelected(st *resolveState) {
 			continue
 		}
 		if repinned, err := coordinate.NewModuleCoordinate(st.edges[i].To.Path(), sel); err == nil {
+			if local, ok := localByOriginal[repinned.String()]; ok {
+				repinned = local
+			}
 			st.edges[i].To = repinned
 		}
 	}
@@ -1142,7 +1212,7 @@ func (r *GraphResolver) seedDirectDeps(
 				ConstraintVersion: req.Coordinate.Version(),
 			})
 			if _, exists := st.nodes[key]; !exists {
-				st.selected[key] = out.effective.Version()
+				st.selected[key] = req.Coordinate.Version()
 				st.nodes[key] = domain3.GraphNode{
 					Coordinate:         out.effective,
 					DirectDependency:   true,
@@ -1575,7 +1645,7 @@ func enqueueTransitive(
 				ConstraintVersion: req.Coordinate.Version(),
 			})
 			if _, exists := st.nodes[key]; !exists {
-				st.selected[key] = out.effective.Version()
+				st.selected[key] = req.Coordinate.Version()
 				st.nodes[key] = domain3.GraphNode{
 					Coordinate:         out.effective,
 					DirectDependency:   false,
@@ -1665,10 +1735,11 @@ func enqueueTransitive(
 		// it has not yet expanded, re-enqueue the node's own coordinate so its
 		// requirements are followed — discovery order must not strand an
 		// expand-worthy path. The stored node coordinate is used rather than a
-		// path+version pair, so a replaced node re-enqueues its replacement.
+		// path+version pair, so a replaced node re-enqueues its replacement. A
+		// local replacement has nothing to fetch, so it is never re-enqueued.
 		if expand {
 			prev := st.nodes[key]
-			if !st.expandedKeys[prev.Coordinate.String()] {
+			if prev.ResolutionSource != domain3.ResolutionLocalReplace && !st.expandedKeys[prev.Coordinate.String()] {
 				depthQueue = append(depthQueue, queueItem{
 					coord:   prev.Coordinate,
 					nodeKey: key,
@@ -1867,8 +1938,8 @@ func effectiveReplaces(replacements []domain3.Replacement, targetSource domain3.
 type replaceOutcome struct {
 	// effective is the coordinate to insert in the graph.
 	// For non-local replaces, it is the replacement coordinate.
-	// For local replaces, it is the original require coordinate (no fetchable
-	// version exists; the local path is recorded separately).
+	// For local replaces, it is the local identity <path>@local; the local path
+	// is recorded separately.
 	// For no replace, it is the original require coordinate.
 	effective coordinate.ModuleCoordinate
 	// replaced is true when a non-local replace rewrote the coordinate.
@@ -1887,14 +1958,14 @@ func applyReplace(coord coordinate.ModuleCoordinate, replaceMap map[replaceKey]d
 	// Check version-specific replacement first (higher priority).
 	if r, ok := replaceMap[replaceKey{coord.Path(), coord.Version()}]; ok {
 		if r.IsLocal {
-			return replaceOutcome{effective: coord, localReplace: true, localPath: r.LocalPath}
+			return replaceOutcome{effective: localIdentity(coord), localReplace: true, localPath: r.LocalPath}
 		}
 		return replaceOutcome{effective: r.NewCoordinate, replaced: true}
 	}
 	// Check wildcard replacement (all versions of this path).
 	if r, ok := replaceMap[replaceKey{coord.Path(), ""}]; ok {
 		if r.IsLocal {
-			return replaceOutcome{effective: coord, localReplace: true, localPath: r.LocalPath}
+			return replaceOutcome{effective: localIdentity(coord), localReplace: true, localPath: r.LocalPath}
 		}
 		return replaceOutcome{effective: r.NewCoordinate, replaced: true}
 	}

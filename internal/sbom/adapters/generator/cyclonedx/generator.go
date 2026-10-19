@@ -171,6 +171,7 @@ func (g *Generator) buildBOM(
 			comp.Type = cdx.ComponentTypeApplication
 		}
 		appendTinyGoProperties(&comp, nodeByRef[c.Module])
+		appendLocalSourceProperties(&comp, nodeByRef[c.Module])
 		if !strings.HasPrefix(comp.PackageURL, "pkg:"+purlTypeGolang+"/") {
 			return nil, nil, fmt.Errorf("%w: %q", domain.ErrNonGoComponent, comp.PackageURL)
 		}
@@ -726,6 +727,30 @@ func stdlibProperties(pipelineVersion string, facts *walkdomain.StdlibFacts) *[]
 		})
 	}
 	return &props
+}
+
+// appendLocalSourceProperties states what a dependency read from disk stands
+// for: the published require it replaces, or that it is a go.work member. The
+// purl alone says only <path>@local.
+func appendLocalSourceProperties(comp *cdx.Component, node walkdomain.GraphNode) {
+	var props []cdx.Property
+	switch node.ResolutionSource {
+	case walkdomain.ResolutionLocalReplace:
+		if !node.Coordinate.IsLocal() || node.OriginalCoordinate.IsZero() {
+			return
+		}
+		props = append(props, cdx.Property{Name: "kanonarion:replaces", Value: node.OriginalCoordinate.String()})
+	case walkdomain.ResolutionLocalWorkspaceMember:
+		props = append(props, cdx.Property{Name: "kanonarion:workspace_member", Value: "true"})
+	default:
+		return
+	}
+	var all []cdx.Property
+	if comp.Properties != nil {
+		all = *comp.Properties
+	}
+	all = append(all, props...)
+	comp.Properties = &all
 }
 
 // appendTinyGoProperties states a TinyGo walk's split of the standard library on

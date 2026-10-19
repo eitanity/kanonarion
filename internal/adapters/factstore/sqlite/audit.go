@@ -258,6 +258,11 @@ func (s *AuditingStore) ListFetchRecords(ctx context.Context, coord coordinate.M
 	return s.inner.ListFetchRecords(ctx, coord, pv)
 }
 
+// SupersededLocalArtefacts delegates to the inner store.
+func (s *AuditingStore) SupersededLocalArtefacts(ctx context.Context, coord coordinate.ModuleCoordinate) (map[string]bool, error) {
+	return s.inner.SupersededLocalArtefacts(ctx, coord) //nolint:wrapcheck // the inner store names the coordinate it read
+}
+
 // ComposeFetchRecord delegates to the inner store, carrying the optional
 // ports.FactRecordComposer capability through the audit decorator. A decorator
 // that dropped it would make every extraction stage refuse with
@@ -280,8 +285,9 @@ func (s *AuditingStore) ListAttestations(ctx context.Context, coord coordinate.M
 }
 
 var (
-	_ ports.FactStore          = (*AuditingStore)(nil)
-	_ ports.FactRecordLister   = (*AuditingStore)(nil)
-	_ ports.FactRecordComposer = (*AuditingStore)(nil)
-	_ ports.AttestationStore   = (*AuditingStore)(nil)
+	_ ports.FactStore                = (*AuditingStore)(nil)
+	_ ports.FactRecordLister         = (*AuditingStore)(nil)
+	_ ports.FactRecordComposer       = (*AuditingStore)(nil)
+	_ ports.SupersededArtefactLister = (*AuditingStore)(nil)
+	_ ports.AttestationStore         = (*AuditingStore)(nil)
 )

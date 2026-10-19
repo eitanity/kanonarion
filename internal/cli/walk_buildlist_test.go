@@ -65,7 +65,7 @@ func TestRunWalkProject_BuildListUnavailableIsStatedAndExitsPartial(t *testing.T
 		progress := newWalkProgressReporter(io.Discard, true, activeConfig, logLevel)
 		var out, errb bytes.Buffer
 		_, rerr := runWalkProject(context.Background(), gomodPath, false, allowPartial, 0, "", "", false,
-			scopeComplete, walkdomain.WalkDepthFull, "", false, false, progress, uc,
+			scopeComplete, walkdomain.WalkDepthFull, false, false, progress, uc,
 			unfetchedQueryFetch{}, &out, &errb)
 		return out.String(), errb.String(), rerr
 	}

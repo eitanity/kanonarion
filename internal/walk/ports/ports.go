@@ -113,6 +113,9 @@ type BuildListModule struct {
 	// filesystem replacement has an empty Version and a Path that is a directory
 	// (the LocalReplace case); a module replacement has both Path and Version.
 	Replace *BuildListReplace
+	// Dir is the directory holding the module's source, as the toolchain
+	// reports it. A workspace member is read from here.
+	Dir string
 }
 
 // BuildListReplace is the right-hand side of a replace directive as reported by
@@ -142,6 +145,9 @@ type BuildListEdge struct {
 type BuildList struct {
 	Modules []BuildListModule
 	Edges   []BuildListEdge
+	// WorkDir is the directory of the go.work file in force, empty when the
+	// project resolves outside a workspace.
+	WorkDir string
 	// GoVersion is the effective Go toolchain version that computed this build
 	// list, as reported by `go env GOVERSION` (e.g. "go1.26.4") — the version that
 	// actually compiles the project, not the go.mod `go` directive minimum. It
@@ -188,10 +194,10 @@ type LocalModuleFetchResult struct {
 }
 
 // LocalModuleFetcher creates a FactRecord from a local filesystem path instead
-// of fetching from a module proxy. Used when a go.mod replace directive points
-// to an on-disk source tree and local analysis is enabled. absPath is only
+// of fetching from a module proxy, for a coordinate at the local version: the
+// project root, a local-path replacement or a go.work member. absPath is only
 // read; the record names writtenPath, the replace target as go.mod spells it,
-// or the working tree when writtenPath is empty (the project root).
+// or the working tree when writtenPath is empty.
 type LocalModuleFetcher interface {
 	EnsureFetchedFromPath(ctx context.Context, coord coordinate.ModuleCoordinate, absPath, writtenPath string) (LocalModuleFetchResult, error)
 }

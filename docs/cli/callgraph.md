@@ -1730,6 +1730,11 @@ notice: 7 coordinate(s) hold call graphs only from superseded extraction logic a
   working tree its newest graph recorded. When no graph recorded one, the line
   names the coordinate and reads `no stored record names the working tree, so
   run kanonarion local from inside it`.
+- For a `@local` dependency a project walk read from disk (a local-path
+  replacement or a go.work member), `callgraph-show` names `kanonarion callgraph
+  <path>@local`, or `kanonarion extract <walk-id> --stages callgraph` over the
+  walk that read it: the walk stored its directory, so no working tree is
+  needed.
 
 Under `--json`, the `--transitive` and `implementers` documents carry the same
 list as `not_searched`, sorted by coordinate. The key is absent when nothing was

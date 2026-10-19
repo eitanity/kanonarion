@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
@@ -96,7 +97,6 @@ func newWalkCmd(stdout, stderr io.Writer) *cobra.Command {
   kanonarion walk --gomod ./go.mod --tool
   kanonarion walk --gomod ./go.mod --project
   kanonarion walk --gomod ./go.mod --analyse-root
-  kanonarion walk --gomod ./go.mod --analyse-local
   kanonarion walk --gomod ./go.mod --from-modcache
   kanonarion walk --gomod ./go.mod --target wasip1/wasm`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -142,7 +142,7 @@ func newWalkCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd.Flags().BoolVar(&f.tool, "tool", false, "scope to the tooling supply chain (the go.mod tool directives' closure) instead of the project's own code")
 	cmd.Flags().BoolVar(&f.project, "project", false, "scope to the complete set: the project's code AND tooling (the full Go build list)")
 	cmd.Flags().BoolVar(&f.shallow, "shallow", false, "fetch only the target module; list go.mod require entries as unresolved nodes (positional module walk only)")
-	cmd.Flags().BoolVar(&f.analyseLocal, "analyse-local", false, "ingest local-replace targets from disk so callgraph/iface/license analyse them (requires --gomod)")
+	cmd.Flags().BoolVar(&f.analyseLocal, "analyse-local", false, "no effect: local-path replacements are read from disk by default; kept so existing invocations still run (requires --gomod)")
 	cmd.Flags().BoolVar(&f.analyseRoot, "analyse-root", false, "ingest the project's own working tree so all extraction stages analyse the project's own packages; re-reads the tree fresh on every run (requires a go.mod walk)")
 	registerStdlibFromGoModFlag(cmd, &f.stdlibFromGoMod)
 	registerFromModcacheFlag(cmd, &f.fromModcache)
@@ -241,14 +241,15 @@ func runWalkCmdProject(ctx context.Context, f walkFlags, progress walkports.Prog
 	if f.analyseRoot && scope == scopeTool {
 		return fmt.Errorf("--analyse-root analyses the project's own packages, which a --tool walk does not cover; drop --tool")
 	}
-	// LocalReplaceBase resolves local-path replace targets against the go.mod's
-	// own directory, so it is derived here, on the only path that has one.
-	var localReplaceBase string
+	// The flag is accepted so existing invocations still run, and says so: it
+	// asks for what every go.mod walk now does.
 	if f.analyseLocal {
-		localReplaceBase = filepath.Dir(f.gomodPath)
+		if _, err := fmt.Fprintln(stderr, "note: --analyse-local has no effect: every go.mod walk reads local-path replacements from disk"); err != nil {
+			return fmt.Errorf("writing --analyse-local note: %w", err)
+		}
 	}
 	_, err := runWalkProject(ctx, f.gomodPath, f.force, f.allowPartial, f.workerCount, f.operator,
-		f.policyPath, f.skipVCSVerify, scope, domain.WalkDepthFull, localReplaceBase, f.analyseRoot,
+		f.policyPath, f.skipVCSVerify, scope, domain.WalkDepthFull, f.analyseRoot,
 		f.stdlibFromGoMod, progress, uc, records, stdout, stderr)
 	return err
 }
@@ -274,10 +275,8 @@ func runWalkCmdModule(ctx context.Context, arg string, f walkFlags, progress wal
 	if f.shallow {
 		depth = domain.WalkDepthShallow
 	}
-	// No local source context, so no local-replace base: a positional walk
-	// resolves replace targets from the proxy or not at all.
 	_, err := runWalk(ctx, arg, commonWalkFlags{goproxy: f.goproxy}, f.force, f.allowPartial, f.workerCount,
-		f.operator, f.policyPath, f.skipVCSVerify, domain.WalkScopeCode, depth, "", progress, uc, records,
+		f.operator, f.policyPath, f.skipVCSVerify, domain.WalkScopeCode, depth, progress, uc, records,
 		stdout, stderr)
 	return err
 }
@@ -292,7 +291,7 @@ func runWalkCmdModule(ctx context.Context, arg string, f walkFlags, progress wal
 // scopeTool the tooling supply chain, scopeComplete the whole build list. For
 // code/tool the build-list graph is restricted to the scope's module set,
 // resolved via the shared Go-toolchain resolver.
-func runWalkProject(ctx context.Context, gomodPath string, force, allowPartial bool, workerCount int, operator, policyPath string, skipVCSVerify bool, scope depScope, depth domain.WalkDepth, localReplaceBase string, analyseRoot, stdlibFromGoMod bool, progress walkports.ProgressReporter, uc ExecuteWalkUseCase, records fetchRecordReader, stdout, stderr io.Writer) (application.ExecuteWalkResult, error) {
+func runWalkProject(ctx context.Context, gomodPath string, force, allowPartial bool, workerCount int, operator, policyPath string, skipVCSVerify bool, scope depScope, depth domain.WalkDepth, analyseRoot, stdlibFromGoMod bool, progress walkports.ProgressReporter, uc ExecuteWalkUseCase, records fetchRecordReader, stdout, stderr io.Writer) (application.ExecuteWalkResult, error) {
 	logger := buildLogger(logLevel, stderr)
 
 	modulePath, err := readGoModulePath(gomodPath)
@@ -341,7 +340,6 @@ func runWalkProject(ctx context.Context, gomodPath string, force, allowPartial b
 		Scope:            domain.WalkScope(scope),
 		ScopeModules:     scopeModules,
 		Depth:            depth,
-		LocalReplaceBase: localReplaceBase,
 		Operator:         operator,
 		ProjectMode:      true,
 		MainModuleGoMod:  goModBytes,
@@ -405,6 +403,11 @@ func projectScopeModules(ctx context.Context, gomodPath string, scope depScope, 
 		// retains a replaced node through its OriginalCoordinate, so naming the
 		// replacement here would be naming a path the build list does not hold.
 		scopeModules = coordsToPaths(requiredCoords(mods))
+		members, merr := workspaceMembersInScope(ctx, gomodPath, scope, res.Tests)
+		if merr != nil {
+			return nil, fmt.Errorf("resolving %s scope: %w", scope, merr)
+		}
+		scopeModules = append(scopeModules, members...)
 	}
 	// The test axis this walk was resolved over, stated on the same channel as
 	// the build-vendoring and coverage disclosures and for the same reason: the
@@ -427,6 +430,54 @@ func projectScopeModules(ctx context.Context, gomodPath string, scope depScope, 
 		}
 	}
 	return scopeModules, nil
+}
+
+// goListMainModuleFmt is the module path of a package that a main module
+// provides, and nothing for any other package.
+const goListMainModuleFmt = `{{if and .Module .Module.Main}}{{.Module.Path}}{{end}}`
+
+// workspaceMembersInScope returns the go.work members, other than the project
+// itself, whose packages the scope's build reaches. The scope's module records
+// drop every main module, and inside a workspace that is each member, so they
+// are asked for here; outside a workspace this costs one `go env` and returns none.
+func workspaceMembersInScope(ctx context.Context, gomodPath string, scope depScope, ts testScope) ([]string, error) {
+	dir := filepath.Dir(gomodPath)
+	out, err := runGoList(ctx, dir, []string{"env", "GOWORK"})
+	if err != nil {
+		return nil, err
+	}
+	if gowork := strings.TrimSpace(string(out)); gowork == "" || gowork == "off" {
+		return nil, nil
+	}
+	args, err := scopeGoListArgs(gomodPath, scope, ts)
+	if err != nil || args == nil {
+		return nil, err
+	}
+	for i := range args {
+		if args[i] == "-f" && i+1 < len(args) {
+			args[i+1] = goListMainModuleFmt
+		}
+	}
+	self, err := readGoModulePath(gomodPath)
+	if err != nil {
+		return nil, err
+	}
+	listed, err := runGoList(ctx, dir, args)
+	if err != nil {
+		return nil, err
+	}
+	seen := map[string]bool{self: true}
+	var members []string
+	for line := range strings.SplitSeq(string(listed), "\n") {
+		path := strings.TrimSpace(line)
+		if path == "" || seen[path] {
+			continue
+		}
+		seen[path] = true
+		members = append(members, path)
+	}
+	sort.Strings(members)
+	return members, nil
 }
 
 // reportProjectWalk writes the walk record, or its summary line, with the
@@ -546,7 +597,7 @@ func rootIngestFailure(rec domain.WalkRecord) string {
 // are not the same walk: identity reuse serves an existing record when the
 // resolution is unchanged, and reuse keeps that record's original started_at, so
 // the walk a run produced can be older than another walk of the same target.
-func runWalk(ctx context.Context, arg string, f commonWalkFlags, force, allowPartial bool, workerCount int, operator, policyPath string, skipVCSVerify bool, scope domain.WalkScope, depth domain.WalkDepth, localReplaceBase string, progress walkports.ProgressReporter, uc ExecuteWalkUseCase, records fetchRecordReader, stdout, stderr io.Writer) (application.ExecuteWalkResult, error) {
+func runWalk(ctx context.Context, arg string, f commonWalkFlags, force, allowPartial bool, workerCount int, operator, policyPath string, skipVCSVerify bool, scope domain.WalkScope, depth domain.WalkDepth, progress walkports.ProgressReporter, uc ExecuteWalkUseCase, records fetchRecordReader, stdout, stderr io.Writer) (application.ExecuteWalkResult, error) {
 	logger := buildLogger(logLevel, stderr)
 
 	path, version, err := parseModuleArg(arg)
@@ -580,17 +631,16 @@ func runWalk(ctx context.Context, arg string, f commonWalkFlags, force, allowPar
 	}
 
 	result, err := uc.Execute(ctx, application.WalkRequest{
-		Target:           coord,
-		Force:            force,
-		WorkerCount:      workerCount,
-		SkipVCSVerify:    skipVCSVerify,
-		Policy:           &policy,
-		PolicyHash:       policyHash,
-		Scope:            scope,
-		Depth:            depth,
-		LocalReplaceBase: localReplaceBase,
-		Operator:         operator,
-		Progress:         progress,
+		Target:        coord,
+		Force:         force,
+		WorkerCount:   workerCount,
+		SkipVCSVerify: skipVCSVerify,
+		Policy:        &policy,
+		PolicyHash:    policyHash,
+		Scope:         scope,
+		Depth:         depth,
+		Operator:      operator,
+		Progress:      progress,
 	})
 	if err != nil {
 		return application.ExecuteWalkResult{}, fmt.Errorf("executing walk: %w", err)

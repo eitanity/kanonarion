@@ -84,11 +84,16 @@ const (
 	// the require entry that the replace acted on.
 	ResolutionReplace ResolutionSource = "replace"
 	// ResolutionLocalReplace marks a require redirected to a local filesystem
-	// path. The node's Coordinate is the original require (no fetchable
-	// replacement coordinate exists); LocalPath records the on-disk target so
-	// downstream stages can identify and skip-with-reason instead of failing
-	// silently.
+	// path. The node's Coordinate is <path>@local, so the code read from disk
+	// never shares a key with the published require it replaces, which
+	// OriginalCoordinate names; LocalPath is the path as written. The walk reads
+	// it from disk. Records written before the local identity carry the
+	// original require as Coordinate and were never analysed.
 	ResolutionLocalReplace ResolutionSource = "local_replace"
+	// ResolutionLocalWorkspaceMember marks a go.work member other than the walk
+	// target. The node's Coordinate is <path>@local and the walk reads it from
+	// the member's directory, as it does a local replacement.
+	ResolutionLocalWorkspaceMember ResolutionSource = "local_workspace_member"
 	// ResolutionFetchFailed marks a node that could not be fetched. Its transitive
 	// dependencies are unknown and the graph is partial.
 	ResolutionFetchFailed ResolutionSource = "fetch_failed"
@@ -141,7 +146,7 @@ const (
 // assumed to owe an artefact, so a genuine miss is reported rather than hidden.
 func (s ResolutionSource) HasFetchedArtefact() bool {
 	switch s {
-	case ResolutionLocalMainModule, ResolutionLocalReplace, ResolutionStdlib, ResolutionTinyGo, ResolutionDepthBounded:
+	case ResolutionLocalMainModule, ResolutionLocalReplace, ResolutionLocalWorkspaceMember, ResolutionStdlib, ResolutionTinyGo, ResolutionDepthBounded:
 		return false
 	default:
 		return true
@@ -158,6 +163,8 @@ func (s ResolutionSource) ArtefactAbsenceNoun() string {
 		return "local main module"
 	case ResolutionLocalReplace:
 		return "local replace"
+	case ResolutionLocalWorkspaceMember:
+		return "workspace member"
 	case ResolutionStdlib:
 		return "Go standard library"
 	case ResolutionTinyGo:
@@ -448,8 +455,8 @@ type GraphNode struct {
 	// a replace directive rewrote it. Zero value when ResolutionSource is not
 	// ResolutionReplace or ResolutionLocalReplace.
 	OriginalCoordinate coordinate.ModuleCoordinate
-	// LocalPath is the filesystem target of a local-path replace directive.
-	// Non-empty only when ResolutionSource is ResolutionLocalReplace.
+	// LocalPath is the filesystem target of a local-path replace directive, as
+	// written. Non-empty only when ResolutionSource is ResolutionLocalReplace.
 	LocalPath string
 	// Digests are the raw SHA-256/384/512 hashes of the module zip (or, for the
 	// stdlib node, the source tarball), carried from the fetch fact record or the

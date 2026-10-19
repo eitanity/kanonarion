@@ -58,7 +58,11 @@ type Extractor interface {
 	// one ignores it; the call-graph stage passes it to the child process so a
 	// module published before Go modules can be analysed against the versions this
 	// build selected rather than against none.
-	Extract(ctx context.Context, coord coordinate.ModuleCoordinate, stage string, force bool, walkID string) (StageResult, error)
+	//
+	// localDependency marks a coordinate at the local version that is not the
+	// walk's root — a local replacement or a go.work member — so a stage states
+	// it as a dependency, not as the project's own declaration.
+	Extract(ctx context.Context, coord coordinate.ModuleCoordinate, stage string, force bool, walkID string, localDependency bool) (StageResult, error)
 }
 
 // StageRegistry knows which extraction stages exist and their canonical

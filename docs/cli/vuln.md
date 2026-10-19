@@ -1482,7 +1482,7 @@ field with a machine-readable cause code alongside the human-readable `unscannab
 | `project-no-go-mod` | The project directory supplied for a project-rooted scan contains no `go.mod`, so there is no main module to root the analysis at — an operator-side input fault, not a property of any artefact |
 | `project-dir-unavailable` | The project directory supplied for a project-rooted scan could not be stat'ed (missing or unreadable) — an operator-side input fault; the scan never got far enough to check for a `go.mod` |
 | `project-build-diverged` | The project directory the walk was taken from is still readable but requires different versions of modules the walk resolved, so no analysis of it was attributed to this walk. Advisories were matched by coordinate against the versions the walk pinned; reachability was not established. `unscannable_reason` names the directory and each disagreement as `path walked -> required` |
-| `local-replace` | Node is a local filesystem replacement (a `replace` pointing at a working-tree path), not a fetched version, so there is no fetched source to scan; `unscannable_reason` retains the local path |
+| `local-replace` | Node is a local filesystem replacement recorded at the published coordinate by a walk taken before local replacements were read from disk, so there is no source to scan; `unscannable_reason` retains the local path. A replacement at `<path>@local` is scanned through the project build like the root |
 
 On the **coordinate-keyed path** (`--module`, and a positional walk-id whose walk
 is not a project walk or whose recorded directory is gone) each module is

@@ -21,7 +21,7 @@ type refusingExtractor struct {
 	ran     map[coordinate.ModuleCoordinate][]string
 }
 
-func (r *refusingExtractor) Extract(_ context.Context, coord coordinate.ModuleCoordinate, stage string, _ bool, _ string) (ports.StageResult, error) {
+func (r *refusingExtractor) Extract(_ context.Context, coord coordinate.ModuleCoordinate, stage string, _ bool, _ string, _ bool) (ports.StageResult, error) {
 	r.ran[coord] = append(r.ran[coord], stage)
 	if coord == r.refused {
 		return ports.StageResult{}, fmt.Errorf("license extraction failed: %w", fetchports.ErrBlobTampered)

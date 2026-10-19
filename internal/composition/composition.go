@@ -498,5 +498,6 @@ func newLocalWalkExtract(
 		return nil, fmt.Errorf("wiring extract use case: %w", err)
 	}
 
-	return driver.NewLocalWalkExtractUseCase(executeWalkUC, extractUC.WithAudit(audit), stages.Stages()), nil
+	return driver.NewLocalWalkExtractUseCase(executeWalkUC, extractUC.WithAudit(audit), stages.Stages()).
+		WithWorkspaceProbe(walkbuildlist.New("", logger)), nil
 }

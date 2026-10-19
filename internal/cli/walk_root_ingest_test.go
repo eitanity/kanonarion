@@ -61,7 +61,7 @@ func TestRunWalkProject_RootIngestFailureIsReportedAsDegraded(t *testing.T) {
 		progress := newWalkProgressReporter(io.Discard, true, activeConfig, logLevel)
 		var stderr bytes.Buffer
 		_, rerr := runWalkProject(context.Background(), gomodPath, false, allowPartial, 0, "", "", false,
-			scopeComplete, walkdomain.WalkDepthFull, "", true, false, progress, uc, nil, io.Discard, &stderr)
+			scopeComplete, walkdomain.WalkDepthFull, true, false, progress, uc, nil, io.Discard, &stderr)
 		return stderr.String(), rerr
 	}
 
@@ -119,7 +119,7 @@ func TestRunWalkProject_NoRootIngestFailureIsSilent(t *testing.T) {
 	progress := newWalkProgressReporter(io.Discard, true, activeConfig, logLevel)
 	var stderr bytes.Buffer
 	if _, err := runWalkProject(context.Background(), gomodPath, false, false, 0, "", "", false,
-		scopeComplete, walkdomain.WalkDepthFull, "", true, false, progress, uc, nil, io.Discard, &stderr); err != nil {
+		scopeComplete, walkdomain.WalkDepthFull, true, false, progress, uc, nil, io.Discard, &stderr); err != nil {
 		t.Fatalf("runWalkProject: %v", err)
 	}
 	if strings.Contains(stderr.String(), "--analyse-root did not ingest") {

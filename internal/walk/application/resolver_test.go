@@ -1567,6 +1567,9 @@ replace example.com/dep => ../local/dep
 	if depNode.ResolutionSource != domain3.ResolutionLocalReplace {
 		t.Errorf("ResolutionSource = %q, want local_replace", depNode.ResolutionSource)
 	}
+	if depNode.Coordinate != coord("example.com/dep", coordinate.LocalVersion) {
+		t.Errorf("Coordinate = %s, want example.com/dep@local", depNode.Coordinate)
+	}
 	if depNode.LocalPath != "../local/dep" {
 		t.Errorf("LocalPath = %q, want ../local/dep", depNode.LocalPath)
 	}
@@ -1585,6 +1588,47 @@ replace example.com/dep => ../local/dep
 	}
 	if !g.HasLocalReplace {
 		t.Error("HasLocalReplace should be true")
+	}
+}
+
+// A lower requirement of a locally replaced module, from another module of the
+// build, is satisfied by the replacement the project selects: its edge lands on
+// the local node, not on a published coordinate the graph holds no node for.
+func TestResolveProject_LocalReplaceAbsorbsLowerRequirements(t *testing.T) {
+	blobs := newFakeBlobStore()
+	fetcher := newFakeFetcher()
+	fetcher.add(t, "example.com/mid", "v1.0.0", "module example.com/mid\n\ngo 1.21\n\nrequire example.com/dep v0.9.0\n", blobs)
+
+	mainGoMod := `module example.com/project
+
+go 1.21
+
+require (
+	example.com/dep v1.0.0
+	example.com/mid v1.0.0
+)
+
+replace example.com/dep v1.0.0 => ../local/dep
+`
+	g, err := newResolver(fetcher, blobs).ResolveProject(context.Background(), coord("example.com/project", coordinate.LocalVersion), []byte(mainGoMod), "/proj", domain3.DefaultDepthPolicy().FetchStage(), nil, false, false)
+	if err != nil {
+		t.Fatalf("ResolveProject: %v", err)
+	}
+	local := coord("example.com/dep", coordinate.LocalVersion)
+	if n := findNode(t, g.Nodes, "example.com/dep"); n.ResolutionSource != domain3.ResolutionLocalReplace {
+		t.Errorf("dep node source = %s (%s), want local_replace: nothing is fetched for a local replacement", n.ResolutionSource, n.ErrorDetail)
+	}
+	var found bool
+	for _, e := range g.Edges {
+		if e.From.Path() == "example.com/mid" && e.To.Path() == "example.com/dep" {
+			found = true
+			if e.To != local {
+				t.Errorf("mid -> %s, want mid -> %s", e.To, local)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("expected an example.com/mid -> example.com/dep edge")
 	}
 }
 

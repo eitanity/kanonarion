@@ -61,7 +61,7 @@ The classes partition the graph - every module lands in exactly one.
 | `checksum_db_only` | Authentic with respect to the transparency log, with no VCS anchor. **This is the class a collapse lands in.** |
 | `go_sum_only` | Matched a local `go.sum` with no live checksum-database query - a positive offline signal, weaker than the log itself. |
 | `unverified` | No anchor was established, for any reason. The reasons differ in what to do about them, not in how much assurance they carry. |
-| `local_source` | Built from a local source tree (the main module, a local-path replace). There is no remote artefact to cross-verify, so this is neither assurance nor a gap. |
+| `local_source` | Built from a local source tree (the main module, a local-path replace, a `go.work` member). There is no remote artefact to cross-verify, so this is neither assurance nor a gap. |
 | `unrecorded` | In the graph, with no fetch record found. Absence of a measurement, not a failed one. |
 | `divergent` | Fetch records exist and disagree on a hash they both carry (text class `divergent fetch records`). The row's reason names the hash and the records' content hashes. Recorded, but carrying no assurance, so it is outside `cross_verifiable`. The report still exits `0`. |
 | `unrecognised` | A verification status this mapping has never heard of. It lands here rather than being folded into a class it may not belong to. |
@@ -157,6 +157,24 @@ in words rather than leaving a blank, which would read as "nothing to report".
 A replaced module is keyed on the coordinate the build resolved - the
 replacement, which is what its bytes are - and carries `original_coordinate` so
 it is findable under the name the manifest used.
+
+### Local generation, superseded by identity
+
+A store used by an earlier build may hold a record read from a local directory
+under a published coordinate: a local-path replacement analysed before such code
+was recorded at `<path>@local`. That record describes the directory, not the
+published module, so it is left out of the published module's answer and never
+read as a disagreement with it. The row says it is there:
+
+```
+  local go.sum only                    github.com/google/uuid@v1.6.0
+    recorded status: VerifiedByGoSum — verified against local go.sum (modcache mode); VCS cross-verification skipped
+    local generation, superseded by identity: 1 record(s) read from a local directory under this coordinate, not composed
+```
+
+and the JSON row carries `"superseded_local_generation": {"records": 1,
+"statement": "local generation, superseded by identity"}`. The record stays in
+the store; nothing is deleted.
 
 ## The build the figures describe
 

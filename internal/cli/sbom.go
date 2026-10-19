@@ -644,7 +644,7 @@ func ensureProjectWalkForSBOM(ctx context.Context, ctr *Container, force, stdlib
 	// unfetchable node does not abort the SBOM; the SBOM records what resolved.
 	progress := newWalkProgressReporter(stderr, noProgress, activeConfig, logLevel)
 	_, _ = fmt.Fprintf(progressWriter(stderr, noProgress), "==> sbom: building project walk for %s\n", modulePath)
-	walkResult, werr := runWalkProject(ctx, gomodPath, force, true, 0, "", policyPath, false, scopeCode, walkdomain.WalkDepthFull, "", false, stdlibFromGoMod, progress, ctr.ExecuteWalk, nil, io.Discard, stderr)
+	walkResult, werr := runWalkProject(ctx, gomodPath, force, true, 0, "", policyPath, false, scopeCode, walkdomain.WalkDepthFull, false, stdlibFromGoMod, progress, ctr.ExecuteWalk, nil, io.Discard, stderr)
 	if werr != nil {
 		return "", fmt.Errorf("building project walk: %w", werr)
 	}

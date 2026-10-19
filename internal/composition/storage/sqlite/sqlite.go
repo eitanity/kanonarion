@@ -166,6 +166,12 @@ func open(req storage.Request, inspect bool) (*storage.Storage, error) {
 	examples.ReportSetAside(req.SetAside)
 	extractions.ReportSetAside(req.SetAside)
 	stdlib.ReportSetAside(req.SetAside)
+	// Records derived from a directory read under a published coordinate, before
+	// local code had its own identity, are left out of that coordinate's reads.
+	superseded := facts.SupersededLocalArtefacts
+	licences.WithSupersededArtefacts(superseded)
+	callGraphs.WithSupersededArtefacts(superseded)
+	examples.WithSupersededArtefacts(superseded)
 
 	schema := schemaReporter{db: db, location: DatabasePath(req.StoreRoot)}
 	return &storage.Storage{
@@ -176,7 +182,7 @@ func open(req storage.Request, inspect bool) (*storage.Storage, error) {
 		Walks:             walks,
 		WalkPresence:      walks,
 		Licenses:          licences,
-		Interfaces:        ifacesqlite.New(db),
+		Interfaces:        ifacesqlite.New(db).WithSupersededArtefacts(superseded),
 		CallGraphs:        callGraphs,
 		CallGraphOutcomes: callGraphs,
 		Examples:          examples,
@@ -189,7 +195,7 @@ func open(req storage.Request, inspect bool) (*storage.Storage, error) {
 		FIPS:              fipssqlite.New(db),
 		Stdlib:            stdlib,
 		Staleness:         stalesqlite.New(db),
-		Native:            nativesqlite.New(db),
+		Native:            nativesqlite.New(db).WithSupersededArtefacts(superseded),
 		Signer:            noopsigner.New(),
 		Schema:            schema,
 		Writable: func(ctx context.Context) error {

@@ -56,6 +56,11 @@ type CompositeRecord struct {
 
 	// MeasurementCount is how many records were composed.
 	MeasurementCount int `json:"measurement_count"`
+
+	// SupersededLocalGenerations counts the local-source rows held under this
+	// published coordinate that the read left out (see SupersededLocalGenerations).
+	// It describes the read, not the artefact, so it is outside the canonical form.
+	SupersededLocalGenerations int `json:"superseded_local_generations,omitempty"`
 }
 
 // Compose folds the measurements of one artefact into the record a reader gets.

@@ -36,6 +36,12 @@ type extractRunner interface {
 	Execute(ctx context.Context, req extractapp.ExtractRequest) (extractdomain.ExtractionRun, error)
 }
 
+// workspaceProbe names the go.work directory in force for a directory, or ""
+// outside a workspace. The Go toolchain build-list resolver satisfies it.
+type workspaceProbe interface {
+	Workspace(ctx context.Context, dir string) (string, error)
+}
+
 // LocalWalkExtractUseCase runs a project-rooted walk over a local working tree
 // and its extraction stages, returning the records. It powers the
 // local-walking gRPC client: source never leaves the machine. It is a narrow
@@ -45,6 +51,14 @@ type LocalWalkExtractUseCase struct {
 	walk          walkRunner
 	extract       extractRunner
 	defaultStages []string
+	workspace     workspaceProbe // nil: never resolves through the toolchain for a workspace
+}
+
+// WithWorkspaceProbe wires the probe that tells a project inside a go.work
+// workspace apart, so its members are resolved and analysed.
+func (uc *LocalWalkExtractUseCase) WithWorkspaceProbe(p workspaceProbe) *LocalWalkExtractUseCase {
+	uc.workspace = p
+	return uc
 }
 
 // NewLocalWalkExtractUseCase constructs the driver over an ExecuteWalk use case,
@@ -123,6 +137,17 @@ func (uc *LocalWalkExtractUseCase) Run(ctx context.Context, req LocalWalkExtract
 	var resolutionDir string
 	if req.AnalyseLocalRoot {
 		resolutionDir = projectDir
+	}
+	// Only the toolchain knows a workspace's members, so a project inside one
+	// resolves through it; a project outside one resolves as it always has.
+	if resolutionDir == "" && uc.workspace != nil {
+		workDir, werr := uc.workspace.Workspace(ctx, projectDir)
+		if werr != nil {
+			return LocalWalkExtractResult{}, fmt.Errorf("probing %s for a go.work workspace: %w", dir, werr)
+		}
+		if workDir != "" {
+			resolutionDir = projectDir
+		}
 	}
 	// The driver analyses the whole project, so it walks the complete build list
 	// (build + tooling); ScopeModules is nil (no scope restriction).

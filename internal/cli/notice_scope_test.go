@@ -192,6 +192,30 @@ func TestResolveNoticeModules_WalkBranchAppliesReplacements(t *testing.T) {
 	}
 }
 
+// A local replacement at its local identity was read from disk and is
+// attributed under that identity, carrying the require it replaces.
+func TestResolveNoticeModules_WalkBranchAttributesALocalIdentity(t *testing.T) {
+	local := coordinatetest.MustNew("example.com/local", "local")
+	required := coordinatetest.MustNew("example.com/local", "v1.0.0")
+
+	fqw := testfakes.NewFakeQueryWalks()
+	fqw.AddWalk(walkdomain.WalkRecord{ID: "W1", Graph: walkdomain.Graph{Nodes: []walkdomain.GraphNode{
+		{Coordinate: local, OriginalCoordinate: required, LocalPath: "../local", ResolutionSource: walkdomain.ResolutionLocalReplace},
+	}}})
+
+	mods, _, err := resolveNoticeModules(context.Background(), "W1", "", "", &Container{QueryWalks: fqw})
+	if err != nil {
+		t.Fatalf("resolveNoticeModules: %v", err)
+	}
+	if len(mods) != 1 || mods[0].coord != local || mods[0].original != required || mods[0].localPath != "" {
+		t.Fatalf("mods = %+v, want %s attributed, replacing %s", mods, local, required)
+	}
+	coords, replaced, reviews := partitionNoticeModules(mods)
+	if len(coords) != 1 || coords[0] != local || replaced[local] != required || len(reviews) != 0 {
+		t.Errorf("partition = %v %v %v, want %s attributable with no review", coords, replaced, reviews, local)
+	}
+}
+
 // The emitted document names the requirement a replacement stands in for, so a
 // reader can reconcile it against go.mod — alongside the fork, never instead.
 func TestNoticeWith_DocumentNamesTheReplacedRequirement(t *testing.T) {
