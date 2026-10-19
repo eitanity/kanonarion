@@ -1187,6 +1187,24 @@ A TinyGo walk's identity hash changes once, because a node is added: the first
 again. Nothing is purged; the earlier TinyGo walk stays in the store and still
 verifies.
 
+## Walk record: an analysed project root records no directory — no migration and no bump (2026-10-19)
+
+**No store migration, no schema-version bump, no pipeline bump.** A walk taken
+with `--analyse-root` no longer records the project directory on its root node
+(`local_path`), and the fetch record of a directory read from disk no longer
+names its absolute path: it reads `analysed from the working tree` for the
+project root and `local directory <path as go.mod writes it>` for a local
+replace target. The sealed walk and the `fetch_records` row carry no
+machine-specific path.
+
+An `--analyse-root` walk's identity hash changes once: the first such walk of
+each project after upgrading is a cache miss and is taken again, and from then
+on two checkouts of one tree are one walk. Nothing is purged; an earlier walk
+that carries `local_path` on its root stays in the store and still verifies.
+A local replace written as an absolute path is now read from that path under
+`--analyse-local`, where it used to fail and stay unanalysed, so such a walk's
+identity also changes once.
+
 ## Call graph store: module `callgraph`, migration 12
 
 Adds `callgraph_edges.kind`: whether an edge is a call, or a REFERENCE to a

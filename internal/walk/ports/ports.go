@@ -189,9 +189,11 @@ type LocalModuleFetchResult struct {
 
 // LocalModuleFetcher creates a FactRecord from a local filesystem path instead
 // of fetching from a module proxy. Used when a go.mod replace directive points
-// to an on-disk source tree and local analysis is enabled.
+// to an on-disk source tree and local analysis is enabled. absPath is only
+// read; the record names writtenPath, the replace target as go.mod spells it,
+// or the working tree when writtenPath is empty (the project root).
 type LocalModuleFetcher interface {
-	EnsureFetchedFromPath(ctx context.Context, coord coordinate.ModuleCoordinate, absPath string) (LocalModuleFetchResult, error)
+	EnsureFetchedFromPath(ctx context.Context, coord coordinate.ModuleCoordinate, absPath, writtenPath string) (LocalModuleFetchResult, error)
 }
 
 // PolicyLoadResult is the output of PolicyStore.LoadPolicy.

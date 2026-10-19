@@ -35,7 +35,7 @@ func TestEnsureFetchedFromPath_EverythingSetAsideRereads(t *testing.T) {
 	facts := asideFacts{newFakeFacts()}
 	f := localfs.New(newFakeBlob(), facts, fixedClock{t: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)})
 
-	res, err := f.EnsureFetchedFromPath(context.Background(), coord, dir)
+	res, err := f.EnsureFetchedFromPath(context.Background(), coord, dir, "")
 	if err != nil || res.FromCache {
 		t.Fatalf("EnsureFetchedFromPath = %+v, %v; want the tree re-read", res.FromCache, err)
 	}

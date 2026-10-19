@@ -914,7 +914,8 @@ replacement, or point `--gomod` at the project root whose `go.sum` describes
 this build.
 
 A **filesystem** replacement (`=> ./dir`) records `LocalSource` with the detail
-`no checksum is available for a filesystem source, so none was checked`.
+`local directory ./dir (local source, nothing to verify)`, naming the directory
+as `go.mod` writes it.
 
 See [`audit` › Local `go.sum` verification](audit.md#local-gosum-verification)
 for the full behaviour, which `audit` and `sbom --package` promote to a hard,
@@ -958,7 +959,9 @@ root; the empty value is that distinction, not a gap.
 The directory is **provenance, not identity**. It is machine-local, so it is
 deliberately outside the walk's content hash and outside the serialised record:
 two walks of one project taken from two checkouts are the same walk, and a walk
-whose checkout has since moved still verifies. It is stored in its own column,
+whose checkout has since moved still verifies. This holds with `--analyse-root`
+too: the analysed project and its local replace targets are recorded without the
+directory they were read from. It is stored in its own column,
 which is why recording it needed no pipeline bump and no purge of existing rows.
 
 ## A stored walk this build cannot verify

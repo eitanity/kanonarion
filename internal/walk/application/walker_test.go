@@ -165,6 +165,14 @@ type fakeLocalFetcher struct {
 	mu      sync.Mutex
 	records map[string]domain2.CompositeRecord // key: path@version
 	errors  map[string]error
+	calls   []localFetchCall
+}
+
+// localFetchCall is one EnsureFetchedFromPath call: the directory read and the
+// path the record names.
+type localFetchCall struct {
+	coord                coordinate.ModuleCoordinate
+	absPath, writtenPath string
 }
 
 func newFakeLocalFetcher() *fakeLocalFetcher {
@@ -186,9 +194,10 @@ func (f *fakeLocalFetcher) addError(path, version string, err error) {
 	f.errors[wkey(path, version)] = err
 }
 
-func (f *fakeLocalFetcher) EnsureFetchedFromPath(_ context.Context, c coordinate.ModuleCoordinate, _ string) (walkports.LocalModuleFetchResult, error) {
+func (f *fakeLocalFetcher) EnsureFetchedFromPath(_ context.Context, c coordinate.ModuleCoordinate, absPath, writtenPath string) (walkports.LocalModuleFetchResult, error) {
 	k := wkey(c.Path(), c.Version())
 	f.mu.Lock()
+	f.calls = append(f.calls, localFetchCall{coord: c, absPath: absPath, writtenPath: writtenPath})
 	rec, hasRec := f.records[k]
 	err := f.errors[k]
 	f.mu.Unlock()
@@ -706,6 +715,48 @@ replace example.com/dep => ../local/dep
 	}
 	if outcome.OverallStatus != domain.WalkSucceeded {
 		t.Errorf("overall status = %s, want succeeded", outcome.OverallStatus)
+	}
+}
+
+// The record names a local replace by the path go.mod writes, never by the
+// directory it was read from: that join follows how --gomod was spelled, so
+// "./go.mod" and an absolute go.mod path must record the same detail.
+// An absolute target is read where it is, never joined onto the base.
+func TestWalker_ProjectLocalReplace_RecordsThePathAsWritten(t *testing.T) {
+	cases := []struct{ name, base, target, wantAbs string }{
+		{"relative under .", ".", "../local/dep", "../local/dep"},
+		{"relative under an absolute base", "/some/project", "../local/dep", "/some/local/dep"},
+		{"absolute under .", ".", "/srv/local/dep", "/srv/local/dep"},
+		{"absolute under an absolute base", "/some/project", "/srv/local/dep", "/srv/local/dep"},
+	}
+	for _, tc := range cases {
+		mainGoMod := []byte("module example.com/project\n\ngo 1.21\n\nrequire example.com/dep v1.0.0\n\nreplace example.com/dep => " + tc.target + "\n")
+		base := tc.base
+		t.Run(tc.name, func(t *testing.T) {
+			lf := newFakeLocalFetcher()
+			lf.addRecord(t, "example.com/dep", "v1.0.0")
+			blobs := newFakeBlobStore()
+			w := buildWalkerWithLocal(newFakeFetcher(), newWalkerFetcher(), lf, blobs, 1)
+			if _, err := w.Walk(context.Background(), application2.WalkRequest{
+				Target:           coord("example.com/project", coordinate.LocalVersion),
+				ProjectMode:      true,
+				MainModuleGoMod:  mainGoMod,
+				ProjectDir:       "/work/project",
+				LocalReplaceBase: base,
+			}); err != nil {
+				t.Fatalf("Walk: %v", err)
+			}
+			if len(lf.calls) != 1 {
+				t.Fatalf("local fetcher calls = %d, want 1", len(lf.calls))
+			}
+			got := lf.calls[0]
+			if got.writtenPath != tc.target {
+				t.Errorf("writtenPath = %q, want %q, the replace target as go.mod writes it", got.writtenPath, tc.target)
+			}
+			if got.absPath != tc.wantAbs {
+				t.Errorf("absPath = %q, want %q", got.absPath, tc.wantAbs)
+			}
+		})
 	}
 }
 

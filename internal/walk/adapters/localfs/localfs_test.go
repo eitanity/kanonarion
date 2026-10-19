@@ -138,7 +138,7 @@ func TestEnsureFetchedFromPath_OK(t *testing.T) {
 	clk := fixedClock{t: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)}
 	f := localfs.New(blobs, facts, clk)
 
-	res, err := f.EnsureFetchedFromPath(context.Background(), coord, dir)
+	res, err := f.EnsureFetchedFromPath(context.Background(), coord, dir, "")
 	if err != nil {
 		t.Fatalf("EnsureFetchedFromPath: %v", err)
 	}
@@ -171,8 +171,8 @@ func TestEnsureFetchedFromPath_OK(t *testing.T) {
 	if !strings.HasPrefix(rec.ContentHash, "sha256:") {
 		t.Errorf("ContentHash has unexpected prefix: %q", rec.ContentHash)
 	}
-	if !strings.Contains(rec.VerificationDetail, dir) {
-		t.Errorf("VerificationDetail %q does not contain local path %q", rec.VerificationDetail, dir)
+	if strings.Contains(rec.VerificationDetail, dir) {
+		t.Errorf("VerificationDetail %q carries the absolute directory %q", rec.VerificationDetail, dir)
 	}
 }
 
@@ -186,7 +186,7 @@ func TestEnsureFetchedFromPath_Cache(t *testing.T) {
 	clk := fixedClock{t: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)}
 	f := localfs.New(blobs, facts, clk)
 
-	first, err := f.EnsureFetchedFromPath(context.Background(), coord, dir)
+	first, err := f.EnsureFetchedFromPath(context.Background(), coord, dir, "")
 	if err != nil {
 		t.Fatalf("first call: %v", err)
 	}
@@ -194,7 +194,7 @@ func TestEnsureFetchedFromPath_Cache(t *testing.T) {
 		t.Error("first call: expected FromCache=false")
 	}
 
-	second, err := f.EnsureFetchedFromPath(context.Background(), coord, dir)
+	second, err := f.EnsureFetchedFromPath(context.Background(), coord, dir, "")
 	if err != nil {
 		t.Fatalf("second call: %v", err)
 	}
@@ -212,7 +212,7 @@ func TestEnsureFetchedFromPath_MissingGoMod(t *testing.T) {
 	// Do NOT write go.mod.
 
 	f := localfs.New(newFakeBlob(), newFakeFacts(), fixedClock{t: time.Now()})
-	_, err := f.EnsureFetchedFromPath(context.Background(), coord, dir)
+	_, err := f.EnsureFetchedFromPath(context.Background(), coord, dir, "")
 	if err == nil {
 		t.Fatal("expected error for missing go.mod, got nil")
 	}
@@ -221,7 +221,7 @@ func TestEnsureFetchedFromPath_MissingGoMod(t *testing.T) {
 func TestEnsureFetchedFromPath_NonexistentDir(t *testing.T) {
 	coord := coordinatetest.MustNew("example.com/local", "v1.0.0")
 	f := localfs.New(newFakeBlob(), newFakeFacts(), fixedClock{t: time.Now()})
-	_, err := f.EnsureFetchedFromPath(context.Background(), coord, "/nonexistent/does/not/exist")
+	_, err := f.EnsureFetchedFromPath(context.Background(), coord, "/nonexistent/does/not/exist", "")
 	if err == nil {
 		t.Fatal("expected error for nonexistent dir, got nil")
 	}
@@ -234,11 +234,11 @@ func TestEnsureFetchedFromPath_HashStability(t *testing.T) {
 
 	clk := fixedClock{t: time.Date(2024, 6, 1, 12, 0, 0, 0, time.UTC)}
 
-	res1, err := localfs.New(newFakeBlob(), newFakeFacts(), clk).EnsureFetchedFromPath(context.Background(), coord, dir)
+	res1, err := localfs.New(newFakeBlob(), newFakeFacts(), clk).EnsureFetchedFromPath(context.Background(), coord, dir, "")
 	if err != nil {
 		t.Fatalf("first fetch: %v", err)
 	}
-	res2, err := localfs.New(newFakeBlob(), newFakeFacts(), clk).EnsureFetchedFromPath(context.Background(), coord, dir)
+	res2, err := localfs.New(newFakeBlob(), newFakeFacts(), clk).EnsureFetchedFromPath(context.Background(), coord, dir, "")
 	if err != nil {
 		t.Fatalf("second fetch: %v", err)
 	}
@@ -263,7 +263,7 @@ func TestEnsureFetchedFromPath_LocalVersionIsNeverServedFromCache(t *testing.T) 
 	facts := newFakeFacts()
 	f := localfs.New(blobs, facts, fixedClock{t: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)})
 
-	first, err := f.EnsureFetchedFromPath(context.Background(), coord, dir)
+	first, err := f.EnsureFetchedFromPath(context.Background(), coord, dir, "")
 	if err != nil {
 		t.Fatalf("first EnsureFetchedFromPath: %v", err)
 	}
@@ -273,7 +273,7 @@ func TestEnsureFetchedFromPath_LocalVersionIsNeverServedFromCache(t *testing.T) 
 		t.Fatalf("writing extra.go: %v", werr)
 	}
 
-	second, err := f.EnsureFetchedFromPath(context.Background(), coord, dir)
+	second, err := f.EnsureFetchedFromPath(context.Background(), coord, dir, "")
 	if err != nil {
 		t.Fatalf("second EnsureFetchedFromPath: %v", err)
 	}
@@ -297,7 +297,7 @@ func TestEnsureFetchedFromPath_LocalVersionZipUsesLocalPrefix(t *testing.T) {
 	facts := newFakeFacts()
 	f := localfs.New(blobs, facts, fixedClock{t: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)})
 
-	res, err := f.EnsureFetchedFromPath(context.Background(), coord, dir)
+	res, err := f.EnsureFetchedFromPath(context.Background(), coord, dir, "")
 	if err != nil {
 		t.Fatalf("EnsureFetchedFromPath: %v", err)
 	}
@@ -326,26 +326,40 @@ func TestEnsureFetchedFromPath_LocalVersionZipUsesLocalPrefix(t *testing.T) {
 }
 
 // TestEnsureFetchedFromPath_StatesThatNoChecksumWasAvailable: a filesystem
-// source has no go.sum entry by construction — the toolchain writes a checksum
-// for a module it downloads, never for one it reads off disk. The record says
-// so, so a local-path replacement reads as an unavailability rather than as a
-// check that quietly passed.
+// source has no go.sum entry by construction, so the record says nothing was
+// verified. It names the source without the absolute directory it was read
+// from: a replace target as go.mod writes it, the project root as the working
+// tree, so two checkouts of one tree record the same detail.
 func TestEnsureFetchedFromPath_StatesThatNoChecksumWasAvailable(t *testing.T) {
-	dir := t.TempDir()
-	coord := coordinatetest.MustNew("example.com/local", "v1.0.0")
-	writeLocalModule(t, dir, coord.Path(), coord.Version())
-	f := localfs.New(newFakeBlob(), newFakeFacts(), fixedClock{t: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)})
+	cases := []struct {
+		name, version, written, want string
+	}{
+		{"local replace", "v1.0.0", "../local", "local directory ../local (local source, nothing to verify)"},
+		{"absolute local replace", "v1.0.0", "/srv/src/local", "local directory /srv/src/local (local source, nothing to verify)"},
+		{"project root", coordinate.LocalVersion, "", "analysed from the working tree (local source, nothing to verify)"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			coord := coordinatetest.MustNew("example.com/local", tc.version)
+			writeLocalModule(t, dir, coord.Path(), coord.Version())
+			f := localfs.New(newFakeBlob(), newFakeFacts(), fixedClock{t: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)})
 
-	res, err := f.EnsureFetchedFromPath(context.Background(), coord, dir)
-	if err != nil {
-		t.Fatalf("EnsureFetchedFromPath: %v", err)
-	}
-	rec := res.Record
-	if rec.VerificationStatus != string(fetchdomain.LocalSource) {
-		t.Errorf("VerificationStatus = %q, want LocalSource", rec.VerificationStatus)
-	}
-	if !strings.Contains(rec.VerificationDetail, "no checksum is available") {
-		t.Errorf("VerificationDetail %q does not state that no checksum was available", rec.VerificationDetail)
+			res, err := f.EnsureFetchedFromPath(context.Background(), coord, dir, tc.written)
+			if err != nil {
+				t.Fatalf("EnsureFetchedFromPath: %v", err)
+			}
+			rec := res.Record
+			if rec.VerificationStatus != string(fetchdomain.LocalSource) {
+				t.Errorf("VerificationStatus = %q, want LocalSource", rec.VerificationStatus)
+			}
+			if rec.VerificationDetail != tc.want {
+				t.Errorf("VerificationDetail = %q, want %q", rec.VerificationDetail, tc.want)
+			}
+			if strings.Contains(rec.VerificationDetail, dir) {
+				t.Errorf("VerificationDetail %q carries the absolute directory %q", rec.VerificationDetail, dir)
+			}
+		})
 	}
 }
 
@@ -376,7 +390,7 @@ func TestEnsureFetchedFromPath_LocalVersionAtMajorSuffixPath(t *testing.T) {
 			facts := newFakeFacts()
 			f := localfs.New(blobs, facts, fixedClock{t: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)})
 
-			res, err := f.EnsureFetchedFromPath(context.Background(), coord, dir)
+			res, err := f.EnsureFetchedFromPath(context.Background(), coord, dir, "")
 			if err != nil {
 				t.Fatalf("EnsureFetchedFromPath: %v", err)
 			}
@@ -431,7 +445,7 @@ func TestEnsureFetchedFromPath_LocalVersionAtUnsuffixedPathIsUnchanged(t *testin
 	facts := newFakeFacts()
 	f := localfs.New(blobs, facts, fixedClock{t: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)})
 
-	res, err := f.EnsureFetchedFromPath(context.Background(), coord, dir)
+	res, err := f.EnsureFetchedFromPath(context.Background(), coord, dir, "")
 	if err != nil {
 		t.Fatalf("EnsureFetchedFromPath: %v", err)
 	}

@@ -784,8 +784,8 @@ module `audit`:
 A replaced module is looked up under the replace target and reported under
 both spellings — the verification detail reads `verified against local go.sum
 under <fork> (required as <upstream>)`. A module replaced by a filesystem path
-has no checksum and records `no checksum is available for a filesystem source,
-so none was checked`.
+has no checksum and records `local directory <path as go.mod writes it> (local
+source, nothing to verify)`.
 
 Because the check reads only the local `go.sum`, it still fires when
 `sum.golang.org` is unreachable - a working offline integrity signal. This is

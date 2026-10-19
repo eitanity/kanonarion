@@ -466,8 +466,13 @@ func (w *Walker) classifyGraphNodes(req WalkRequest, graph domain2.Graph, record
 // records its result, marking the node locally analysed when it succeeds.
 func (w *Walker) fetchLocalReplaces(ctx context.Context, log *slog.Logger, req WalkRequest, toFetchLocal []domain2.GraphNode, outcome *domain2.WalkOutcome) {
 	for _, node := range toFetchLocal {
-		absPath := filepath.Join(req.LocalReplaceBase, node.LocalPath)
-		fr, ferr := w.localFetcher.EnsureFetchedFromPath(ctx, node.Coordinate, absPath)
+		// An absolute replace target is used as written; joining it onto the
+		// base turned "/abs/c" into "base/abs/c" and the module went unanalysed.
+		absPath := node.LocalPath
+		if !filepath.IsAbs(absPath) {
+			absPath = filepath.Join(req.LocalReplaceBase, absPath)
+		}
+		fr, ferr := w.localFetcher.EnsureFetchedFromPath(ctx, node.Coordinate, absPath, node.LocalPath)
 		if ferr != nil {
 			logLocalFetchFailure(ctx, log, node.Coordinate, absPath, ferr)
 			outcome.PerNodeResults[node.Coordinate] = domain2.NodeResult{
@@ -601,7 +606,7 @@ func (w *Walker) ingestProjectRoot(
 		return false
 	}
 
-	fr, err := w.localFetcher.EnsureFetchedFromPath(ctx, req.Target, req.ProjectDir)
+	fr, err := w.localFetcher.EnsureFetchedFromPath(ctx, req.Target, req.ProjectDir, "")
 	if interrupt.Cancelled(ctx, err) {
 		interrupt.Note(interrupt.ModuleFetch)
 		log.DebugContext(ctx, "walker.local_root_ingest.cancelled",
@@ -621,8 +626,9 @@ func (w *Walker) ingestProjectRoot(
 	}
 	for i := range outcome.Graph.Nodes {
 		if outcome.Graph.Nodes[i].Coordinate == req.Target {
+			// No LocalPath: the directory is provenance, and recording it would
+			// give two checkouts of one tree two walk identities.
 			outcome.Graph.Nodes[i].ResolutionSource = domain2.ResolutionLocalAnalysed
-			outcome.Graph.Nodes[i].LocalPath = req.ProjectDir
 			break
 		}
 	}

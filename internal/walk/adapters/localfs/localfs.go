@@ -56,7 +56,7 @@ func New(blobs fetchports.BlobStore, facts fetchports.FactStore, clock fetchport
 func (f *Fetcher) EnsureFetchedFromPath(
 	ctx context.Context,
 	coord coordinate.ModuleCoordinate,
-	absPath string,
+	absPath, writtenPath string,
 ) (walkports.LocalModuleFetchResult, error) {
 	if !coord.IsLocal() {
 		existing, ok, err := fetchports.AbsentIfNothingServable(f.facts.GetFetchRecord(ctx, coord, PipelineVersion))
@@ -103,18 +103,15 @@ func (f *Fetcher) EnsureFetchedFromPath(
 		ModuleHash:         zipHash,
 		GoModHash:          goModHash,
 		VerificationStatus: fetchdomain.LocalSource,
-		// A directory has no go.sum entry by construction — the toolchain
-		// writes a checksum for a module it downloads, never for one it reads
-		// off disk — so the absence is stated rather than left to look like a
-		// check that passed. Nothing verified this tree; that is the fact.
-		VerificationDetail: "local filesystem path: " + absPath +
-			"; no checksum is available for a filesystem source, so none was checked",
-		FetchedAt:       f.clock.Now().UTC(),
-		PipelineVersion: PipelineVersion,
-		ContentLocation: zipIdentity.String(),
-		GoModLocation:   goModIdentity.String(),
-		AcquisitionMode: fetchdomain.AcquisitionLocal,
-		MeasurementKind: fetchdomain.MeasurementAcquired,
+		// A directory has no go.sum entry by construction, so the absence is
+		// stated rather than left to look like a check that passed.
+		VerificationDetail: localSourceDetail(writtenPath),
+		FetchedAt:          f.clock.Now().UTC(),
+		PipelineVersion:    PipelineVersion,
+		ContentLocation:    zipIdentity.String(),
+		GoModLocation:      goModIdentity.String(),
+		AcquisitionMode:    fetchdomain.AcquisitionLocal,
+		MeasurementKind:    fetchdomain.MeasurementAcquired,
 	}
 	sealed, err := fetchdomain.Seal(m)
 	if err != nil {
@@ -128,6 +125,16 @@ func (f *Fetcher) EnsureFetchedFromPath(
 		return walkports.LocalModuleFetchResult{}, fmt.Errorf("composing local measurement of %s: %w", coord, err)
 	}
 	return walkports.LocalModuleFetchResult{Record: composed, FromCache: false}, nil
+}
+
+// localSourceDetail names the source without the absolute path it was read
+// from: that path is machine-specific and would differ between two checkouts of
+// one tree.
+func localSourceDetail(writtenPath string) string {
+	if writtenPath == "" {
+		return "analysed from the working tree (local source, nothing to verify)"
+	}
+	return "local directory " + writtenPath + " (local source, nothing to verify)"
 }
 
 // localModuleZip zips the tree at absPath as the module zip of coord.
