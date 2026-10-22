@@ -1180,6 +1180,10 @@ func applyAuditStaleness(ctx context.Context, res *auditModuleResult, coord coor
 			if !errors.Is(lerr, errStalenessBatchReported) {
 				_, _ = fmt.Fprintf(stderr, "staleness %s: %v\n", coord.Path(), lerr)
 			}
+			if errors.Is(lerr, staleports.ErrPrivateModule) {
+				res.markStalenessUnmeasured(stalenessPrivateModule)
+				return
+			}
 			res.markStalenessUnmeasured(stalenessLookupFailed)
 			return
 		}

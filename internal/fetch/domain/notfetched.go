@@ -2,9 +2,31 @@ package domain
 
 import (
 	"fmt"
+	"sync/atomic"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
 )
+
+// privateRule names the module paths GOPRIVATE/GONOPROXY makes private. The
+// domain cannot read the environment, so the entry points install the rule.
+var privateRule atomic.Pointer[func(path string) bool]
+
+// SetPrivateModuleRule installs the rule NotFetchedRemedy uses to name the
+// route a private module takes; nil removes it.
+func SetPrivateModuleRule(isPrivate func(path string) bool) {
+	if isPrivate == nil {
+		privateRule.Store(nil)
+		return
+	}
+	privateRule.Store(&isPrivate)
+}
+
+// PrivateModuleRemedy is the fetch that works for a private module: one run
+// from the project that requires it, so its go.sum can verify the bytes.
+func PrivateModuleRemedy(coord coordinate.ModuleCoordinate) string {
+	return fmt.Sprintf("run 'kanonarion fetch %s --gomod <path to the project's go.mod>' from the project that requires it "+
+		"(a private module is verified against its go.sum)", coord)
+}
 
 // NotFetchedRemedy names the command that puts coord's artefact in the store,
 // for a diagnostic that has just found no fetch record for it.
@@ -24,6 +46,9 @@ func NotFetchedRemedy(coord coordinate.ModuleCoordinate) string {
 		return "the standard library arrives with the toolchain rather than through the module proxy, " +
 			"so there is nothing to fetch; run 'kanonarion walk --gomod ./go.mod' from the project's tree " +
 			"to record its chain of custody"
+	}
+	if rule := privateRule.Load(); rule != nil && (*rule)(coord.Path()) {
+		return PrivateModuleRemedy(coord)
 	}
 	return fmt.Sprintf("run 'kanonarion fetch %s' first", coord)
 }

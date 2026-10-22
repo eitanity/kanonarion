@@ -29,6 +29,11 @@ var ErrPathAbsent = errors.New("module path not published")
 // come back from the transport or the decoder.
 var ErrLookupFailed = errors.New("module proxy lookup failed")
 
+// ErrPrivateModule reports that a private module's latest was not resolved.
+// Its path is never named to a proxy, and the go command, asked as the user,
+// gave no answer; the row is unmeasured, never current.
+var ErrPrivateModule = errors.New("private module: the go command did not resolve its latest version")
+
 // LatestInfo is the proxy's @latest answer for one path.
 type LatestInfo struct {
 	Version string

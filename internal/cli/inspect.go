@@ -266,6 +266,9 @@ func resolveCoordForInspect(ctx context.Context, arg, _, goproxy string, stderr 
 	if err != nil {
 		return coordinate.ModuleCoordinate{}, fmt.Errorf("invalid argument %q: %w", arg, err)
 	}
+	if perr := refusePrivateCoordinate(path, true); perr != nil {
+		return coordinate.ModuleCoordinate{}, perr
+	}
 	if version == "latest" {
 		proxy, proxyErr := proxyadapter.New(goproxy, false)
 		if proxyErr != nil {

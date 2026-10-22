@@ -792,6 +792,14 @@ Because the check reads only the local `go.sum`, it still fires when
 distinct from `--from-modcache` below, where `go.sum` is the *sole* anchor and an
 absent entry *is* a hard failure.
 
+A private module - one matching `GONOPROXY`, or `GOPRIVATE` when `GONOPROXY`
+is not set - is read from the module cache and checked against this `go.sum`
+alone, so its row reads `VerifiedByGoSum`, and a module missing from `go.sum`
+stops the audit. Nothing about it is sent to the proxy, and its staleness column
+reads `unmeasured (private module)` when the go command cannot resolve its latest
+version. See [`fetch`: private modules](fetch.md#private-modules-goprivate-gonoproxy)
+and [`latest`: private modules](latest.md#private-modules).
+
 ## Sourcing from an existing module cache (`--from-modcache`)
 
 In a build pipeline the modules are already on disk: `go build` populates

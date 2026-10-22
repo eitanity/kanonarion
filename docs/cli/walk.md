@@ -925,6 +925,15 @@ tamper-evidence and records a fetch failure with the mismatch detail. A module
 The network check covers the same two hashes: a module whose zip or `go.mod`
 disagrees with the checksum database records `UnverifiedHashMismatch`.
 
+A module that matches `GONOPROXY`, or `GOPRIVATE` when `GONOPROXY` is not
+set, is never named to the proxy. A project walk reads it from the module
+cache, where `go mod download` puts it with your own credentials when it is not
+there yet, and checks it against this `go.sum`: it records `VerifiedByGoSum`,
+and a module missing from `go.sum` stops the walk. No `git` process is started
+for it. `walk <module>@<version>` on a private module is refused, exit `20`,
+because it has no `go.sum` to check against. See
+[`fetch`: private modules](fetch.md#private-modules-goprivate-gonoproxy).
+
 ### Replaced modules
 
 `go.sum` records a replaced module's checksum under the **replace target**. The

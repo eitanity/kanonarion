@@ -607,6 +607,9 @@ func runWalk(ctx context.Context, arg string, f commonWalkFlags, force, allowPar
 	if version == "" {
 		return application.ExecuteWalkResult{}, moduleVersionRequired("walk", path)
 	}
+	if perr := refusePrivateCoordinate(path, true); perr != nil {
+		return application.ExecuteWalkResult{}, perr
+	}
 
 	var coord coordinate.ModuleCoordinate
 	if version == "latest" {

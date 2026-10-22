@@ -360,13 +360,19 @@ func establishedAtOfSource(byHash map[string]FactRecord, kind ValidationLegKind,
 	return ""
 }
 
+// establishedNothing reports a leg that was attempted or withheld without
+// establishing anything.
+func establishedNothing(l ValidationLeg) bool {
+	return l.Provenance == LegUnavailable || l.Provenance == LegPrivateModule
+}
+
 // legIsBetter reports whether candidate should replace current as the composed
 // evidence for a leg kind.
 func legIsBetter(candidate, current ValidationLeg) bool {
 	// A leg that could not run established nothing, so however recent it is it
 	// never displaces one that did — otherwise a run on a host without git, or one
 	// whose remote timed out, would erase the evidence the store already holds.
-	if ca, cu := candidate.Provenance == LegUnavailable, current.Provenance == LegUnavailable; ca != cu {
+	if ca, cu := establishedNothing(candidate), establishedNothing(current); ca != cu {
 		return cu
 	}
 	if candidate.EstablishedAt != current.EstablishedAt {

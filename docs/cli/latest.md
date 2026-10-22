@@ -195,6 +195,26 @@ there while reporting every module as current. Offline the ledger answers, as
 below. The call warms `$GOMODCACHE`'s download cache; it writes nothing to
 `go.mod`, `go.sum` or the store.
 
+### Private modules
+
+A module that matches `GONOPROXY`, or `GOPRIVATE` when `GONOPROXY` is not set,
+is never named to a proxy, and neither is any `/vN` path guessed from it. Its
+latest version comes from `go list -m -json <module>@latest`, which the go
+command answers from the module's origin with your own credentials. The
+newer-major probe is not run for it, so a resolved row says `newer major: not
+probed`. Nothing about a private module is written to the staleness ledger, or
+served from it.
+
+When the go command cannot resolve it, the row is unmeasured, never `current`:
+
+```
+corp.example.com/a@v1.0.0                                unmeasured (private module)
+```
+
+`is_latest` is `null` and `staleness_unmeasured` is `private_module`, and the go
+command's error is printed on stderr. `audit`'s staleness column and `fetch`'s
+staleness note say the same.
+
 ### The staleness ledger
 
 Every successful `@latest` resolution - including the major probe, and including
@@ -424,6 +444,7 @@ thing. `staleness_unmeasured` names why:
 | `current` / `latest: ...` | `true` / `false` | absent |
 | `(error resolving latest)` | `null` | `lookup_failed` |
 | no staleness clause (bare path, no pin) | `null` | `not_asked` |
+| `unmeasured (private module)` | `null` | `private_module` - see [Private modules](#private-modules) |
 
 The failing module is also named on **stderr**, one line per module; the sweep
 continues over the rest. A reader filtering for upgrade work selects

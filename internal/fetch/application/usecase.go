@@ -79,6 +79,11 @@ type FetchModuleUseCase struct {
 	// stronger stored record. Default false. Set via
 	// WithAllowVerificationDowngrade — deliberately not --force.
 	allowVerificationDowngrade bool
+
+	// private names the modules read through the module-cache route against
+	// privateAnchor, the project go.sum. Set via WithPrivateModules.
+	private       func(path string) (string, bool)
+	privateAnchor ports.SumDBClient
 }
 
 // WithProjectGoSum layers a walk-root go.sum verifier onto the normal network
@@ -203,8 +208,8 @@ func blobIdentities(dl ports.ModuleDownload) (zip, goMod ports.BlobIdentity, err
 // Verification failures (UnverifiedX statuses) do not fail Execute; they are
 // recorded in the FactRecord. Proxy, VCS, and storage errors do fail Execute.
 func (uc *FetchModuleUseCase) Execute(ctx context.Context, req FetchRequest) (_ FetchResult, retErr error) {
-	if uc.modcache {
-		return uc.executeModcache(ctx, req)
+	if res, handled, err := uc.executeOffProxy(ctx, req); handled {
+		return res, err
 	}
 	if req.GoModOnly {
 		return uc.executeGoModOnly(ctx, req)

@@ -15,6 +15,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/adapters/childproc"
 	"github.com/eitanity/kanonarion/internal/adapters/interrupt"
 	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
+	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 )
 
 func newRootCmd(stdout, stderr io.Writer) *cobra.Command {
@@ -248,6 +249,7 @@ func Run(args []string, stdout, stderr io.Writer) error {
 	// them.
 	sqlitestore.ResetRetries()
 	interrupt.Reset()
+	fetchdomain.SetPrivateModuleRule(privateModulePath)
 	defer func() {
 		if notice := sqlitestore.ContentionNotice(sqlitestore.Retries()); notice != "" {
 			_, _ = fmt.Fprint(stderr, notice)

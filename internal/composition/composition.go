@@ -387,6 +387,11 @@ func newDriverFrom(st *storage.Storage, storeRoot string, cfg configdomain.Confi
 		// CLI so the two paths append identically: a library consumer's assurance
 		// log is not a quieter one.
 		WithAudit(st.Audit)
+	// The driver holds no project go.sum, so a private module is refused rather
+	// than named to the proxy.
+	if goenv.HasNoProxyPatterns() {
+		fetchUC = fetchUC.WithPrivateModules(goenv.NoProxy, nil)
+	}
 
 	localWalkExtract, err := newLocalWalkExtract(st, fetchUC, clk, stopwatch, logger, cgSubprocessExec, storeRoot)
 	if err != nil {

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/adapters/goenv"
 	"github.com/eitanity/kanonarion/internal/adapters/interrupt"
 	proxyadapter "github.com/eitanity/kanonarion/internal/adapters/proxy/direct"
 	"github.com/eitanity/kanonarion/internal/composition/storage"
@@ -28,7 +29,15 @@ import (
 // be tested for the one thing that distinguishes them: whether the ledger is
 // read at all.
 func newStalenessResolver(latest staleports.LatestResolver, ledger staleports.Ledger, ttl time.Duration, fresh bool) *staleapp.Resolver {
-	return staleapp.NewResolver(latest, ledger, cliClock, ttl, fresh)
+	return staleapp.NewResolver(latest, ledger, cliClock, ttl, fresh).
+		WithPrivate(privateModulePath, stalegolist.NewPrivate("", ""))
+}
+
+// privateModulePath reports a module path GONOPROXY (else GOPRIVATE) names:
+// no proxy is ever asked about it.
+func privateModulePath(path string) bool {
+	_, ok := goenv.NoProxy(path)
+	return ok
 }
 
 // newGomodStalenessResolver is the resolver a go.mod-scoped command gets: the
@@ -45,6 +54,7 @@ func newStalenessResolver(latest staleports.LatestResolver, ledger staleports.Le
 func newGomodStalenessResolver(latest staleports.LatestResolver, ledger staleports.Ledger,
 	ttl time.Duration, fresh bool, gomodPath, goproxy string, coords []staleports.PinnedModule) *staleapp.Resolver {
 	return newStalenessResolver(latest, ledger, ttl, fresh).
+		WithPrivate(privateModulePath, stalegolist.NewPrivate(filepath.Dir(gomodPath), goproxy)).
 		WithBatch(stalegolist.New(filepath.Dir(gomodPath), goproxy), coords,
 			activeConfig.Staleness.ProbeConcurrency)
 }
@@ -130,6 +140,10 @@ const (
 	// compiles, and the requirement's own latest is not an answer about this
 	// build, because no published version is adopted while the directive stands.
 	stalenessLocalReplace = "local_replace"
+	// stalenessPrivateModule: the module matches GOPRIVATE/GONOPROXY, so no
+	// proxy is asked about it, and the go command, asked as the user, did not
+	// resolve its latest version.
+	stalenessPrivateModule = "private_module"
 	// stalenessNotAsked: the question was never put. A `fetch <module>@latest`
 	// resolves the newest version and installs it, so there is no pin to compare
 	// against; `latest <module>` with no pin is the same shape. "Current" is not
@@ -155,6 +169,8 @@ func stalenessUnmeasuredLabel(reason string) string {
 		return "unmeasured (not asked)"
 	case stalenessLocalReplace:
 		return "unmeasured (local replace)"
+	case stalenessPrivateModule:
+		return "unmeasured (private module)"
 	}
 	return "unmeasured (" + reason + ")"
 }
@@ -194,6 +210,11 @@ func newOfflineStalenessLookup(ledger staleports.Ledger, ttl time.Duration) *off
 
 // Resolve serves path's ledger row when it is inside the TTL.
 func (o *offlineStalenessLookup) Resolve(ctx context.Context, path, pinnedVersion string) (staleapp.Answer, error) {
+	// A private path is never written to the ledger, so a row held for one was
+	// not measured by this build's rule and is not served.
+	if privateModulePath(path) {
+		return staleapp.Answer{}, fmt.Errorf("%w: offline, and a private module's latest is never served from the ledger", staleports.ErrPrivateModule)
+	}
 	if o.ledger == nil {
 		return staleapp.Answer{}, errStalenessOffline
 	}

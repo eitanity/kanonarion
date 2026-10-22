@@ -16,6 +16,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/adapters/meminfo"
 	fetchproxy "github.com/eitanity/kanonarion/internal/adapters/proxy/direct"
 	mcproxy "github.com/eitanity/kanonarion/internal/adapters/proxy/modcache"
+	privateproxy "github.com/eitanity/kanonarion/internal/adapters/proxy/private"
 	noopsigner "github.com/eitanity/kanonarion/internal/adapters/signer/noop"
 	fetchsumdb "github.com/eitanity/kanonarion/internal/adapters/sumdb/gosum"
 	gosumfile "github.com/eitanity/kanonarion/internal/adapters/sumdb/gosumfile"
@@ -356,6 +357,10 @@ func NewContainerFrom(st *storage.Storage, storeRoot, goproxy, goBinary string, 
 	// In --from-modcache mode go.sum is already the sole anchor (via sumdb), so
 	// this is skipped.
 	fetchUC, err = withProjectGoSumAnchor(fetchUC, closeStore, logger)
+	if err != nil {
+		return nil, nil, err
+	}
+	fetchUC, err = withPrivateModules(fetchUC, closeStore, logger)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -861,8 +866,56 @@ func selectFetchAdapters(sumdbDir, goproxy, goBinary string, localBlobs fetchpor
 		default:
 			proxyAdapter = dp
 		}
+		proxyAdapter = withPrivateRoute(proxyAdapter, goBinary, projectGoSumPath, logger)
 	}
 	return blobs, sumdb, proxyAdapter, nil
+}
+
+// withPrivateRoute sends every module GOPRIVATE/GONOPROXY names to the module
+// cache, where the go command fetches it as the user, so no proxy ever sees its
+// path. goSum is the project's; without a pattern the proxy is unchanged.
+func withPrivateRoute(proxyAdapter fetchports.ModuleProxy, goBinary, goSum string, logger *slog.Logger) fetchports.ModuleProxy {
+	if !goenv.HasNoProxyPatterns() {
+		return proxyAdapter
+	}
+	return privateproxy.New(proxyAdapter, goenv.NoProxy, func(ctx context.Context) (fetchports.ModuleProxy, error) {
+		dir, err := goEnvGOMODCACHE(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return mcproxy.New(dir, goBinary, filepath.Dir(goSum), logger), nil
+	})
+}
+
+// withPrivateModules anchors the private modules withPrivateRoute sends to the
+// module cache on the project go.sum; with none, the use case refuses them.
+func withPrivateModules(fetchUC *fetchapp.FetchModuleUseCase, closeStore func() error, logger *slog.Logger) (*fetchapp.FetchModuleUseCase, error) {
+	if modcacheMode {
+		return fetchUC, nil
+	}
+	uc, err := privateFetchUseCase(fetchUC, projectGoSumPath, logger)
+	if err != nil {
+		_ = closeStore() //nolint:errcheck // the refusal is the error returned
+		return nil, err
+	}
+	return uc, nil
+}
+
+// privateFetchUseCase anchors private modules on goSum, or refuses them when
+// goSum is empty. Without a private pattern fetchUC is unchanged.
+func privateFetchUseCase(fetchUC *fetchapp.FetchModuleUseCase, goSum string, logger *slog.Logger) (*fetchapp.FetchModuleUseCase, error) {
+	if !goenv.HasNoProxyPatterns() {
+		return fetchUC, nil
+	}
+	var anchor fetchports.SumDBClient
+	if goSum != "" {
+		gsClient, gerr := gosumfile.New(goSum, logger)
+		if gerr != nil {
+			return nil, fmt.Errorf("loading project go.sum for private modules: %w", gerr)
+		}
+		anchor = gsClient
+	}
+	return fetchUC.WithPrivateModules(goenv.NoProxy, anchor), nil
 }
 
 // withProjectGoSumAnchor layers the walk root's go.sum on the network path as

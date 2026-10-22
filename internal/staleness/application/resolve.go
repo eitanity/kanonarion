@@ -64,6 +64,11 @@ type Resolver struct {
 	// every subsequent module gets the same answer instead of re-running a call
 	// that has already failed once for the whole set.
 	batchErr error
+
+	// isPrivate names the paths no proxy may be asked about, and private answers
+	// their latest instead. Set via WithPrivate.
+	isPrivate func(path string) bool
+	private   ports.LatestResolver
 }
 
 // ErrBatchUnavailable wraps a batched resolution that could not be made.
@@ -103,6 +108,40 @@ func (r *Resolver) WithBatch(batch ports.BatchLatestResolver, coords []ports.Pin
 	return r
 }
 
+// WithPrivate answers every path isPrivate names from private alone: no ledger
+// read or write, no batch row and no newer-major probe, because each of those
+// would name the path to a proxy or serve an answer no lookup measured.
+func (r *Resolver) WithPrivate(isPrivate func(path string) bool, private ports.LatestResolver) *Resolver {
+	r.isPrivate = isPrivate
+	r.private = private
+	return r
+}
+
+// resolvePrivate answers a private path's same-major latest; any failure is
+// ports.ErrPrivateModule, so the row reads unmeasured rather than current.
+func (r *Resolver) resolvePrivate(ctx context.Context, path string) (Answer, error) {
+	info, err := r.private.LatestInfo(ctx, path)
+	if err == nil && info.Version == "" {
+		err = errors.New("no version named")
+	}
+	if err != nil {
+		if !errors.Is(err, ports.ErrPrivateModule) {
+			err = fmt.Errorf("%w: %w", ports.ErrPrivateModule, err)
+		}
+		return Answer{}, fmt.Errorf("resolving %s@latest: %w", path, err)
+	}
+	return Answer{Record: domain.Record{
+		ModulePath:        path,
+		LatestVersion:     info.Version,
+		LatestPublishedAt: info.Time,
+		LookedUpAt:        r.clk.Now(),
+	}}, nil
+}
+
+func (r *Resolver) privatePath(path string) bool {
+	return r.isPrivate != nil && r.isPrivate(path)
+}
+
 // Resolve returns the staleness record for path, pinned at pinnedVersion.
 //
 // pinnedVersion may be empty (no pin, as in `latest <module>`); the resolved
@@ -110,6 +149,9 @@ func (r *Resolver) WithBatch(batch ports.BatchLatestResolver, coords []ports.Pin
 // newest release is a +incompatible v2 is planned the same way an explicit
 // +incompatible pin is: /v2 asked about first, then the walk from /v3.
 func (r *Resolver) Resolve(ctx context.Context, path, pinnedVersion string) (Answer, error) {
+	if r.privatePath(path) {
+		return r.resolvePrivate(ctx, path)
+	}
 	now := r.clk.Now()
 
 	// The recorded row is read whether or not it may be SERVED, and whether or
@@ -281,6 +323,15 @@ func (r *Resolver) primeBatch(ctx context.Context) error {
 		return r.batchErr
 	}
 	r.batchPrimed = true
+	// A private path is answered per path and never probed, so it leaves the set
+	// the batch and the prefetch are asked about.
+	public := make([]ports.PinnedModule, 0, len(r.batchCoords))
+	for _, mod := range r.batchCoords {
+		if !r.privatePath(mod.Path) {
+			public = append(public, mod)
+		}
+	}
+	r.batchCoords = public
 	paths := make([]string, 0, len(r.batchCoords))
 	for _, mod := range r.batchCoords {
 		paths = append(paths, mod.Path)

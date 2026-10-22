@@ -5,6 +5,7 @@
 ```
 kanonarion fetch <module>[@<version>] [flags]
 kanonarion fetch <module> --list-versions [flags]
+kanonarion fetch <module>@<version> --gomod ./go.mod [flags]
 kanonarion fetch --gomod ./go.mod [flags]
 kanonarion fetch --tool [--gomod ./go.mod] [flags]
 kanonarion fetch --project [--gomod ./go.mod] [flags]
@@ -83,7 +84,7 @@ kanonarion fetch <module>@<version> [flags]
 | `--skip-vcs-verify` | `false` | Skip git cross-verification (requires `git` on `PATH`); checksum verification still runs |
 | `--goproxy` | `$GOPROXY` or `proxy.golang.org` | Override the module proxy. `off` and `direct` mean the same here as in `$GOPROXY` - see [`GOPROXY=off` and `direct`](#goproxyoff-and-direct) |
 | `--list-versions` | `false` | List available versions from the proxy and exit without fetching |
-| `--gomod` | `./go.mod` | Path to a `go.mod` file; fetch its dependency scope instead of a positional module |
+| `--gomod` | `./go.mod` | Path to a `go.mod` file; fetch its dependency scope instead of a positional module. With a positional module, fetch only that module, verifying a private module against the `go.sum` beside this `go.mod` - see [Private modules](#private-modules-goprivate-gonoproxy) |
 | `--tool` | `false` | Fetch the tooling supply chain (the `go.mod` tool directives' closure) instead of a positional module. Mutually exclusive with `--project`; refused by name alongside a positional module |
 | `--project` | `false` | Fetch the complete set: the project's code **and** tooling (the full Go build list). Mutually exclusive with `--tool`; refused by name alongside a positional module |
 | `--allow-verification-downgrade` | `false` | Permit a weaker re-measurement of a coordinate to be recorded alongside a stronger stored one. Without it the weaker measurement is refused, the stronger record is kept and answers, and the run warns. See [Re-measuring with a weaker anchor](#re-measuring-with-a-weaker-anchor---allow-verification-downgrade) |
@@ -95,8 +96,9 @@ A scope fetch is triggered by `--gomod`, `--tool`, or `--project`; the scope is
 consistent with every other go.mod command - default `code` (the project's own
 code dependencies, `go list -deps -test ./...`), `--tool` the tooling supply
 chain, `--project` the complete set. See
-[`walk` Scopes](walk.md#scopes-code-tool-complete). A scope fetch cannot be
-combined with a positional module or with `--list-versions`; every module in the
+[`walk` Scopes](walk.md#scopes-code-tool-complete). `--tool` and `--project`
+cannot be combined with a positional module, and no scope flag with
+`--list-versions`; every module in the
 scope is fetched, continuing on per-module errors.
 
 The run states which scope and test axis it resolved over on stderr before the
@@ -218,6 +220,62 @@ which is what an air gap is. Reading the store is unaffected throughout.
 `GONOSUMCHECK=1` is honoured as the boolean it is - the checksum database is
 switched off for every module. A `GONOSUMCHECK` naming module prefixes keeps
 its pattern meaning.
+
+### Private modules (`GOPRIVATE`, `GONOPROXY`)
+
+kanonarion follows the go command's rule for private modules. A module whose
+path matches `GONOPROXY`, or `GOPRIVATE` when `GONOPROXY` is not set, is never
+named to a module proxy. A pattern is a module path prefix: `corp.example.com`
+matches `corp.example.com/a` and `corp.example.com/a/v2`. Several patterns are
+separated by commas. Both variables are read from the environment, then from
+the file `go env -w` writes to.
+
+A private module is read from the module cache (`$GOMODCACHE`), the way
+`--from-modcache` reads every module:
+
+- When the module is not in the cache yet, kanonarion runs
+  `go mod download <module>@<version>` in the project directory. The go command
+  fetches it from its origin with your own credentials (`GOAUTH`, `.netrc`, git
+  credential helpers, ssh keys). kanonarion holds no credentials of its own.
+- The bytes are hashed and checked against the project's `go.sum`. A hash that
+  disagrees, or a module missing from `go.sum`, stops the run, as it does under
+  `--from-modcache`.
+- The record reads `VerifiedByGoSum`. Its detail names the variable that made
+  the module private, for example `private module (GOPRIVATE): read from the
+  module cache, ...`. Its VCS leg reads `private_module`: no `git` process is
+  started for it, and no URL is guessed from its path. The checksum database is
+  not consulted.
+
+Every other module takes the configured proxy exactly as before.
+`GONOPROXY=none` with `GOPRIVATE` set sends every module through the proxy, as
+the go command does.
+
+The checksum database is skipped for a module that matches `GOPRIVATE`,
+`GONOSUMDB` or a `GONOSUMCHECK` pattern, and the record's detail names the
+variable in force: `module matches GONOSUMCHECK/GOPRIVATE pattern; the setting
+in force is GOPRIVATE`.
+
+A private module named on its own has no project `go.sum` to be verified
+against, so it is refused, exit `20`, before any request:
+
+```
+$ GOPRIVATE=corp.example.com kanonarion fetch corp.example.com/a@v1.0.0
+error: execute root command: corp.example.com/a matches GOPRIVATE/GONOPROXY: kanonarion reads a private module only from the module cache against a project go.sum; run from the project with --gomod
+```
+
+`walk <module>@<version>` and `inspect <module>@<version>` refuse in the same
+words. `fetch --gomod ./go.mod` fetches the project's private modules against
+its `go.sum`, and `fetch <module>@<version> --gomod ./go.mod` fetches one of
+them. `@latest` is refused for a private module, since only a proxy resolves it.
+
+A read that finds no fetch record for a private module - `license`,
+`callgraph`, `interface`, `examples`, `native` and the rest - names that route
+as its remedy:
+
+```
+run 'kanonarion fetch corp.example.com/a@v1.0.0 --gomod <path to the project's go.mod>' from the project that requires it (a private module is verified against its go.sum)
+``` Its staleness note for a private module comes from the go command,
+never from a proxy - see [`latest`: private modules](latest.md#private-modules).
 
 ### Re-measuring with a weaker anchor (`--allow-verification-downgrade`)
 
@@ -366,7 +424,7 @@ and `context` reports `verification.status: read_error` with the failure.
 | `3` | Cancelled |
 | `4` | A read needing a module's fetch record found only records this build cannot reproduce (see above) |
 | `10` | Integrity check failed |
-| `20` | Configuration or precondition error: an invalid flag combination, or an environment that forbids fetching (`GOPROXY=off`, `GOPROXY=direct`) |
+| `20` | Configuration or precondition error: an invalid flag combination, an environment that forbids fetching (`GOPROXY=off`, `GOPROXY=direct`), or a private module named without a project (see [Private modules](#private-modules-goprivate-gonoproxy)) |
 
 ## Examples
 

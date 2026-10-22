@@ -209,3 +209,51 @@ func (r *Resolver) execError(args []string, err error) error {
 	}
 	return fmt.Errorf("go %s: %w", strings.Join(args[:4], " "), err)
 }
+
+// PrivateResolver answers @latest for one private module path with
+// `go list -m -json <path>@latest`, so the go command asks as the user and no
+// proxy ever sees the path. Every failure is ports.ErrPrivateModule.
+type PrivateResolver struct {
+	r Resolver
+}
+
+var _ ports.LatestResolver = (*PrivateResolver)(nil)
+
+// NewPrivate returns a PrivateResolver running the go command in dir, which
+// may be empty for the process working directory.
+func NewPrivate(dir, goproxy string) *PrivateResolver {
+	return &PrivateResolver{r: Resolver{dir: dir, goproxy: goproxy, timeout: batchTimeout}}
+}
+
+// LatestInfo resolves path@latest through the go command.
+func (p *PrivateResolver) LatestInfo(ctx context.Context, path string) (ports.LatestInfo, error) {
+	if p.r.networkForbidden() {
+		return ports.LatestInfo{}, fmt.Errorf("%w: %w", ports.ErrPrivateModule, goenv.ErrNetworkForbidden)
+	}
+	callCtx, cancel := context.WithTimeout(ctx, p.r.timeout)
+	defer cancel()
+	args := []string{"list", "-m", "-json", "-mod=readonly", path + "@latest"}
+	cmd := childproc.CommandContext(callCtx, "go", args...) // #nosec G204 -- path is a module path from the project's own build list or the command line
+	cmd.Dir = p.r.dir
+	cmd.Env = p.r.childEnv()
+	out, err := cmd.Output()
+	if err != nil {
+		if cerr := ctx.Err(); cerr != nil {
+			return ports.LatestInfo{}, fmt.Errorf("go list -m %s@latest: %w", path, cerr)
+		}
+		var ee *exec.ExitError
+		if errors.As(err, &ee) && len(ee.Stderr) > 0 {
+			err = errors.New(strings.TrimSpace(string(ee.Stderr)))
+		}
+		return ports.LatestInfo{}, fmt.Errorf("%w: %w", ports.ErrPrivateModule, err)
+	}
+	var m goListModule
+	if derr := json.Unmarshal(out, &m); derr != nil || m.Version == "" {
+		return ports.LatestInfo{}, fmt.Errorf("%w: `go list -m -json %s@latest` named no version", ports.ErrPrivateModule, path)
+	}
+	info := ports.LatestInfo{Version: m.Version}
+	if m.Time != nil {
+		info.Time = m.Time.UTC()
+	}
+	return info, nil
+}

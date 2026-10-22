@@ -386,10 +386,11 @@ const (
 // Values may be added within a major version; treat an unrecognised value
 // conservatively (§4).
 const (
-	LegAbsent      = fetchdomain.LegAbsent
-	LegInherited   = fetchdomain.LegInherited
-	LegRechecked   = fetchdomain.LegRechecked
-	LegUnavailable = fetchdomain.LegUnavailable
+	LegAbsent        = fetchdomain.LegAbsent
+	LegInherited     = fetchdomain.LegInherited
+	LegRechecked     = fetchdomain.LegRechecked
+	LegUnavailable   = fetchdomain.LegUnavailable
+	LegPrivateModule = fetchdomain.LegPrivateModule
 )
 
 // The values of LicenseCoverage, as the internal package defines them.
