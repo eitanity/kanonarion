@@ -142,8 +142,11 @@ The JSON always carries the list, under `modules[]`, whether or not `--detail`
 is given - the classes without their reasons is exactly the shape that sent
 readers to `python3` over another command's output. Each row carries
 `coordinate`, `path`, `version`, `class`, the recorded `status`, `reason`
-where the record recorded one, and `vcs_url_binding` where the record recorded
-a binding.
+where the record recorded one, `vcs_url_binding` where the record recorded
+a binding, and `git_subdir`: the repository directory the VCS check hashed,
+`"."` for the root, or `null` where the record names none. `--detail` prints it
+on a `git subdirectory:` line under the module (`(repository root)` for `"."`),
+and prints no line where the record names none.
 
 A fetch record this build cannot reproduce is left out and named in the
 document's `set_aside` (on stderr without `--json`). A module whose every record

@@ -202,10 +202,11 @@ func (p *Proxy) Info(ctx context.Context, coord coordinate.ModuleCoordinate) (_ 
 		Version string    `json:"Version"`
 		Time    time.Time `json:"Time"`
 		Origin  *struct {
-			VCS  string `json:"VCS"`
-			URL  string `json:"URL"`
-			Ref  string `json:"Ref"`
-			Hash string `json:"Hash"`
+			VCS    string `json:"VCS"`
+			URL    string `json:"URL"`
+			Ref    string `json:"Ref"`
+			Hash   string `json:"Hash"`
+			Subdir string `json:"Subdir"`
 		} `json:"Origin"`
 	}
 	if err := json.NewDecoder(body).Decode(&raw); err != nil {
@@ -218,10 +219,11 @@ func (p *Proxy) Info(ctx context.Context, coord coordinate.ModuleCoordinate) (_ 
 	}
 	if raw.Origin != nil {
 		info.Origin = &ports.ModuleOrigin{
-			VCS:  raw.Origin.VCS,
-			URL:  raw.Origin.URL,
-			Ref:  raw.Origin.Ref,
-			Hash: raw.Origin.Hash,
+			VCS:    raw.Origin.VCS,
+			URL:    raw.Origin.URL,
+			Ref:    raw.Origin.Ref,
+			Hash:   raw.Origin.Hash,
+			Subdir: raw.Origin.Subdir,
 		}
 	}
 	return info, nil

@@ -150,6 +150,9 @@ type ModuleOrigin struct {
 	URL  string // canonical clone URL
 	Ref  string // e.g. "refs/tags/v1.8.1"
 	Hash string // full commit SHA
+	// Subdir is the module's directory in the repository, without any
+	// major-version subdirectory; empty is the root. Untrusted like the rest.
+	Subdir string
 }
 
 // ModuleDownload carries the artefacts from a proxy download.

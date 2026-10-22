@@ -30,7 +30,7 @@ func TestResolveGitRef_ProxyURLTheCoordinateDerivesIsCoordinateDerived(t *testin
 	uc := &FetchModuleUseCase{vcs: &tagRecordingVCS{}}
 	coord := coordinatetest.MustNew("github.com/gorilla/mux", "v1.8.1")
 
-	_, status, _, _, binding, _ := uc.resolveGitRef(context.Background(), slog.Default(),
+	_, status, _, _, binding, _, _ := uc.resolveGitRef(context.Background(), slog.Default(),
 		coord, originAt("https://github.com/gorilla/mux"), domain2.DefaultVCSHostAllowlist())
 
 	if status != domain2.Verified {
@@ -57,7 +57,7 @@ func TestResolveGitRef_VanityPathIsProxyNamed(t *testing.T) {
 		uc := &FetchModuleUseCase{vcs: &tagRecordingVCS{}}
 		coord := coordinatetest.MustNew(tc.path, "v1.0.0")
 
-		gitRef, status, _, _, binding, _ := uc.resolveGitRef(context.Background(), slog.Default(),
+		gitRef, status, _, _, binding, _, _ := uc.resolveGitRef(context.Background(), slog.Default(),
 			coord, originAt(tc.originURL), domain2.DefaultVCSHostAllowlist())
 
 		if status != domain2.Verified {
@@ -80,7 +80,7 @@ func TestResolveGitRef_InferredRouteIsCoordinateDerived(t *testing.T) {
 	uc := &FetchModuleUseCase{vcs: &tagRecordingVCS{}}
 	coord := coordinatetest.MustNew("github.com/foo/bar", "v1.8.1")
 
-	gitRef, status, _, _, binding, _ := uc.resolveGitRef(context.Background(), slog.Default(),
+	gitRef, status, _, _, binding, _, _ := uc.resolveGitRef(context.Background(), slog.Default(),
 		coord, ports.ModuleInfo{}, domain2.DefaultVCSHostAllowlist())
 
 	if status != domain2.Verified {
@@ -106,7 +106,7 @@ func TestResolveGitRef_RefusedOriginIsNotRecordedAsProxyNamed(t *testing.T) {
 		Hash: "--upload-pack=touch",
 	}}
 
-	gitRef, _, _, refusal, binding, _ := uc.resolveGitRef(context.Background(), slog.Default(),
+	gitRef, _, _, refusal, binding, _, _ := uc.resolveGitRef(context.Background(), slog.Default(),
 		coord, info, domain2.DefaultVCSHostAllowlist())
 
 	if refusal == "" {
@@ -129,7 +129,7 @@ func TestResolveGitRef_NoURLAttributesNeitherBinding(t *testing.T) {
 	// A bare host is not a repository, so no URL can be derived from it.
 	coord := coordinatetest.MustNew("example.com", "v1.0.0")
 
-	gitRef, status, _, _, binding, _ := uc.resolveGitRef(context.Background(), slog.Default(),
+	gitRef, status, _, _, binding, _, _ := uc.resolveGitRef(context.Background(), slog.Default(),
 		coord, ports.ModuleInfo{}, domain2.DefaultVCSHostAllowlist())
 
 	if gitRef.URL != "" {

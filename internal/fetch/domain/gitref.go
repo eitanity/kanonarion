@@ -1,6 +1,9 @@
 package domain
 
-import "fmt"
+import (
+	"encoding/json"
+	"fmt"
+)
 
 // GitReference identifies a specific commit in a VCS repository.
 type GitReference struct {
@@ -11,6 +14,30 @@ type GitReference struct {
 	Ref string
 	// CommitHash is the full 40-character hex SHA-1 commit hash.
 	CommitHash string
+	// Subdir is the directory, relative to the repository root and
+	// slash-separated, whose tree the VCS leg hashed: RepoRoot for the root,
+	// empty when nothing was hashed.
+	Subdir string
+}
+
+// RepoRoot is the Subdir of a module hashed at the repository root, so that
+// root is never confused with "no directory recorded".
+const RepoRoot = "."
+
+// RepoSubdir is a recorded Subdir. Its JSON form is null when the record names
+// no directory: no leg hashed one, or the record predates the field.
+type RepoSubdir string
+
+// MarshalJSON renders an empty RepoSubdir as null.
+func (d RepoSubdir) MarshalJSON() ([]byte, error) {
+	if d == "" {
+		return []byte("null"), nil
+	}
+	b, err := json.Marshal(string(d))
+	if err != nil {
+		return nil, fmt.Errorf("marshalling git_subdir: %w", err)
+	}
+	return b, nil
 }
 
 // ShortHash returns the first 12 characters of CommitHash, matching the

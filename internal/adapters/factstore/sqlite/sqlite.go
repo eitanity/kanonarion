@@ -209,6 +209,10 @@ func Migrations() []sqlitestore.Migration {
 		// value is omitted from the canonical JSON, so every existing record
 		// verifies its content hash unchanged and nothing is re-derived.
 		{Module: "fetch", Version: 10, SQL: `ALTER TABLE fetch_records ADD COLUMN vcs_url_binding TEXT NOT NULL DEFAULT ''`},
+		// The directory of the repository the VCS leg hashed. '' is the root, and
+		// is what every earlier record reads: it is omitted from the canonical
+		// JSON, so their content hashes are unchanged and nothing is re-derived.
+		{Module: "fetch", Version: 11, SQL: `ALTER TABLE fetch_records ADD COLUMN git_subdir TEXT NOT NULL DEFAULT ''`},
 	}
 }
 
@@ -248,7 +252,7 @@ const recordColumns = `schema_version, ecosystem, module_path, module_version, p
        fetched_at, content_location, go_mod_location, content_hash, retracted,
        zip_sha256, zip_sha384, zip_sha512, sumdb_lookup_failed, acquisition_mode,
        measurement_kind, sumdb_check, sumdb_check_source, vcs_check, vcs_check_source,
-       vcs_url_binding`
+       vcs_url_binding, git_subdir`
 
 // PutFetchRecord appends a measurement to the ledger.
 //
@@ -278,8 +282,8 @@ INSERT INTO fetch_records (
     fetched_at, content_location, go_mod_location, content_hash, retracted,
     zip_sha256, zip_sha384, zip_sha512, sumdb_lookup_failed, acquisition_mode,
     measurement_kind, sumdb_check, sumdb_check_source, vcs_check, vcs_check_source,
-    vcs_url_binding
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    vcs_url_binding, git_subdir
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (module_path, module_version, pipeline_version, module_hash, fetched_at, content_hash)
 DO NOTHING`
 
@@ -299,7 +303,7 @@ DO NOTHING`
 				r.ContentLocation, r.GoModLocation, r.ContentHash, r.Retracted,
 				r.ZipSHA256, r.ZipSHA384, r.ZipSHA512, r.SumDBLookupFailed, r.AcquisitionMode,
 				r.MeasurementKind, r.SumDBCheck, r.SumDBCheckSource, r.VCSCheck, r.VCSCheckSource,
-				r.VCSURLBinding,
+				r.VCSURLBinding, string(r.GitSubdir),
 			)
 			return err //nolint:wrapcheck // the retry classifies the driver's own error; the caller below names the step
 		}); err != nil {
@@ -541,7 +545,7 @@ func scanRecord(sc rowScanner) (domain2.FactRecord, string, error) {
 		&fetchedAt, &r.ContentLocation, &r.GoModLocation, &r.ContentHash, &r.Retracted,
 		&r.ZipSHA256, &r.ZipSHA384, &r.ZipSHA512, &r.SumDBLookupFailed, &r.AcquisitionMode,
 		&r.MeasurementKind, &r.SumDBCheck, &r.SumDBCheckSource, &r.VCSCheck, &r.VCSCheckSource,
-		&r.VCSURLBinding,
+		&r.VCSURLBinding, &r.GitSubdir,
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {

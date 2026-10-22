@@ -76,6 +76,12 @@ func ParseModuleCoordinate(s string) (ModuleCoordinate, error) {
 // (§4).
 type FactRecord = fetchdomain.FactRecord
 
+// RepoSubdir is the repository directory a fetch record's VCS check hashed: "."
+// for the root, empty (JSON null) where the record names none.
+//
+// Stability: result type (received by consumers); unstable pre-v1.
+type RepoSubdir = fetchdomain.RepoSubdir
+
 // WalkRecord is the persisted result of a dependency-graph walk: the resolved
 // graph, per-node fetch results, and overall status for a target module.
 //

@@ -65,6 +65,7 @@ func TestOnlyACrossVerifiedRecordYieldsAnOrigin(t *testing.T) {
 			GitURL:             "https://github.com/example/ok",
 			GitRef:             "refs/tags/v1.0.0",
 			GitCommitHash:      "abcdef0123456789abcdef0123456789abcdef01",
+			GitSubdir:          "sub/dir",
 		},
 		sumdbOnly: {
 			// The URL was inferred and the VCS check never confirmed it.
@@ -92,8 +93,9 @@ func TestOnlyACrossVerifiedRecordYieldsAnOrigin(t *testing.T) {
 	}
 	if origin.VCSURL != "https://github.com/example/ok" ||
 		origin.VCSRef != "refs/tags/v1.0.0" ||
-		origin.VCSCommit != "abcdef0123456789abcdef0123456789abcdef01" {
-		t.Errorf("origin = %+v, want the recorded repository, ref and commit", origin)
+		origin.VCSCommit != "abcdef0123456789abcdef0123456789abcdef01" ||
+		origin.VCSSubdir != "sub/dir" {
+		t.Errorf("origin = %+v, want the recorded repository, ref, commit and directory", origin)
 	}
 
 	for name, coord := range map[string]coordinate.ModuleCoordinate{

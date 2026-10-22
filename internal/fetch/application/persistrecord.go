@@ -208,11 +208,12 @@ func (uc *FetchModuleUseCase) inheritLegs(ctx context.Context, log *slog.Logger,
 		if m.VCSCheck == domain2.LegAbsent && r.VCSCheck != string(domain2.LegAbsent) {
 			m.VCSCheck = domain2.LegInherited
 			m.VCSCheckSource = r.ContentHash
-			// The binding travels with the leg it describes. A leg carried
-			// forward without it would report cross-verification evidence whose
-			// clone URL the record can no longer attribute, which is the gap
-			// this attribution exists to close.
+			// The binding and the directory hashed travel with the leg they
+			// describe. A leg carried forward without them would report
+			// cross-verification evidence whose clone URL and tree the record
+			// can no longer attribute, which is the gap they exist to close.
 			m.VCSURLBinding = domain2.VCSURLBinding(r.VCSURLBinding)
+			m.GitReference.Subdir = string(r.GitSubdir)
 			log.InfoContext(ctx, "validation_leg_inherited",
 				slog.String("leg", string(domain2.LegVCS)),
 				slog.String("source_content_hash", r.ContentHash),

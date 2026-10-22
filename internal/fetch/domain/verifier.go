@@ -3,6 +3,10 @@ package domain
 import (
 	"bytes"
 	"fmt"
+	"io"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
@@ -30,14 +34,19 @@ func NewVerifier(hasher ModuleZipHasher) Verifier {
 	return Verifier{hasher: hasher}
 }
 
-// HashDirAsModuleZip builds a module zip from dir using the standard
-// golang.org/x/mod/zip rules (excludes vendor/, nested modules, symlinks,
-// etc.) and returns its h1 hash. This matches what the proxy/sumdb hash
-// covers, unlike dirhash.HashDir which hashes every file in the tree.
+// HashDirAsModuleZip builds a module zip from a git checkout of dir and returns
+// its h1 hash. Every file in the tree is offered to golang.org/x/mod/zip.Create,
+// as the go command offers it the files git archives, so the zip rules decide
+// what is left out (vendor/, nested modules, symlinks). CreateFromDir is not
+// used: it also drops .hg, .svn and .bzr directories, which git does archive.
 func (v Verifier) HashDirAsModuleZip(dir string, coord coordinate.ModuleCoordinate) (ModuleHash, error) {
+	files, err := checkoutFiles(dir)
+	if err != nil {
+		return ModuleHash{}, fmt.Errorf("listing checkout files: %w", err)
+	}
 	var buf bytes.Buffer
 	mv := module.Version{Path: coord.Path(), Version: coord.Version()}
-	if err := modzip.CreateFromDir(&buf, mv, dir); err != nil {
+	if err = modzip.Create(&buf, mv, files); err != nil {
 		return ModuleHash{}, fmt.Errorf("creating module zip from checkout: %w", err)
 	}
 	h, err := v.hasher.HashModuleZip(buf.Bytes())
@@ -45,6 +54,54 @@ func (v Verifier) HashDirAsModuleZip(dir string, coord coordinate.ModuleCoordina
 		return ModuleHash{}, fmt.Errorf("hashing checkout zip: %w", err)
 	}
 	return ParseModuleHash(h)
+}
+
+// checkoutFiles lists every non-directory entry under dir, without following
+// symlinks, with slash-separated paths relative to dir.
+func checkoutFiles(dir string) ([]modzip.File, error) {
+	var files []modzip.File
+	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		rel, err := filepath.Rel(dir, p)
+		if err != nil {
+			return fmt.Errorf("relativising %s: %w", p, err)
+		}
+		files = append(files, checkoutFile{path: p, slashPath: filepath.ToSlash(rel)})
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("walking %s: %w", dir, err)
+	}
+	return files, nil
+}
+
+// checkoutFile is one file of a checkout, as golang.org/x/mod/zip reads it.
+type checkoutFile struct {
+	path      string
+	slashPath string
+}
+
+func (f checkoutFile) Path() string { return f.slashPath }
+
+func (f checkoutFile) Lstat() (os.FileInfo, error) {
+	info, err := os.Lstat(f.path)
+	if err != nil {
+		return nil, fmt.Errorf("stat %s: %w", f.slashPath, err)
+	}
+	return info, nil
+}
+
+func (f checkoutFile) Open() (io.ReadCloser, error) {
+	r, err := os.Open(f.path) // #nosec G304 -- a path the walk of the checkout produced
+	if err != nil {
+		return nil, fmt.Errorf("opening %s: %w", f.slashPath, err)
+	}
+	return r, nil
 }
 
 // VerifyPseudoVersionCommit checks that a pseudo-version's embedded commit

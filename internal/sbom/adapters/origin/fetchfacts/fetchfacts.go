@@ -61,5 +61,6 @@ func (r *Reader) ModuleOrigin(ctx context.Context, coord coordinate.ModuleCoordi
 		VCSURL:    rec.GitURL,
 		VCSRef:    rec.GitRef,
 		VCSCommit: rec.GitCommitHash,
+		VCSSubdir: string(rec.GitSubdir),
 	}, true, nil
 }

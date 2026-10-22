@@ -17,6 +17,7 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/adapters/goenv"
 	"github.com/eitanity/kanonarion/internal/composition/storage"
+	fetchapp "github.com/eitanity/kanonarion/internal/fetch/application"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/fetch/ports"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
@@ -703,10 +704,11 @@ func writeDerivedModCacheFiles(root *os.Root, record fetchdomain.CompositeRecord
 		Version string
 		Time    string
 		Origin  struct {
-			VCS  string
-			URL  string
-			Hash string
-			Ref  string
+			VCS    string
+			URL    string
+			Subdir string `json:",omitempty"`
+			Hash   string
+			Ref    string
 		}
 	}{
 		Version: coord.Version(),
@@ -716,6 +718,11 @@ func writeDerivedModCacheFiles(root *os.Root, record fetchdomain.CompositeRecord
 	info.Origin.URL = record.GitURL
 	info.Origin.Hash = record.GitCommitHash
 	info.Origin.Ref = record.GitRef
+	// The go command reads Subdir as the module's code directory. It is written
+	// only where the record's directory determines it; otherwise it is left out.
+	if subdir, ok := fetchapp.OriginSubdirOf(coord.Path(), string(record.GitSubdir)); ok {
+		info.Origin.Subdir = subdir
+	}
 
 	infoData, encErr := json.Marshal(info)
 	if encErr != nil {

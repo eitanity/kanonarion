@@ -170,6 +170,61 @@ values there, as they did when `verdict` and `reachability_state` gained theirs)
   a record that names no frame. `callgraph-show` text gains a `frame:` line and
   `--history` a `frame:` line per generation, both absent on such a record.
 
+## Fetch record: pipeline `0.5.0` → `0.6.0`, and fetch migration 11 - which directory the VCS check hashed
+
+**Derivation change, one additive field, one store migration.** A module that
+lives in a subdirectory of its repository (`service/s3` of the AWS SDK,
+`client/v3` of etcd) is tagged under that directory (`service/s3/v1.2.3`), and
+the proxy zips that directory alone. A `0.5.0` build looked for the module's
+`go.mod` only at the repository root and one level below, hashed the root when
+it found none there, and on a route with no proxy `Origin` asked for the
+unprefixed tag. Every such module read `VerifiedBySumDBOnly`, "proxy hash …
+does not match git checkout hash …", although its tree was never compared.
+A `0.6.0` build:
+
+- takes the module's directory from the proxy's `Origin.Subdir`, or derives it
+  from the module path and the repository root where no `Origin` is used, and
+  asks for the prefixed tag on that route;
+- hashes exactly the directory the go command zips: that directory, or its
+  major-version subdirectory (`client/v3`) where the go command's rule selects
+  it. A directory that is absent, or whose `go.mod` names another module,
+  is recorded as such in the detail, and nothing is hashed;
+- keeps directories named `.hg`, `.svn` or `.bzr` in the hash, as the go
+  command's zip does.
+
+So `git_ref`, `git_commit_hash`, `verification_status` and
+`verification_detail` change for nested modules: most move from
+`VerifiedBySumDBOnly` to `Verified`.
+
+`FactRecord` gains `git_subdir`, the directory the check hashed, relative to the
+repository root: `.` for the root, empty where nothing was hashed and on every
+record written before the field. The `fetch_records` table gains a column of the
+same name:
+
+```sql
+ALTER TABLE fetch_records ADD COLUMN git_subdir TEXT NOT NULL DEFAULT ''
+```
+
+The field is `omitempty` in the canonical JSON, so every record written before
+it existed keeps its content hash. Store `v89` -> `v90`. `fetch --json` and each
+`verification-coverage --json` row always carry `git_subdir`: the directory,
+`"."` for the root, or `null` where the record names none.
+From a `0.6.0` record, `use` writes `Origin.Subdir` into the `.info` it derives,
+as the go command names it (`client` for `go.etcd.io/etcd/client/v3`), and an
+SBOM component's `vcs` reference comment names the directory compared. Neither
+changes for a record that names no directory.
+
+Fetch records are append-only, so `0.5.0` and older rows stay as written and
+keep their detail. A fetch at `0.6.0` does not serve a `0.5.0` row from cache:
+the next full fetch of a coordinate (`fetch`, `walk --force`) appends a `0.6.0`
+record, and reads serve it. The steps that fetch a `go.mod` alone skip a
+coordinate held as a full record at any version, or as a `0.6.0` go.mod-only
+record; a coordinate held only as a `0.5.0` go.mod-only record is fetched once
+more. A walk or scan that is itself reused fetches nothing.
+
+An older build meets a `v90` store at the schema gate: it names `fetch@v11` as a
+migration it does not know and refuses, and `store info` still reads the store.
+
 ## Native record: pipeline `0.4.0` → `0.5.0`
 
 **Derivation change; no record shape change, no store migration.** `0.4.0`

@@ -24,7 +24,7 @@ exit 0
       "verification": {
         "status": "divergent",
         "retracted": false,
-        "error": "divergent fetch records for example.com/mod@v1.2.0 at pipeline 0.5.0: module_hash disagrees ([h1:3IvVk0RhFj+2ByrMSiZ8R9Zi8RQYOGgRkIQ2mO6rqo4= h1:e3OmvJfFGN8zHyBHMYyERM362zguHcEOgGGgZ+9xR6A=]; records [sha256:766ac7a398fb6b3f7c351a7a881b0a7e190968fea5a3003c27211dab06c261f2 sha256:87762b1f7baa455d60c213be93cdaadccec8a36f713009a1ac6fca024a44f3f1]) — two measurements describe different artefacts; recover with --force, which appends an authoritative measurement and erases nothing"
+        "error": "divergent fetch records for example.com/mod@v1.2.0 at pipeline 0.6.0: module_hash disagrees ([h1:3IvVk0RhFj+2ByrMSiZ8R9Zi8RQYOGgRkIQ2mO6rqo4= h1:e3OmvJfFGN8zHyBHMYyERM362zguHcEOgGGgZ+9xR6A=]; records [sha256:790cd5bdf6c1f938dd4e0d9a888ba7beb83b8099dd00e07ceb3cb9c16088f57b sha256:7da72f9ae624937ba5983b17c639466df880bb3aba57d351bb7182c5868b31db]) — two measurements describe different artefacts; recover with --force, which appends an authoritative measurement and erases nothing"
       },
       "provenance": {
         "fork_heuristic": {

@@ -114,7 +114,9 @@ in addition to the flat component list, carries:
   component carries one `vcs` reference — the repository its module zip was
   cross-verified against — when the fetch ledger holds a positively
   cross-verified record for that coordinate, and its comment names the ref and
-  commit the cross-verification read. A component with no such record carries
+  commit the cross-verification read, and the directory compared (`the
+  compute/metadata directory of …`, or `the repository root of …`) where the
+  record names one. A component with no such record carries
   no `externalReferences` block at all: a local main module, a module fetched
   offline or with `--skip-vcs-verify`, and a module whose VCS check could not
   reach the repository are all in that state. **No library component carries a

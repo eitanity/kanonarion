@@ -39,8 +39,11 @@ type canonicalRecord struct {
 	FetchedAt       string `json:"fetched_at"`
 	GitCommitHash   string `json:"git_commit_hash"`
 	GitRef          string `json:"git_ref"`
-	GitURL          string `json:"git_url"`
-	GoModHash       string `json:"go_mod_hash"`
+	// GitSubdir is omitempty so a record written before the field existed, or
+	// one that hashed nothing, keeps its canonical bytes.
+	GitSubdir string `json:"git_subdir,omitempty"`
+	GitURL    string `json:"git_url"`
+	GoModHash string `json:"go_mod_hash"`
 	// MeasurementKind and the two validation-leg pairs below are covered by the
 	// hash on the same terms as every other field, and omitempty on the same
 	// terms as SumDBLookupFailed: a record written before they existed produces
@@ -160,6 +163,7 @@ func marshalCanonicalAt(r FactRecord, fetchedAt string) ([]byte, error) {
 		FetchedAt:          fetchedAt,
 		GitCommitHash:      r.GitCommitHash,
 		GitRef:             r.GitRef,
+		GitSubdir:          string(r.GitSubdir),
 		GitURL:             r.GitURL,
 		GoModHash:          r.GoModHash,
 		MeasurementKind:    r.MeasurementKind,
@@ -226,6 +230,7 @@ func (CanonicalHasher) Unmarshal(data []byte) (FactRecord, error) {
 		GitURL:             c.GitURL,
 		GitRef:             c.GitRef,
 		GitCommitHash:      c.GitCommitHash,
+		GitSubdir:          RepoSubdir(c.GitSubdir),
 		VerificationStatus: c.VerificationStatus,
 		VerificationDetail: c.VerificationDetail,
 		FetchedAt:          t.UTC(),

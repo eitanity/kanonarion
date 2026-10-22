@@ -354,6 +354,7 @@ func GitReference(g domain.GitReference) Option {
 		r.GitURL = g.URL
 		r.GitRef = g.Ref
 		r.GitCommitHash = g.CommitHash
+		r.GitSubdir = domain.RepoSubdir(g.Subdir)
 	}
 }
 

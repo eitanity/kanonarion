@@ -88,6 +88,9 @@ type moduleVerification struct {
 	// It is the per-module form of the class split in the totals, so a reader
 	// can name the modules behind a count instead of inferring them.
 	VCSURLBinding string `json:"vcs_url_binding,omitempty"`
+	// GitSubdir is the directory of the repository the VCS leg hashed: "." for
+	// the root, null where the record names none.
+	GitSubdir fetchdomain.RepoSubdir `json:"git_subdir"`
 	// SupersededLocal names the rows read from a local directory under this
 	// published coordinate before such code had its own @local identity. They
 	// stay in the ledger and take no part in this answer; nil when there are none.
@@ -180,6 +183,7 @@ func graphVerificationRows(
 				row.Status = rec.VerificationStatus
 				row.Reason = rec.VerificationDetail
 				row.VCSURLBinding = rec.VCSURLBinding
+				row.GitSubdir = rec.GitSubdir
 				if n := rec.SupersededLocalGenerations; n > 0 {
 					row.SupersededLocal = &supersededLocalGeneration{Records: n, Statement: supersededLocalStatement}
 				}

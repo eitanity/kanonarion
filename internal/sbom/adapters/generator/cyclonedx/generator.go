@@ -518,11 +518,21 @@ func moduleExternalReferences(origin ports.ModuleOrigin) *[]cdx.ExternalReferenc
 		return nil
 	}
 	ref := cdx.ExternalReference{Type: cdx.ERTypeVCS, URL: origin.VCSURL}
+	// A module in a subdirectory is compared with that directory alone, so the
+	// reference names it rather than leave the repository root implied.
+	where := ""
+	switch origin.VCSSubdir {
+	case "":
+	case ".":
+		where = "the repository root of "
+	default:
+		where = "the " + origin.VCSSubdir + " directory of "
+	}
 	switch {
 	case origin.VCSRef != "" && origin.VCSCommit != "":
-		ref.Comment = "the module zip was cross-verified against " + origin.VCSRef + " at commit " + origin.VCSCommit
+		ref.Comment = "the module zip was cross-verified against " + where + origin.VCSRef + " at commit " + origin.VCSCommit
 	case origin.VCSCommit != "":
-		ref.Comment = "the module zip was cross-verified against commit " + origin.VCSCommit
+		ref.Comment = "the module zip was cross-verified against " + where + "commit " + origin.VCSCommit
 	}
 	return &[]cdx.ExternalReference{ref}
 }

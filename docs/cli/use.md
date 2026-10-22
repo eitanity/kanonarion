@@ -214,6 +214,10 @@ never opens a socket. See
 - `.info` / `.ziphash` / `.lock` files are only written when absent; existing
   cache entries are left untouched.
 - The recorded VCS origin (git URL, commit, ref) is written into the `.info`
-  file so provenance is preserved in the cache.
+  file so provenance is preserved in the cache. For a module in a subdirectory
+  of its repository the `.info` also carries `Subdir`, the module's directory as
+  the go command names it (`client` for `go.etcd.io/etcd/client/v3`). It is left
+  out where the record names no directory, as a record from an earlier version
+  does.
 
 See also: [`walk`](walk.md), [`fetch`](fetch.md).

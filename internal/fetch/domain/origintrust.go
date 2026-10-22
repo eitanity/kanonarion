@@ -3,6 +3,7 @@ package domain
 import (
 	"fmt"
 	"net/url"
+	"path"
 	"sort"
 	"strings"
 )
@@ -279,6 +280,26 @@ func (a VCSHostAllowlist) CheckOriginForCheckout(rawURL, ref, commit string) (st
 		return "", err
 	}
 	return warning, nil
+}
+
+// ValidateOriginSubdir checks the untrusted proxy's claim of where in the
+// repository a module lives. The value becomes a path inside a checkout, so
+// anything that could name a place outside it, or is not the canonical
+// slash-separated spelling, is refused rather than interpreted.
+func ValidateOriginSubdir(subdir string) error {
+	switch {
+	case subdir == "":
+		return nil
+	case strings.ContainsAny(subdir, "\\\x00"):
+		return fmt.Errorf("origin subdirectory %q contains a backslash or NUL", subdir)
+	case path.IsAbs(subdir):
+		return fmt.Errorf("origin subdirectory %q is absolute", subdir)
+	case path.Clean(subdir) != subdir:
+		return fmt.Errorf("origin subdirectory %q is not in clean form", subdir)
+	case subdir == ".." || strings.HasPrefix(subdir, "../"):
+		return fmt.Errorf("origin subdirectory %q leaves the repository", subdir)
+	}
+	return nil
 }
 
 // CheckCloneURL accepts only https URLs, and reports or refuses a host outside

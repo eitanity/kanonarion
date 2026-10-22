@@ -25,7 +25,8 @@ const determinismSeals = 50
 func TestFactRecord_ContentHashIsIndependentOfInputOrder(t *testing.T) {
 	t.Parallel()
 
-	for _, path := range wireshape.Collections(t, reflect.TypeOf(domain.FactRecord{})) {
+	for _, path := range wireshape.Collections(t, reflect.TypeOf(domain.FactRecord{}),
+		map[string]string{"domain.RepoSubdir": "a string, or null when empty"}) {
 		t.Errorf("FactRecord now carries the collection %q, whose order reaches its seal: "+
 			"give it a total order in a named comparator and shuffle it here", path)
 	}

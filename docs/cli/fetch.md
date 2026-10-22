@@ -51,6 +51,21 @@ Verification has two independent checks:
   strongest `Verified` - that status is reserved for a zip actually reproduced
   from the git commit, so the label can never claim a check that was skipped.
 
+  A module in a subdirectory of its repository (`service/s3`, or `client/v3`
+  for a `/v3` module whose code lives in `client/`) is compared as the go
+  command builds it: the tag is the directory-prefixed one
+  (`refs/tags/service/s3/v1.2.3`), and only that directory is hashed. The
+  directory comes from the proxy's `Origin` metadata, or from the module path
+  when the proxy gives none. The record's `git_subdir` names the directory
+  hashed, relative to the repository root: `"."` for the root, and `null` in
+  `--json` when the record names no directory (nothing was hashed, or the record
+  was written by an earlier version). If the directory is missing at that tag,
+  or its `go.mod` names another module, the detail says so and nothing is
+  hashed. A record written by an
+  earlier version keeps its detail (often "proxy hash … does not match git
+  checkout hash …" for such a module) until the coordinate is fetched again:
+  `fetch --force`, or the next full fetch of it.
+
 `@<version>` may be an explicit version or `@latest`. Omitting it is only
 valid with `--list-versions` or a scope flag (`--gomod`/`--tool`/`--project`).
 
