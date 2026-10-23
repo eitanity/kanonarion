@@ -110,16 +110,17 @@ func goModRequires(coord coordinate.ModuleCoordinate, imports []string, buildLis
 	for path := range selected {
 		reqs = append(reqs, coordByPath[path])
 	}
-	// Path is a map key here, so no two requires share one; the version is keyed
-	// anyway so the comparator reads as a total order without a reader having to
-	// trace the map back.
-	sort.Slice(reqs, func(i, j int) bool {
-		if reqs[i].Path() != reqs[j].Path() {
-			return reqs[i].Path() < reqs[j].Path()
-		}
-		return reqs[i].Version() < reqs[j].Version()
-	})
+	sort.Slice(reqs, func(i, j int) bool { return requireLess(reqs[i], reqs[j]) })
 	return reqs
+}
+
+// requireLess orders requires by path, then version. Path is a map key in
+// goModRequires, so no two share one; the version keeps the order total.
+func requireLess(a, b coordinate.ModuleCoordinate) bool {
+	if a.Path() != b.Path() {
+		return a.Path() < b.Path()
+	}
+	return a.Version() < b.Version()
 }
 
 // providingModule finds the build-list module that provides an imported package.

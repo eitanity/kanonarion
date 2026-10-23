@@ -113,6 +113,9 @@ exit 0
     "backend": "sqlite",
     "sumdb_cache": ""
   },
+  "vulndb": {
+    "url": ""
+  },
   "settings": [
     {
       "key": "version",
@@ -307,6 +310,11 @@ exit 0
     {
       "key": "storage.sumdb_cache",
       "value": "(unset: sumdb under the store root)",
+      "source": "default"
+    },
+    {
+      "key": "vulndb.url",
+      "value": "(unset: https://vuln.go.dev)",
       "source": "default"
     }
   ]

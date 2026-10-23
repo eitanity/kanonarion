@@ -45,5 +45,6 @@ fips_policy.on_deviation                          warn  (default)
 fetch_policy.allowed_vcs_hosts                    (unset: built-in host set, advisory)  (default)
 storage.backend                                   sqlite  (default)
 storage.sumdb_cache                               (unset: sumdb under the store root)  (default)
+vulndb.url                                        (unset: https://vuln.go.dev)  (default)
 --- stderr ---
 (empty)

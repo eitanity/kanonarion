@@ -93,11 +93,9 @@ var ErrSnapshotIntegrity = errors.New("vulnerability database snapshot integrity
 // This run leaves the corrupt blob alone: it is the evidence of the tamper, and
 // re-fetching over it silently would destroy the one artefact an investigation
 // needs. The message says so, and says the opposite thing too — that the remedy
-// it recommends DOES overwrite it. Measured, not assumed: PutDatabaseSnapshot
-// upserts on (source, version), so a --fresh re-fetch of the same dated snapshot
-// version replaces the altered bytes in place and leaves nothing to examine. An
-// operator who wants the evidence must copy the store first, and would otherwise
-// learn that only after destroying it.
+// it recommends DOES overwrite it: a re-fetch of the bytes the hash names
+// restores them in place and leaves nothing to examine. An operator who wants
+// the evidence must copy the store first.
 func SnapshotIntegrityAbort(snapshot domain.DatabaseSnapshot, err error) error {
 	return fmt.Errorf(
 		"%w: the advisory database snapshot %s@%s does not match the bytes it is recorded as, "+
@@ -449,10 +447,13 @@ type VulnerabilityStore interface {
 	// on the same partial-result terms as ListWalkScanRuns.
 	ListAllWalkScanRuns(ctx context.Context) ([]domain.WalkScanRun, error)
 
-	// PutDatabaseSnapshot persists a vulnerability database snapshot blob.
+	// PutDatabaseSnapshot appends a vulnerability database snapshot blob, keyed
+	// on source, version and content hash. It never replaces another row's
+	// bytes; held bytes that fail their hash are restored by the same bytes.
 	PutDatabaseSnapshot(ctx context.Context, snapshot domain.DatabaseSnapshot, content io.Reader) error
 
-	// GetDatabaseSnapshot retrieves the blob content for a pinned snapshot.
+	// GetDatabaseSnapshot retrieves the blob content for a pinned snapshot: the
+	// row with its content hash, else the latest row for its version.
 	GetDatabaseSnapshot(ctx context.Context, snapshot domain.DatabaseSnapshot) (io.ReadCloser, error)
 
 	// GetLatestDatabaseSnapshot returns the most recently stored snapshot metadata.

@@ -34,6 +34,7 @@ func TestParse_UnknownKeyInEverySectionIsRefused(t *testing.T) {
 		{"fips_policy: {requird: true}", `unknown key "fips_policy.requird" (did you mean "required"?)`},
 		{"fetch_policy: {alowed_vcs_hosts: [example.org]}", `unknown key "fetch_policy.alowed_vcs_hosts" (did you mean "allowed_vcs_hosts"?)`},
 		{"storage: {backed: sqlite}", `unknown key "storage.backed" (did you mean "backend"?)`},
+		{"vulndb: {ulr: https://mirror.example.com}", `unknown key "vulndb.ulr" (did you mean "url"?)`},
 		{"base: &b {jsn: true}\npreferences:\n  <<: *b", `unknown key "base"`},
 		{"preferences:\n  <<: {jsn: true}", `unknown key "preferences.jsn" (did you mean "json"?)`},
 	} {
@@ -89,6 +90,15 @@ func TestParse_RefusesWhatConfigSetRefuses(t *testing.T) {
 		{"fetch_policy.allowed_vcs_hosts", "fetch_policy", "allowed_vcs_hosts", "[https://github.com]"},
 		{"storage.backend", "storage", "backend", "[sqlite]"},
 		{"storage.sumdb_cache", "storage", "sumdb_cache", "{a: b}"},
+		{"vulndb.url", "vulndb", "url", "http://mirror.example.com"},
+		{"vulndb.url", "vulndb", "url", "ftp://mirror.example.com"},
+		{"vulndb.url", "vulndb", "url", "https://"},
+		{"vulndb.url", "vulndb", "url", "\"\""},
+		{"vulndb.url", "vulndb", "url", "mirror.example.com"},
+		{"vulndb.url", "vulndb", "url", "https://user@mirror.example.com"},
+		{"vulndb.url", "vulndb", "url", "https://mirror.example.com/?q=1"},
+		{"vulndb.url", "vulndb", "url", "[https://mirror.example.com]"},
+		{"vulndb.url", "vulndb", "url", "\"https://mirror.example.com/%zz\""},
 	} {
 		var doc yaml.Node
 		if err := yaml.Unmarshal([]byte(tc.value), &doc); err != nil {

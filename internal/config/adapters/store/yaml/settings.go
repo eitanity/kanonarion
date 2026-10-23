@@ -2,6 +2,7 @@ package yaml
 
 import (
 	"fmt"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -30,16 +31,30 @@ func ValidateSetting(key string, node *yaml.Node) error {
 		}
 	case key == "callgraph.toolchain":
 		return validateToolchain(key, node, shown)
-	case key == "staleness.ttl":
-		return validateTTL(node, shown)
-	case key == "staleness.probe_concurrency":
-		return validateProbeConcurrency(node, shown)
+	case key == "staleness.ttl", key == "staleness.probe_concurrency":
+		return validateStaleness(key, node, shown)
 	case key == "fetch_policy.allowed_vcs_hosts":
 		return validateVCSHosts(key, node, shown)
+	case key == "vulndb.url":
+		return validateVulnDBURL(node, shown)
 	case key == "storage.backend", key == "storage.sumdb_cache":
 		if node.Kind != yaml.ScalarNode || (key == "storage.backend" && node.Value == "") {
 			return fmt.Errorf("%s requires a string, got %q", key, shown)
 		}
+	}
+	return nil
+}
+
+// validateVulnDBURL accepts only an https URL with a host: the advisory set
+// decides every verdict, so it is never fetched over plain HTTP.
+func validateVulnDBURL(node *yaml.Node, shown string) error {
+	const want = "vulndb.url requires an https:// URL with a host (the base of a mirror of https://vuln.go.dev), got %q"
+	if node.Kind != yaml.ScalarNode {
+		return fmt.Errorf(want, shown)
+	}
+	u, err := url.Parse(node.Value)
+	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return fmt.Errorf(want, shown)
 	}
 	return nil
 }
@@ -65,6 +80,13 @@ func validateToolchain(key string, node *yaml.Node, shown string) error {
 		return fmt.Errorf("%s: %w", key, err)
 	}
 	return nil
+}
+
+func validateStaleness(key string, node *yaml.Node, shown string) error {
+	if key == "staleness.ttl" {
+		return validateTTL(node, shown)
+	}
+	return validateProbeConcurrency(node, shown)
 }
 
 func validateTTL(node *yaml.Node, shown string) error {

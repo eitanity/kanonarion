@@ -64,9 +64,8 @@ fetch_policy.allowed_vcs_hosts                    (unset: built-in host set, adv
 ...
 ```
 
-The file alone does not answer "what is in force" - a key you never wrote is
-absent from it and still resolves to a built-in default at runtime. The block
-below the file is the answer.
+A key absent from the file still resolves to its built-in default, so the
+block, not the file, is what is in force.
 
 **No `config.yaml` in the store is a normal state, not an error.** The command
 exits `0` and prints the effective configuration, with a line in place of the
@@ -119,9 +118,7 @@ something was written and refused.
 The document also carries `settings`: one entry per resolved key, holding the
 dotted `key` a `config get` or `config set` takes, the `value` in force, and its
 `source` - `"file"` when the config file names that key, `"default"` when the
-value is the shipped built-in. It is the JSON leg of the `(default)` marker in
-the text, and the answer to "did an operator choose this, or is it what
-kanonarion ships with":
+value is the shipped built-in, as the `(default)` marker says in the text:
 
 ```json
 {
@@ -133,11 +130,9 @@ kanonarion ships with":
 }
 ```
 
-The claim is per value, not per section: a `preferences` block with one key set
-and two defaulted has no single source. Two entries are coarser and say so here: `license_overrides.*` and
+The source is per value, not per section. `license_overrides.*` and
 `copyright_declarations.*` exist only when the file names them, so `"file"`
-there is the presence of the entry rather than a comparison against a default -
-there is no default for them to differ from. A rejected file sets nothing, so
+there means the entry is present; they have no default. A rejected file sets nothing, so
 every entry reads `"default"`, matching the `(default)` markers in the text.
 
 ---
@@ -331,6 +326,7 @@ Keys follow the dotted-path structure of `config.yaml`.
 | `fetch_policy.allowed_vcs_hosts` | sequence | `[github.com, git.example.org]` - absent leaves the built-in host set advisory; naming it switches to enforcing |
 | `storage.backend` | string | `sqlite` - the storage backend that holds the store's records; see [Choosing the storage backend](#choosing-the-storage-backend) |
 | `storage.sumdb_cache` | string | `/var/cache/kanonarion/sumdb` - empty means `<store-root>/sumdb` |
+| `vulndb.url` | string | `https://mirror.example.com/go` - a mirror serving `vuln.go.dev`'s `vulndb.zip`, `index/db.json` and `index/modules.json.gz`; `https://` with a host only. Unset is `https://vuln.go.dev`. A snapshot from it keeps source `vuln.go.dev` and records the mirror as `origin` |
 
 The unified governance blocks (`directive_policy`, `godebug_policy`,
 `vendor_policy`, `fips_policy`) are edited in the file rather than through

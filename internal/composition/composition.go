@@ -457,7 +457,7 @@ func newDriverFrom(st *storage.Storage, storeRoot string, cfg configdomain.Confi
 	if err != nil {
 		return nil, nil, errors.Join(err, closeStorage(st))
 	}
-	scanWalk, rescanWalk := newScanPipeline(st, fetchUC, clk, logger, storeRoot)
+	scanWalk, rescanWalk := newScanPipeline(st, fetchUC, clk, logger, storeRoot, cfg.VulnDB.Mirror())
 
 	d := &Driver{
 		FetchServe: fetchapp.NewServeModuleUseCase(fetchUC, st.Blobs).WithAudit(st.Audit),
@@ -594,6 +594,7 @@ func newScanPipeline(
 	clk clock.System,
 	logger *slog.Logger,
 	storeRoot string,
+	vulndbURL string,
 ) (*vulnapp.ScanWalkUseCase, *vulnapp.RescanWalkUseCase) {
 	vulnStore, cgStore := st.Vulnerabilities, st.CallGraphs
 	callSites := reachability.NewCallSiteStoreReader(cgStore, cgapp.PipelineVersion).
@@ -606,7 +607,7 @@ func newScanPipeline(
 	moduleScanner := vulnapp.NewScanModuleUseCase(
 		st.Facts, st.Blobs, vulnStore, st.Walks,
 		govulncheck.New("v1", vulnStore).WithLogger(logger),
-		osvdb.New(nil, vulnStore, clk).WithLogger(logger),
+		osvdb.New(nil, vulnStore, clk).WithLogger(logger).WithBase(vulndbURL),
 		reachability.New(),
 		clk, vulnapp.PipelineVersion, logger,
 	).WithCallGraphLoader(reachability.NewCallGraphStoreLoader(cgStore, cgapp.PipelineVersion)).

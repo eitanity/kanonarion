@@ -282,6 +282,8 @@ type configShowResult struct {
 	FetchPolicy     configFetchResult     `json:"fetch_policy"`
 	// Storage is the backend the store is opened through (schema v3).
 	Storage configStorageResult `json:"storage"`
+	// VulnDB is where the vulnerability database is downloaded from.
+	VulnDB configVulnDBResult `json:"vulndb"`
 	// Sections is each section the schema does not define, such as a
 	// registered backend's own, as the file wrote it. Absent when there is none.
 	Sections map[string]string `json:"sections,omitempty"`
@@ -418,6 +420,11 @@ func rawSections(in map[string][]byte) map[string]string {
 type configStorageResult struct {
 	Backend    string `json:"backend"`
 	SumDBCache string `json:"sumdb_cache"`
+}
+
+// configVulnDBResult is the vulndb section; an empty url is https://vuln.go.dev.
+type configVulnDBResult struct {
+	URL string `json:"url"`
 }
 
 type configDirectiveResult struct {
@@ -607,6 +614,7 @@ func runStoreConfigShow(root string, asJSON bool, stdout io.Writer) error {
 				Backend:    cfg.Storage.Backend,
 				SumDBCache: cfg.Storage.SumDBCache,
 			},
+			VulnDB:   configVulnDBResult{URL: cfg.VulnDB.URL},
 			Sections: rawSections(cfg.Sections),
 			Settings: configSettingResults(effectiveSettings(cfg, raw)),
 		}

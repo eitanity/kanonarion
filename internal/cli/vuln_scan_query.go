@@ -586,7 +586,7 @@ func printScanShowHeader(stdout io.Writer, run vuldomain.WalkScanRun, walkPresen
 	_, _ = fmt.Fprintf(stdout, "Operator:    %s\n", run.Operator)
 	_, _ = fmt.Fprintf(stdout, "Started:     %s\n", ledgerStamp(run.StartedAt))
 	_, _ = fmt.Fprintf(stdout, "Completed:   %s\n", ledgerStamp(run.CompletedAt))
-	_, _ = fmt.Fprintf(stdout, "Snapshot:    %s@%s\n", run.Snapshot.Source(), run.Snapshot.Version())
+	_, _ = fmt.Fprintf(stdout, "Snapshot:    %s\n", snapshotLabel(run.Snapshot))
 	_, _ = fmt.Fprintf(stdout, "Advisories:  %s\n", advisoryCountLine(run.Snapshot))
 	_, _ = fmt.Fprintf(stdout, "Modules:     %d\n", len(run.PerModuleResults))
 	// One line per reason rather than one for the out-of-toolchain set alone, so

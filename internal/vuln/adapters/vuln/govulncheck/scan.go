@@ -436,9 +436,8 @@ func zipModuleDir(root string) (string, bool) {
 // The advisory count this path measures is returned to the caller, which carries
 // it onto the snapshot the record names. It is a positive number only when this
 // function extracted and counted a database itself; the pre-extracted dir was
-// already counted by the walk that supplied it, and the live-database fallback
-// is a set nothing here has read, so both report zero — unmeasured, which is
-// what the snapshot's own invariant admits.
+// already counted by the walk that supplied it, so it reports zero — unmeasured,
+// which is what the snapshot's own invariant admits.
 func (s *Scanner) prepareDBArg(ctx context.Context, snapshot domain.DatabaseSnapshot, dbDir string) (string, int, func(), error) {
 	noop := func() {}
 	s.logger.Info("vuln-scan: preparing vulnerability database", "snapshot", snapshot.Version())

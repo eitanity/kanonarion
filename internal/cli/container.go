@@ -542,7 +542,7 @@ func NewContainerFrom(st *storage.Storage, storeRoot, goproxy, goBinary string, 
 
 	// ---- vuln use cases ----
 	scanner := govulncheck.New("v1", vulnStore).WithLogger(logger).WithTarget(declaredTarget).WithTinyGo(declaredTinyGo)
-	database := osvdb.New(nil, vulnStore, clk).WithLogger(logger)
+	database := osvdb.New(nil, vulnStore, clk).WithLogger(logger).WithBase(cfg.VulnDB.Mirror())
 	reach := reachability.New()
 	cgLoader := reachability.NewCallGraphStoreLoader(cgStore, cgapp.PipelineVersion)
 	// One annotator for the whole container, so the module scanner, the walk scan

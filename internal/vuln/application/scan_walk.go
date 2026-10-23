@@ -1474,16 +1474,12 @@ func (uc *ScanWalkUseCase) fetchAndPersistSnapshot(ctx context.Context, errFetch
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", errFetch, err)
 	}
+	// A refresh that found the stored generation still current transferred no
+	// body and appends nothing — nothing was acquired to witness.
 	if body != nil {
 		defer func() { _ = body.Close() }()
-		if err := uc.vulnStore.PutDatabaseSnapshot(ctx, s, body); err != nil {
+		if s, err = persistSnapshot(ctx, uc.vulnStore, uc.audit, s, body, route); err != nil {
 			return nil, fmt.Errorf("%s: %w", errPersist, err)
-		}
-		// Assurance log: one event per persisted snapshot, after the write. A
-		// refresh that found the stored generation still current transferred no
-		// body and appends nothing — nothing was acquired to witness.
-		if err := emitSnapshotRecorded(uc.audit, s, route); err != nil {
-			return nil, err
 		}
 	}
 	return &s, nil

@@ -264,8 +264,8 @@ func configKeyPath(key string) ([]string, bool) {
 		return []string{"staleness", strings.TrimPrefix(key, "staleness.")}, true
 	case key == "fetch_policy.allowed_vcs_hosts":
 		return []string{"fetch_policy", "allowed_vcs_hosts"}, true
-	case key == "storage.backend", key == "storage.sumdb_cache":
-		return []string{"storage", strings.TrimPrefix(key, "storage.")}, true
+	case key == "storage.backend", key == "storage.sumdb_cache", key == "vulndb.url":
+		return strings.SplitN(key, ".", 2), true
 	default:
 		return nil, false
 	}
@@ -302,6 +302,8 @@ func configGetValue(cfg domain.Config, key string) (string, error) {
 		return cfg.Storage.Backend, nil
 	case "storage.sumdb_cache":
 		return sumdbCacheDisplay(cfg.Storage.SumDBCache), nil
+	case "vulndb.url":
+		return vulndbURLDisplay(cfg.VulnDB.URL), nil
 	default:
 		return configGetPolicyValue(cfg, key)
 	}
@@ -582,8 +584,8 @@ func configSetPath(key string) ([]string, error) {
 		return []string{"fetch_policy", "allowed_vcs_hosts"}, nil
 	case key == "storage.backend":
 		return []string{"storage", "backend"}, nil
-	case key == "storage.sumdb_cache":
-		return []string{"storage", "sumdb_cache"}, nil
+	case key == "storage.sumdb_cache", key == "vulndb.url":
+		return strings.SplitN(key, ".", 2), nil
 	default:
 		return nil, &exitError{code: ExitConfig, msg: fmt.Sprintf("unknown config key %q", key)}
 	}

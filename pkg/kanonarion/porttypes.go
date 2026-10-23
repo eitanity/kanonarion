@@ -965,6 +965,13 @@ type StalenessConfig = configdomain.StalenessConfig
 // may be added within a major version (§4).
 type StorageConfig = configdomain.StorageConfig
 
+// VulnDBConfig is the vulndb section of config.yaml: where the vulnerability
+// database is downloaded from.
+//
+// Stability: supporting type of the ConfigStore port; unstable pre-v1. Fields
+// may be added within a major version (§4).
+type VulnDBConfig = configdomain.VulnDBConfig
+
 // StalenessDeprecation is the module's own deprecation notice — the `//
 // Deprecated:` comment on the `module` directive in its go.mod, which the go
 // command reports alongside the latest-version answer.

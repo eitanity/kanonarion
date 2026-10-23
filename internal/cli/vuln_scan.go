@@ -425,10 +425,12 @@ type vulnScanRunFacts struct {
 type vulnScanSnapshotJSON struct {
 	Source  string `json:"source"`
 	Version string `json:"version"`
+	// Origin is the mirror the bytes came from; absent for vuln.go.dev itself.
+	Origin string `json:"origin,omitempty"`
 }
 
 func vulnScanSnapshotOf(s vuldomain.DatabaseSnapshot) vulnScanSnapshotJSON {
-	return vulnScanSnapshotJSON{Source: s.Source(), Version: s.Version()}
+	return vulnScanSnapshotJSON{Source: s.Source(), Version: s.Version(), Origin: s.Origin()}
 }
 
 // vulnScanToolchainJSON is the toolchain axis on the machine surface: the same
@@ -752,25 +754,31 @@ func advisoryRefreshLine(r application2.SnapshotRefresh, err error) string {
 		return fmt.Sprintf("advisory database: refresh failed (%v); the stored database is unchanged and this run is judged against it", err)
 	}
 	source, version := r.Snapshot.Source(), r.Snapshot.Version()
+	// A configured mirror is what was asked, so the line names it beside the
+	// database it mirrors.
+	via := ""
+	if mirror := activeConfig.VulnDB.Mirror(); mirror != "" {
+		via = " (mirror " + mirror + ")"
+	}
 	switch {
 	case r.StampErr != nil:
-		return fmt.Sprintf("advisory database: %s published generation unreadable (%v); downloaded the database, now at %s",
-			source, r.StampErr, version)
+		return fmt.Sprintf("advisory database: %s%s published generation unreadable (%v); downloaded the database, now at %s",
+			source, via, r.StampErr, version)
 	case r.IndexErr != nil:
-		return fmt.Sprintf("advisory database: %s advanced %s -> %s, but the advisories could not be compared (%v); downloaded the new database",
-			source, r.PriorVersion, r.PublishedVersion, r.IndexErr)
+		return fmt.Sprintf("advisory database: %s%s advanced %s -> %s, but the advisories could not be compared (%v); downloaded the new database",
+			source, via, r.PriorVersion, r.PublishedVersion, r.IndexErr)
 	case r.Outcome == application2.RefreshUnchanged:
-		return fmt.Sprintf("advisory database: checked %s and found it unchanged at %s; nothing was downloaded and the stored snapshot was kept",
-			source, version)
+		return fmt.Sprintf("advisory database: checked %s%s and found it unchanged at %s; nothing was downloaded and the stored snapshot was kept",
+			source, via, version)
 	case r.Outcome == application2.RefreshIndexUnchanged:
 		return fmt.Sprintf(
-			"advisory database: %s advanced %s -> %s; the advisories listed for all %d modules in this walk are identical between the two, so the run judged against %s remains current for this walk; nothing was downloaded",
-			source, r.PriorVersion, r.PublishedVersion, r.ModulesCompared, r.PriorVersion)
+			"advisory database: %s%s advanced %s -> %s; the advisories listed for all %d modules in this walk are identical between the two, so the run judged against %s remains current for this walk; nothing was downloaded",
+			source, via, r.PriorVersion, r.PublishedVersion, r.ModulesCompared, r.PriorVersion)
 	case r.PriorVersion == "":
-		return fmt.Sprintf("advisory database: no snapshot was stored; downloaded %s@%s", source, version)
+		return fmt.Sprintf("advisory database: no snapshot was stored; downloaded %s@%s%s", source, version, via)
 	default:
-		return fmt.Sprintf("advisory database: %s advanced %s -> %s and the advisories changed for a module in this walk; downloaded the new database",
-			source, r.PriorVersion, version)
+		return fmt.Sprintf("advisory database: %s%s advanced %s -> %s and the advisories changed for a module in this walk; downloaded the new database",
+			source, via, r.PriorVersion, version)
 	}
 }
 
@@ -1551,7 +1559,7 @@ func rescanWith(
 	} else {
 		_, _ = fmt.Fprintf(stdout, "Re-scan completed: %s\n", scanCompletionSummary(run))
 		_, _ = fmt.Fprintf(stdout, "Run ID: %s\n", run.ID)
-		_, _ = fmt.Fprintf(stdout, "Snapshot: %s@%s\n", run.Snapshot.Source(), run.Snapshot.Version())
+		_, _ = fmt.Fprintf(stdout, "Snapshot: %s\n", snapshotLabel(run.Snapshot))
 	}
 	// The re-scan reports the same two axes and owes the same exit code. A
 	// re-derivation that could not analyse part of the build list has not

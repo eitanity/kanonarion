@@ -94,6 +94,8 @@ type Config struct {
 
 	// Storage selects the storage backend and the checksum-database cache.
 	Storage StorageConfig
+	// VulnDB names where the vulnerability database is downloaded from.
+	VulnDB VulnDBConfig
 	// Sections holds the raw YAML of every top-level section this schema does
 	// not define, keyed by section name, so a backend registered by the binary
 	// reads its own section without the loader knowing its shape. Nil when the
@@ -125,6 +127,27 @@ func (c StorageConfig) SumDBCacheDir(storeRoot string) string {
 	default:
 		return filepath.Join(storeRoot, c.SumDBCache)
 	}
+}
+
+// VulnDBConfig is the vulndb section of config.yaml.
+type VulnDBConfig struct {
+	// URL is the base of a mirror in vuln.go.dev's layout; empty means
+	// https://vuln.go.dev.
+	URL string
+}
+
+// DefaultVulnDBURL is where the vulnerability database is downloaded from when
+// vulndb.url is not set.
+const DefaultVulnDBURL = "https://vuln.go.dev"
+
+// Mirror is the base downloads go to instead of vuln.go.dev, without a
+// trailing slash, or "" when URL is unset or names vuln.go.dev itself: only a
+// real mirror is recorded as a snapshot's origin.
+func (c VulnDBConfig) Mirror() string {
+	if base := strings.TrimRight(c.URL, "/"); base != DefaultVulnDBURL {
+		return base
+	}
+	return ""
 }
 
 // FetchPolicy governs the fetch stage's cross-verification posture.

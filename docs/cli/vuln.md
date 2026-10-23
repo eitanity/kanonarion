@@ -226,17 +226,14 @@ Findings do not change the exit code. Whether a finding should fail a build is a
 policy question, and `audit` answers it.
 
 **If the walk's own target will not load**, the run scans each module in
-isolation instead. That is a weaker answer — it describes each module built
-alone, not the build that consumes it — so the run records the target's refusal
-under the `target-load-failed` reason with the toolchain's error, and counts that
-rather than the isolated result. Records from the other frame still stand and
-still answer their own question.
+isolation instead, a weaker answer about each module built alone. The run records
+the refusal under `target-load-failed` with the toolchain's error and counts
+that, not the isolated result. Records from the other frame still stand.
 
 **On a project scope** (`--gomod`, `--tool`, `--project`) partial coverage always
-means something genuinely went unanalysed. A `version not in project build`
-reason cannot arise there, so seeing one means the scan was not project-rooted —
-usually a walk-id scan whose recorded project directory is gone, which falls back
-to per-module isolation and names the missing directory in its log.
+means something went unanalysed. A `version not in project build` reason there
+means the scan was not project-rooted: usually a walk-id scan whose project
+directory is gone, which falls back to isolation and names the directory in its log.
 
 
 ### Prerequisites
@@ -247,14 +244,12 @@ to per-module isolation and names the missing directory in its log.
 go install golang.org/x/vuln/cmd/govulncheck@latest
 ```
 
-If the binary is not found, `vuln-scan` returns a descriptive error with the
-install command rather than a generic failure.
+If it is not found, `vuln-scan` names the install command.
 
 **The Go release that built it decides which projects it can read.** govulncheck
-type-checks the project's source in-process, with the `go/types` compiled into
-it, so a binary built with go1.26 cannot parse go1.27 source however new the `go`
-on `PATH` is. `GOTOOLCHAIN` does not change this - the type checker is inside the
-binary - and only rebuilding the tool does.
+type-checks with the `go/types` compiled into it, so a binary built with go1.26
+cannot parse go1.27 source; neither the `go` on `PATH` nor `GOTOOLCHAIN` changes
+this, only rebuilding the tool does.
 
 kanonarion reads the tool's build version when it resolves the binary, so a scan
 that fails this way names the tool rather than the project's files:
@@ -267,9 +262,8 @@ change this - only rebuilding the tool can. Rebuild it with:
 GOTOOLCHAIN=go1.27.1 GOBIN=/home/op/.local/bin go install golang.org/x/vuln/cmd/govulncheck@latest
 ```
 
-The record carries `failure_cause: environment` beside its `ScanFailed`, which is
-what tells "this box cannot analyse it" from "this module cannot be analysed":
-only the first is repaired by rebuilding the tool and scanning again. The
+The record carries `failure_cause: environment` beside its `ScanFailed`: this box
+cannot analyse it, which rebuilding the tool and scanning again repairs. The
 `GOTOOLCHAIN` named is a release already unpacked on this host where there is
 one, so the rebuild needs no upgrade to the installed Go.
 
@@ -277,19 +271,19 @@ one, so the rebuild needs no upgrade to the installed Go.
 
 Under `GOPROXY=off` - read as the go command reads it, so `go env -w
 GOPROXY=off` counts, and so does `--goproxy off` on `audit` and `inspect` -
-the advisory snapshot is **not downloaded**. What that
-means in practice:
+the advisory snapshot is **not downloaded**:
 
-- A store that already holds a snapshot **scans normally**. Snapshot resolution
-  prefers the stored generation, so nothing changes: the run is judged against
-  the snapshot the store carries, and the scan-run record names it as always.
-  Both routes into a record read that stored snapshot — the `govulncheck`
-  analysis and the advisory match by coordinate — so neither needs the network.
-- `--fresh` refuses. Refreshing means reading the published generation from
-  `vuln.go.dev`, which is the network.
+- A store that already holds a snapshot **scans normally**: the run is judged
+  against the stored snapshot, and both routes into a record (the `govulncheck`
+  analysis and the advisory match by coordinate) read it offline.
+- `--fresh` refuses. Refreshing means reading the published generation, which
+  is the network.
 - A store with **no** snapshot refuses, naming the remedy: drop `--fresh`, pin
   one with `--snapshot-source`/`--snapshot-version`, or carry in a store that
   holds one. `vuln-snapshot-list` shows what the store has.
+
+A host that reaches an internal mirror of `vuln.go.dev` but not the internet
+sets [`vulndb.url`](config.md#key-paths) and leaves `GOPROXY` on.
 
 The scan itself is already offline - `govulncheck` is run with `GOPROXY=off`
 against the verified module cache, which is unchanged. See
@@ -1923,9 +1917,12 @@ kanonarion vuln-snapshot-list [flags]
 
 ```
 $ kanonarion vuln-snapshot-list
-vuln.go.dev                    20240115000000       2024-01-15T00:00:00Z
-vuln.go.dev                    20240101000000       2024-01-01T00:00:00Z
+vuln.go.dev                    20240115000000       2024-01-15T00:00:00Z sha256:9c1e…
+vuln.go.dev                    20240101000000       2024-01-01T00:00:00Z sha256:4b7a…
 ```
+
+A version re-published with different bytes is two rows; a read by source and
+version answers with the later.
 
 This command takes no filter and no `--limit`, so an empty answer has exactly one
 cause and says it:
@@ -1936,8 +1933,8 @@ the store holds no vulnerability database snapshot at all
   to produce one: kanonarion vuln-scan <walk-id>
 ```
 
-A snapshot is pinned by the scan that judged a walk against it; there is no
-command whose job is to fetch one on its own.
+A snapshot is pinned by the scan that judged a walk against it; no command
+fetches one on its own.
 
 ---
 
@@ -1966,9 +1963,7 @@ Retrieved at: 2024-01-15T00:00:00Z
 Content hash: sha256:abc123...
 ```
 
-A snapshot that is not there exits `4` and the message says how many snapshots
-were searched, so an unrecognised version over a stocked store cannot be read as
-an empty one:
+A snapshot that is not there exits `4`, saying how many snapshots were searched:
 
 ```
 no vulnerability database snapshot matched source and version "vuln.go.dev@20991231000000" — the value is
@@ -1983,26 +1978,26 @@ vuln-snapshot-list
 
 ```bash
 # 1. Walk the dependency graph
-kanonarion walk github.com/gin-gonic/gin@v1.6.2 --store-root ~/.kanonarion
+kanonarion walk github.com/gin-gonic/gin@v1.6.2
 
 # 2. Scan for vulnerabilities (fetches and pins the database snapshot)
-kanonarion vuln-scan --module github.com/gin-gonic/gin@v1.6.2 --store-root ~/.kanonarion
+kanonarion vuln-scan --module github.com/gin-gonic/gin@v1.6.2
 
 # 3. Inspect the scan run
-kanonarion vuln-scan-list --store-root ~/.kanonarion
-kanonarion vuln-scan-show <run-id> --store-root ~/.kanonarion
+kanonarion vuln-scan-list
+kanonarion vuln-scan-show <run-id>
 
 # 4. Drill into a specific module (walk-id optional; defaults to most recent scan)
-kanonarion vuln-show github.com/gin-gonic/gin@v1.6.2 --store-root ~/.kanonarion
+kanonarion vuln-show github.com/gin-gonic/gin@v1.6.2
 
 # 4a. Check whether a finding was detected in earlier scans
-kanonarion vuln-show github.com/gin-gonic/gin@v1.6.2 --history --store-root ~/.kanonarion
+kanonarion vuln-show github.com/gin-gonic/gin@v1.6.2 --history
 
 # 5. Cross-reference a CVE across all scanned modules
-kanonarion vuln-by-id CVE-2020-28483 --store-root ~/.kanonarion
+kanonarion vuln-by-id CVE-2020-28483
 
 # 6. Inspect stored database snapshots
-kanonarion vuln-snapshot-list --store-root ~/.kanonarion
+kanonarion vuln-snapshot-list
 ```
 
 ## Modules resolved under pre-modules semantics

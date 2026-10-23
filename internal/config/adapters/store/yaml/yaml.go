@@ -75,6 +75,14 @@ type configYAML struct {
 
 	// Storage (schema v3). Absent resolves to the SQLite backend.
 	Storage *storageYAML `yaml:"storage"`
+
+	// VulnDB names a mirror of the vulnerability database. Absent is vuln.go.dev.
+	VulnDB *vulndbYAML `yaml:"vulndb"`
+}
+
+// vulndbYAML is the vulndb section.
+type vulndbYAML struct {
+	URL string `yaml:"url"`
 }
 
 // storageYAML selects the storage backend. A key with no value keeps the default.
@@ -439,6 +447,9 @@ func applyStorage(cfg *domain.Config, y configYAML, defaults domain.Config, data
 			cfg.Storage.Backend = st.Backend
 		}
 		cfg.Storage.SumDBCache = st.SumDBCache
+	}
+	if v := y.VulnDB; v != nil {
+		cfg.VulnDB.URL = v.URL
 	}
 	sections, err := otherSections(data)
 	if err != nil {

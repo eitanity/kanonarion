@@ -24,7 +24,7 @@ var knownSections = []string{
 	"copyright_declarations", "callgraph",
 	"staleness",
 	"directive_policy", "godebug_policy", "vendor_policy", "fips_policy",
-	"fetch_policy", "storage",
+	"fetch_policy", "storage", "vulndb",
 }
 
 // sectionDefaults maps a top-level section name to the YAML block appended
@@ -221,6 +221,12 @@ storage:
   # The checksum-database tile cache. Empty means <store-root>/sumdb; a
   # relative path is resolved against the store root.
   # sumdb_cache: ""
+`,
+	"vulndb": `
+vulndb:
+  # The base of a mirror of https://vuln.go.dev serving vulndb.zip,
+  # index/db.json and index/modules.json.gz. https only.
+  # url: https://vuln.go.dev
 `,
 }
 

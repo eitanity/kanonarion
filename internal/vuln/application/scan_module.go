@@ -645,17 +645,8 @@ func (uc *ScanModuleUseCase) resolveScanSnapshot(ctx context.Context, params Sca
 		return snapshot, nil
 	}
 	defer func() { _ = body.Close() }()
-	// Persist the snapshot if it's new
-	if err := uc.vulnStore.PutDatabaseSnapshot(ctx, snapshot, body); err != nil {
+	if snapshot, err = persistSnapshot(ctx, uc.vulnStore, uc.audit, snapshot, body, snapshotRouteModuleScan); err != nil {
 		return domain.DatabaseSnapshot{}, fmt.Errorf("persisting database snapshot: %w", err)
-	}
-	// Assurance log: the arrival of an advisory set is what "what did we know and
-	// when" turns on, and it was persisted silently. Emitted after the write, so
-	// a failed append says a stored snapshot is unlogged rather than discarding
-	// it. A body is handed over only when there is a new generation to store, so
-	// a reused snapshot never reaches here.
-	if err := emitSnapshotRecorded(uc.audit, snapshot, snapshotRouteModuleScan); err != nil {
-		return domain.DatabaseSnapshot{}, err
 	}
 	return snapshot, nil
 }

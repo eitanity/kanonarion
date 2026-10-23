@@ -78,7 +78,7 @@ type snapshotDatabase struct {
 
 // Database implements ports.VulnerabilityDatabase.
 //
-// Acquisition reaches vuln.go.dev — Snapshot, LatestVersion and
+// Acquisition reaches vuln.go.dev, or the mirror WithBase names — Snapshot, LatestVersion and
 // PublishedAdvisoryIndex are how a generation arrives and how two generations
 // are compared. Judging a coordinate does not: CheckVulnerable and
 // LookupFindings read a stored snapshot, so a scan consults exactly the
@@ -88,6 +88,8 @@ type Database struct {
 	vulnStore ports.VulnerabilityStore
 	clock     fetchports.Clock
 	logger    *slog.Logger
+	// base is a mirror in vuln.go.dev's layout; empty means vuln.go.dev itself.
+	base string
 
 	mu        sync.RWMutex
 	snapshots map[string]*snapshotDatabase // source@version -> opened snapshot
@@ -112,7 +114,34 @@ func New(client *http.Client, vulnStore ports.VulnerabilityStore, clk fetchports
 func (d *Database) WithLogger(logger *slog.Logger) *Database {
 	copy := New(d.client, d.vulnStore, d.clock)
 	copy.logger = logger
+	copy.base = d.base
 	return copy
+}
+
+// WithBase returns a copy of the Database that downloads from a mirror at base
+// instead of vuln.go.dev; empty keeps vuln.go.dev. The config loader has
+// already refused all but an https URL with a host.
+func (d *Database) WithBase(base string) *Database {
+	copy := New(d.client, d.vulnStore, d.clock)
+	copy.logger = d.logger
+	copy.base = base
+	return copy
+}
+
+// baseURL is where every download goes.
+func (d *Database) baseURL() string {
+	if d.base == "" {
+		return vulnGoDevBase
+	}
+	return d.base
+}
+
+// sourceName names where downloads go in log and error text.
+func (d *Database) sourceName() string {
+	if d.base == "" {
+		return "vuln.go.dev"
+	}
+	return d.base
 }
 
 // Snapshot fetches the full Go vulnerability database in a single request to
@@ -129,7 +158,7 @@ func (d *Database) Snapshot(ctx context.Context) (domain.DatabaseSnapshot, io.Re
 
 	version, err := validateSnapshotZip(zipData)
 	if err != nil {
-		return domain.DatabaseSnapshot{}, nil, fmt.Errorf("validate vulndb.zip: %w", err)
+		return domain.DatabaseSnapshot{}, nil, fmt.Errorf("validate vulndb.zip from %s: %w", d.sourceName(), err)
 	}
 
 	// Seal the snapshot against the bytes just downloaded. This is the only place
@@ -140,6 +169,13 @@ func (d *Database) Snapshot(ctx context.Context) (domain.DatabaseSnapshot, io.Re
 	snapshot, err := domain.NewDatabaseSnapshot("vuln.go.dev", version, d.clock.Now(), domain.HashSnapshotContent(zipData))
 	if err != nil {
 		return domain.DatabaseSnapshot{}, nil, fmt.Errorf("pinning vulndb.zip snapshot: %w", err)
+	}
+	// A mirror serves the same database, so Source stays vuln.go.dev and only
+	// the origin records where these bytes came from.
+	if d.base != "" {
+		if snapshot, err = snapshot.WithOrigin(d.base); err != nil {
+			return domain.DatabaseSnapshot{}, nil, fmt.Errorf("pinning vulndb.zip snapshot: %w", err)
+		}
 	}
 
 	return snapshot, io.NopCloser(bytes.NewReader(zipData)), nil
@@ -155,7 +191,7 @@ func (d *Database) Snapshot(ctx context.Context) (domain.DatabaseSnapshot, io.Re
 // because the caller's next step is a comparison and "" compares equal to
 // nothing anyone stored.
 func (d *Database) LatestVersion(ctx context.Context) (string, error) {
-	url := vulnGoDevBase + "/index/db.json"
+	url := d.baseURL() + "/index/db.json"
 	resp, err := d.request(ctx, url)
 	if err != nil {
 		return "", err
@@ -185,7 +221,7 @@ const maxModulesIndexBytes = 256 << 20
 // gzip-compressed at a fraction of the body's size — so two generations can be
 // compared without downloading either in full.
 func (d *Database) PublishedAdvisoryIndex(ctx context.Context) (ports.AdvisoryIndex, error) {
-	data, err := d.fetchRawGZ(ctx, vulnGoDevBase+"/index/modules.json.gz")
+	data, err := d.fetchRawGZ(ctx, d.baseURL()+"/index/modules.json.gz")
 	if err != nil {
 		return nil, fmt.Errorf("fetch published modules index: %w", err)
 	}
@@ -274,7 +310,7 @@ func decodeAdvisoryIndex(data []byte) (ports.AdvisoryIndex, error) {
 // fetchVulnDBZip downloads the bulk /vulndb.zip body in one request, logging
 // byte-based progress so a slow first run does not look like a hang.
 func (d *Database) fetchVulnDBZip(ctx context.Context) ([]byte, error) {
-	url := vulnGoDevBase + "/vulndb.zip"
+	url := d.baseURL() + "/vulndb.zip"
 	resp, err := d.request(ctx, url)
 	if err != nil {
 		return nil, err
@@ -282,7 +318,7 @@ func (d *Database) fetchVulnDBZip(ctx context.Context) ([]byte, error) {
 	defer func() { _ = resp.Body.Close() }()
 
 	d.logger.Info("vulnerability database snapshot: downloading",
-		"source", "vuln.go.dev", "content_length", resp.ContentLength)
+		"source", d.sourceName(), "content_length", resp.ContentLength)
 	data, err := d.readWithProgress(resp.Body, resp.ContentLength)
 	if err != nil {
 		return nil, err
@@ -320,9 +356,6 @@ func (d *Database) readWithProgress(body io.Reader, contentLength int64) ([]byte
 	return buf.Bytes(), nil
 }
 
-// responseError maps a vuln.go.dev HTTP response to an error, distinguishing
-// rate limiting (429, surfacing Retry-After when present) from other non-200
-// statuses. It returns nil for HTTP 200.
 // request performs every outbound GET this adapter makes, so the no-network
 // contract is asked once instead of at four call sites that could each forget
 // to — which is how the advisory download stayed outside the contract while the
@@ -343,19 +376,22 @@ func (d *Database) request(ctx context.Context, url string) (*http.Response, err
 	if err != nil {
 		return nil, fmt.Errorf("fetch %s: %w", url, err)
 	}
-	if err := responseError(resp, url); err != nil {
+	if err := responseError(resp, url, d.sourceName()); err != nil {
 		_ = resp.Body.Close()
 		return nil, err
 	}
 	return resp, nil
 }
 
-func responseError(resp *http.Response, url string) error {
+// responseError maps an HTTP response from source to an error, distinguishing
+// rate limiting (429, surfacing Retry-After when present) from other non-200
+// statuses. It returns nil for HTTP 200.
+func responseError(resp *http.Response, url, source string) error {
 	if resp.StatusCode == http.StatusTooManyRequests {
 		if retryAfter := resp.Header.Get("Retry-After"); retryAfter != "" {
-			return fmt.Errorf("rate limited by vuln.go.dev (HTTP 429): retry after %s", retryAfter)
+			return fmt.Errorf("rate limited by %s (HTTP 429): retry after %s", source, retryAfter)
 		}
-		return fmt.Errorf("rate limited by vuln.go.dev (HTTP 429)")
+		return fmt.Errorf("rate limited by %s (HTTP 429)", source)
 	}
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("unexpected status fetching %s: %s", url, resp.Status)
@@ -366,7 +402,8 @@ func responseError(resp *http.Response, url string) error {
 // validateSnapshotZip checks that data is a zip carrying the govulncheck file://
 // layout — index/db.json, index/modules.json, and at least one ID/<ID>.json —
 // and returns the snapshot version parsed from index/db.json's modified field.
-// It fails closed on any missing layout element. Pure (no network I/O) so the
+// It fails closed on any missing layout element, and reads every entry through
+// so a corrupted one fails its checksum here, before the snapshot is stored. Pure (no network I/O) so the
 // untrusted-zip ingestion path can be tested and fuzzed directly.
 func validateSnapshotZip(data []byte) (string, error) {
 	zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
@@ -378,6 +415,9 @@ func validateSnapshotZip(data []byte) (string, error) {
 	var dbContent []byte
 	var dbFound bool
 	for _, f := range zr.File {
+		if cerr := checkZipEntry(f); cerr != nil {
+			return "", cerr
+		}
 		switch {
 		case f.Name == "index/db.json":
 			dbFound = true
@@ -410,6 +450,25 @@ func validateSnapshotZip(data []byte) (string, error) {
 		return "", fmt.Errorf("index/db.json has empty modified field")
 	}
 	return version, nil
+}
+
+// checkZipEntry reads one entry to its end, which is where archive/zip compares
+// the CRC-32. maxModulesIndexBytes, the largest entry this adapter reads, bounds
+// a decompression bomb.
+func checkZipEntry(f *zip.File) error {
+	rc, err := f.Open()
+	if err != nil {
+		return fmt.Errorf("open %s: %w", f.Name, err)
+	}
+	defer func() { _ = rc.Close() }()
+	n, err := io.Copy(io.Discard, io.LimitReader(rc, maxModulesIndexBytes+1))
+	if err != nil {
+		return fmt.Errorf("read %s: %w", f.Name, err)
+	}
+	if n > maxModulesIndexBytes {
+		return fmt.Errorf("%s is larger than %d bytes", f.Name, maxModulesIndexBytes)
+	}
+	return nil
 }
 
 // readZipFile opens a single zip entry and reads up to limit bytes. The limit
@@ -490,12 +549,12 @@ func (d *Database) GetSnapshot(ctx context.Context, identity domain.DatabaseSnap
 	return rc, nil
 }
 
-// snapshotKey names a stored snapshot for the open-snapshot cache. Source and
-// version are the identity the store is keyed on; the advisory count and the
-// retrieval stamp are readings ABOUT that generation and must not split it into
-// two cache entries.
+// snapshotKey names a stored snapshot for the open-snapshot cache. Source,
+// version and content hash are the identity the store is keyed on, since one
+// version can be held as two contents; the advisory count and the retrieval
+// stamp are readings ABOUT those bytes and must not split them into two entries.
 func snapshotKey(identity domain.DatabaseSnapshot) string {
-	return identity.Source() + "@" + identity.Version()
+	return identity.Source() + "@" + identity.Version() + "@" + identity.ContentHash()
 }
 
 // openSnapshot opens the stored snapshot named by identity and caches it, so a

@@ -694,6 +694,29 @@ ALTER TABLE walk_scan_run_modules ADD COLUMN record_content_hash TEXT NOT NULL D
 ALTER TABLE vulnerability_findings_index DROP COLUMN is_reachable;
 `,
 		},
+		{
+			Module:  "vuln",
+			Version: 17,
+			// Key snapshots on their content hash too, so new bytes published under
+			// a version already held are stored beside it instead of overwriting
+			// the bytes earlier runs were judged against; and record the mirror a
+			// snapshot came from (empty is vuln.go.dev, as for every existing row).
+			SQL: `
+CREATE TABLE vulnerability_snapshots_v17 (
+    source       TEXT NOT NULL,
+    version      TEXT NOT NULL,
+    retrieved_at TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    content      BLOB NOT NULL,
+    origin       TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (source, version, content_hash)
+);
+INSERT INTO vulnerability_snapshots_v17 (source, version, retrieved_at, content_hash, content)
+SELECT source, version, retrieved_at, content_hash, content FROM vulnerability_snapshots ORDER BY rowid;
+DROP TABLE vulnerability_snapshots;
+ALTER TABLE vulnerability_snapshots_v17 RENAME TO vulnerability_snapshots;
+`,
+		},
 	}
 }
 
@@ -1549,22 +1572,45 @@ func (s *Store) PutDatabaseSnapshot(ctx context.Context, snapshot domain.Databas
 		return fmt.Errorf("sealing snapshot %s@%s against the bytes being stored: %w", snapshot.Source(), snapshot.Version(), err)
 	}
 
-	const q = `
-INSERT INTO vulnerability_snapshots (
-    source, version, retrieved_at, content_hash, content
-) VALUES (?, ?, ?, ?, ?)
-ON CONFLICT (source, version) DO UPDATE SET
-    retrieved_at = excluded.retrieved_at,
-    content_hash = excluded.content_hash,
-    content      = excluded.content`
+	return s.writeSnapshotRow(ctx, sealed, data)
+}
 
-	_, err = s.db.DB().ExecContext(ctx, q,
-		sealed.Source(), sealed.Version(),
-		sealed.RetrievedAt().UTC().Format(time.RFC3339),
-		sealed.ContentHash(), data,
-	)
+// writeSnapshotRow appends a snapshot row, never replacing another one's bytes.
+// The same (source, version, hash) again changes nothing; the one exception is
+// a held row whose bytes no longer match its hash, which these bytes restore.
+func (s *Store) writeSnapshotRow(ctx context.Context, sealed domain.DatabaseSnapshot, data []byte) error {
+	tx, err := s.db.DB().BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("beginning snapshot write: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }() //nolint:errcheck // rollback after commit is a no-op
+
+	var held []byte
+	err = tx.QueryRowContext(ctx,
+		`SELECT content FROM vulnerability_snapshots WHERE source = ? AND version = ? AND content_hash = ?`,
+		sealed.Source(), sealed.Version(), sealed.ContentHash()).Scan(&held)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		_, err = tx.ExecContext(ctx, `
+INSERT INTO vulnerability_snapshots (
+    source, version, retrieved_at, content_hash, content, origin
+) VALUES (?, ?, ?, ?, ?, ?)`,
+			sealed.Source(), sealed.Version(), sealed.RetrievedAt().UTC().Format(time.RFC3339),
+			sealed.ContentHash(), data, sealed.Origin())
+	case err != nil:
+		return fmt.Errorf("reading the held database snapshot: %w", err)
+	case domain.HashSnapshotContent(held) == sealed.ContentHash():
+		return nil
+	default:
+		_, err = tx.ExecContext(ctx,
+			`UPDATE vulnerability_snapshots SET content = ? WHERE source = ? AND version = ? AND content_hash = ?`,
+			data, sealed.Source(), sealed.Version(), sealed.ContentHash())
+	}
 	if err != nil {
 		return fmt.Errorf("inserting database snapshot: %w", err)
+	}
+	if cerr := tx.Commit(); cerr != nil {
+		return fmt.Errorf("committing database snapshot: %w", cerr)
 	}
 	return nil
 }
@@ -1600,11 +1646,14 @@ func (s *Store) GetDatabaseSnapshot(ctx context.Context, snapshot domain.Databas
 		return nil, fmt.Errorf("getting database snapshot: %w", domain.ErrZeroSnapshot)
 	}
 
-	const q = `SELECT content, content_hash FROM vulnerability_snapshots WHERE source = ? AND version = ?`
+	// The row with the caller's hash answers exactly; otherwise the latest row
+	// for the version does, and the checks below say how it differs.
+	const q = `SELECT content, content_hash FROM vulnerability_snapshots WHERE source = ? AND version = ?
+ORDER BY content_hash = ? DESC, retrieved_at DESC, rowid DESC LIMIT 1`
 
 	var content []byte
 	var storedHash string
-	err := s.db.DB().QueryRowContext(ctx, q, snapshot.Source(), snapshot.Version()).Scan(&content, &storedHash)
+	err := s.db.DB().QueryRowContext(ctx, q, snapshot.Source(), snapshot.Version(), snapshot.ContentHash()).Scan(&content, &storedHash)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("snapshot not found: %s@%s", snapshot.Source(), snapshot.Version())
 	}
@@ -1634,10 +1683,10 @@ func (s *Store) GetDatabaseSnapshot(ctx context.Context, snapshot domain.Databas
 // them: the field being empty on the record was not only a gap in the fetch
 // path but a gap here, where the stored hash was read past.
 func (s *Store) GetLatestDatabaseSnapshot(ctx context.Context) (domain.DatabaseSnapshot, bool, error) {
-	const q = `SELECT source, version, retrieved_at, content_hash FROM vulnerability_snapshots ORDER BY retrieved_at DESC LIMIT 1`
+	const q = `SELECT source, version, retrieved_at, content_hash, origin FROM vulnerability_snapshots ORDER BY retrieved_at DESC, rowid DESC LIMIT 1`
 
-	var source, version, retrievedAt, contentHash string
-	err := s.db.DB().QueryRowContext(ctx, q).Scan(&source, &version, &retrievedAt, &contentHash)
+	var source, version, retrievedAt, contentHash, origin string
+	err := s.db.DB().QueryRowContext(ctx, q).Scan(&source, &version, &retrievedAt, &contentHash, &origin)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.DatabaseSnapshot{}, false, nil
 	}
@@ -1645,12 +1694,7 @@ func (s *Store) GetLatestDatabaseSnapshot(ctx context.Context) (domain.DatabaseS
 		return domain.DatabaseSnapshot{}, false, fmt.Errorf("querying latest snapshot: %w", err)
 	}
 
-	t, err := time.Parse(time.RFC3339, retrievedAt)
-	if err != nil {
-		return domain.DatabaseSnapshot{}, false, fmt.Errorf("parsing snapshot time: %w", err)
-	}
-
-	stored, err := domain.NewDatabaseSnapshot(source, version, t, contentHash)
+	stored, err := snapshotFromRow(source, version, retrievedAt, contentHash, origin)
 	if err != nil {
 		return domain.DatabaseSnapshot{}, false, fmt.Errorf("reading latest snapshot: %w", err)
 	}
@@ -1659,7 +1703,7 @@ func (s *Store) GetLatestDatabaseSnapshot(ctx context.Context) (domain.DatabaseS
 
 // ListDatabaseSnapshots returns all stored snapshot metadata, most recent first.
 func (s *Store) ListDatabaseSnapshots(ctx context.Context) ([]domain.DatabaseSnapshot, error) {
-	const q = `SELECT source, version, retrieved_at, content_hash FROM vulnerability_snapshots ORDER BY retrieved_at DESC`
+	const q = `SELECT source, version, retrieved_at, content_hash, origin FROM vulnerability_snapshots ORDER BY retrieved_at DESC, rowid DESC`
 
 	rows, err := s.db.DB().QueryContext(ctx, q)
 	if err != nil {
@@ -1669,15 +1713,11 @@ func (s *Store) ListDatabaseSnapshots(ctx context.Context) ([]domain.DatabaseSna
 
 	var snapshots []domain.DatabaseSnapshot
 	for rows.Next() {
-		var source, version, retrievedAt, contentHash string
-		if err := rows.Scan(&source, &version, &retrievedAt, &contentHash); err != nil {
+		var source, version, retrievedAt, contentHash, origin string
+		if err := rows.Scan(&source, &version, &retrievedAt, &contentHash, &origin); err != nil {
 			return nil, fmt.Errorf("scanning snapshot row: %w", err)
 		}
-		t, err := time.Parse(time.RFC3339, retrievedAt)
-		if err != nil {
-			return nil, fmt.Errorf("parsing snapshot time: %w", err)
-		}
-		stored, err := domain.NewDatabaseSnapshot(source, version, t, contentHash)
+		stored, err := snapshotFromRow(source, version, retrievedAt, contentHash, origin)
 		if err != nil {
 			return nil, fmt.Errorf("reading snapshot row: %w", err)
 		}
@@ -1687,6 +1727,26 @@ func (s *Store) ListDatabaseSnapshots(ctx context.Context) ([]domain.DatabaseSna
 		return nil, fmt.Errorf("iterating snapshots: %w", err)
 	}
 	return snapshots, nil
+}
+
+// snapshotFromRow rebuilds a stored snapshot from its row, keeping the origin
+// it was downloaded from.
+func snapshotFromRow(source, version, retrievedAt, contentHash, origin string) (domain.DatabaseSnapshot, error) {
+	t, err := time.Parse(time.RFC3339, retrievedAt)
+	if err != nil {
+		return domain.DatabaseSnapshot{}, fmt.Errorf("parsing snapshot time: %w", err)
+	}
+	stored, err := domain.NewDatabaseSnapshot(source, version, t, contentHash)
+	if err != nil {
+		return domain.DatabaseSnapshot{}, fmt.Errorf("building snapshot: %w", err)
+	}
+	if origin == "" {
+		return stored, nil
+	}
+	if stored, err = stored.WithOrigin(origin); err != nil {
+		return domain.DatabaseSnapshot{}, fmt.Errorf("recording the snapshot's origin: %w", err)
+	}
+	return stored, nil
 }
 
 // walkHasScanRun reports whether any vulnerability scan run was recorded for

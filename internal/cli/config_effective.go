@@ -187,6 +187,7 @@ func effectiveSettings(cfg domain.Config, raw rawConfigDoc) []effectiveSetting {
 
 	add("storage.backend", cfg.Storage.Backend, raw.isSet("storage", "backend"))
 	add("storage.sumdb_cache", sumdbCacheDisplay(cfg.Storage.SumDBCache), raw.isSet("storage", "sumdb_cache"))
+	add("vulndb.url", vulndbURLDisplay(cfg.VulnDB.URL), raw.isSet("vulndb", "url"))
 
 	return out
 }
@@ -196,6 +197,14 @@ func effectiveSettings(cfg domain.Config, raw rawConfigDoc) []effectiveSetting {
 func sumdbCacheDisplay(v string) string {
 	if v == "" {
 		return "(unset: sumdb under the store root)"
+	}
+	return v
+}
+
+// vulndbURLDisplay renders vulndb.url, naming the default an unset value uses.
+func vulndbURLDisplay(v string) string {
+	if v == "" {
+		return "(unset: https://vuln.go.dev)"
 	}
 	return v
 }

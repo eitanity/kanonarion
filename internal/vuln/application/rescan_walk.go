@@ -299,15 +299,9 @@ func (uc *RescanWalkUseCase) Rescan(ctx context.Context, req RescanRequest) (dom
 		}
 		if body != nil {
 			defer func() { _ = body.Close() }()
-			if perr := uc.vulnStore.PutDatabaseSnapshot(ctx, s, body); perr != nil {
-				return domain.WalkScanRun{}, fmt.Errorf("persisting fresh snapshot: %w", perr)
-			}
-			// Assurance log: a re-scan's whole purpose is to judge against a newer
-			// advisory set, so the moment that set arrived is the fact the re-scan
-			// rests on. Emitted after the write; a caller-supplied snapshot acquired
-			// nothing here and appends nothing.
-			if eerr := emitSnapshotRecorded(uc.audit, s, snapshotRouteRescan); eerr != nil {
-				return domain.WalkScanRun{}, eerr
+			// A caller-supplied snapshot acquired nothing here and appends nothing.
+			if s, serr = persistSnapshot(ctx, uc.vulnStore, uc.audit, s, body, snapshotRouteRescan); serr != nil {
+				return domain.WalkScanRun{}, fmt.Errorf("persisting fresh snapshot: %w", serr)
 			}
 		}
 		snapshot = &s

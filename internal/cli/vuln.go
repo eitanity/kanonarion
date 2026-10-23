@@ -30,6 +30,16 @@ func advisoryCountLine(snapshot vuldomain.DatabaseSnapshot) string {
 	return "not recorded (this record predates the advisory count)"
 }
 
+// snapshotLabel names a snapshot as source@version, and the mirror its bytes
+// were downloaded from when there was one.
+func snapshotLabel(s vuldomain.DatabaseSnapshot) string {
+	label := s.Source() + "@" + s.Version()
+	if origin := s.Origin(); origin != "" {
+		label += " (from " + origin + ")"
+	}
+	return label
+}
+
 func newVulnCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use: "vuln <module>@<version>",
@@ -124,7 +134,7 @@ func printVulnRecord(stdout io.Writer, rec vuldomain.VulnerabilityRecord, classi
 		_, _ = fmt.Fprintf(stdout, "                   first observation: %s\n", firstObservationCommand(rec.Coordinate))
 	}
 	_, _ = fmt.Fprintf(stdout, "  Last validated:  %s\n", ledgerStamp(rec.ScannedAt))
-	_, _ = fmt.Fprintf(stdout, "  Snapshot:        %s@%s\n", rec.DatabaseSnapshot.Source(), rec.DatabaseSnapshot.Version())
+	_, _ = fmt.Fprintf(stdout, "  Snapshot:        %s\n", snapshotLabel(rec.DatabaseSnapshot))
 	_, _ = fmt.Fprintf(stdout, "  Advisories:      %s\n", advisoryCountLine(rec.DatabaseSnapshot))
 	if !rec.DatabaseSnapshot.RetrievedAt().IsZero() {
 		_, _ = fmt.Fprintf(stdout, "  Snapshot age:    retrieved %s (%d day(s) old at validation)\n",
