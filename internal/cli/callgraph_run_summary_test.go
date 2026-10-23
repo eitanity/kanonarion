@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -31,7 +32,7 @@ import (
 func summaryDoc(t *testing.T, r cgdomain.CallGraphRecord, run callGraphRunJSON) []byte {
 	t.Helper()
 	var buf bytes.Buffer
-	if err := printCallGraphSummary(r, false, true, "", &buf, run); err != nil {
+	if err := printCallGraphSummary(context.Background(), r, false, true, "", &buf, run); err != nil {
 		t.Fatalf("rendering the summary: %v", err)
 	}
 	return buf.Bytes()
@@ -308,7 +309,7 @@ func TestCallGraphSummaryText_IsUnchanged(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var buf bytes.Buffer
-			if err := printCallGraphSummary(tc.record, tc.fromCache, false, "", &buf, callGraphRunJSON{}); err != nil {
+			if err := printCallGraphSummary(context.Background(), tc.record, tc.fromCache, false, "", &buf, callGraphRunJSON{}); err != nil {
 				t.Fatalf("rendering: %v", err)
 			}
 			if buf.String() != tc.want {

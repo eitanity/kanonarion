@@ -772,6 +772,13 @@ func writeWalkRecordWithCoverageJSON(w io.Writer, r domain.WalkRecord, coverage 
 		return fmt.Errorf("marshalling verification coverage: %w", err)
 	}
 	doc["verification_coverage"] = cov
+	excl, err := frameExcludes.rawJSON()
+	if err != nil {
+		return err
+	}
+	if excl != nil {
+		doc["frame_excludes"] = excl
+	}
 	out, err := json.Marshal(doc)
 	if err != nil {
 		return fmt.Errorf("marshalling walk document: %w", err)

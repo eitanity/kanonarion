@@ -115,6 +115,7 @@ func (a *Analyser) loadAndBuildSSA(ctx context.Context, fset *token.FileSet, tem
 	a.logMem(ctx, "syntax_loaded")
 	a.step(coord, fmt.Sprintf("syntax loaded (%d packages)", len(loaded)))
 	res.SourceFiles = loadedSourceFiles(loaded)
+	a.reportIgnored(mode, tempDir, loaded)
 	// Taken here, while the loader's own answer is still in hand: p.Syntax and
 	// p.TypesInfo are dropped further down, and the module a package belongs to is
 	// not recoverable from the ssa.Program afterwards.
@@ -519,6 +520,45 @@ func loadedSourceFiles(pkgs []*packages.Package) []string {
 		out = append(out, p.GoFiles...)
 		out = append(out, p.OtherFiles...)
 	}
+	return out
+}
+
+// reportIgnored hands a working tree's standard-frame load's ignored files to
+// the caller that states the ones only TinyGo builds.
+func (a *Analyser) reportIgnored(mode analysisMode, dir string, loaded []*packages.Package) {
+	if mode == modeWorktree && !a.tinygo.Declared() && a.ignoredFiles != nil {
+		a.ignoredFiles(dir, ignoredPackages(loaded))
+	}
+}
+
+// IgnoredPackage is one loaded package's Go files the build frame left out.
+type IgnoredPackage struct {
+	ImportPath string
+	Dir        string
+	Files      []string // base names
+}
+
+// ignoredPackages lists the ignored Go files of every non-standard package in
+// the load's closure.
+func ignoredPackages(roots []*packages.Package) []IgnoredPackage {
+	var out []IgnoredPackage
+	packages.Visit(roots, nil, func(p *packages.Package) {
+		if p.Module == nil {
+			return
+		}
+		var ip IgnoredPackage
+		for _, f := range p.IgnoredFiles {
+			if !strings.HasSuffix(f, ".go") {
+				continue
+			}
+			ip.Dir = filepath.Dir(f)
+			ip.Files = append(ip.Files, filepath.Base(f))
+		}
+		if len(ip.Files) > 0 {
+			ip.ImportPath = p.PkgPath
+			out = append(out, ip)
+		}
+	})
 	return out
 }
 

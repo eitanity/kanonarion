@@ -1231,7 +1231,7 @@ func canonicalFields(data []byte, visit func(name string, value []byte)) error {
 		return fmt.Errorf("reading the canonical record: want a JSON object, got %v", open)
 	}
 	for dec.More() {
-		key, err := dec.Token()
+		key, err := canonicalKey(dec)
 		if err != nil {
 			return fmt.Errorf("reading a canonical field name: %w", err)
 		}
@@ -1245,7 +1245,7 @@ func canonicalFields(data []byte, visit func(name string, value []byte)) error {
 		if err := skipCanonicalValue(dec); err != nil {
 			return fmt.Errorf("reading the value of canonical field %q: %w", name, err)
 		}
-		stop := dec.InputOffset()
+		stop := canonicalValueEnd(dec)
 		if start > stop || stop > int64(len(data)) {
 			return fmt.Errorf("reading the value of canonical field %q: bytes [%d,%d) are outside the %d-byte record", name, start, stop, len(data))
 		}
@@ -1253,6 +1253,14 @@ func canonicalFields(data []byte, visit func(name string, value []byte)) error {
 	}
 	return nil
 }
+
+// canonicalKey and canonicalValueEnd are seams over the decoder: json.Decoder
+// never yields a non-string key or an offset past its input, so only an
+// injected decoder reaches the guards on either.
+var (
+	canonicalKey      = func(dec *json.Decoder) (json.Token, error) { return dec.Token() }
+	canonicalValueEnd = (*json.Decoder).InputOffset
+)
 
 // skipCanonicalValue advances dec past one value, however deeply nested, without
 // decoding it into anything.

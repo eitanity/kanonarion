@@ -47,6 +47,8 @@ type Analyser struct {
 	// frame.go.
 	target goenv.Target
 	tinygo goenv.TinyGo
+	// ignoredFiles receives a working tree's ignored Go files; nil drops them.
+	ignoredFiles func(root string, pkgs []IgnoredPackage)
 }
 
 // New constructs an Analyser.
@@ -82,6 +84,13 @@ func (a *Analyser) WithRealModcache(dir string) *Analyser {
 // by hand sees, because "which phase is it in" is one question with one answer.
 func (a *Analyser) WithProgress(w io.Writer) *Analyser {
 	a.progress = w
+	return a
+}
+
+// WithIgnoredFiles hands fn the Go files a working tree's standard-frame load
+// left out, for a statement about the files only another frame builds.
+func (a *Analyser) WithIgnoredFiles(fn func(root string, pkgs []IgnoredPackage)) *Analyser {
+	a.ignoredFiles = fn
 	return a
 }
 

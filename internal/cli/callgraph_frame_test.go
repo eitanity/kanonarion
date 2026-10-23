@@ -96,7 +96,7 @@ func TestCallGraphShow_PrintsTheFrame(t *testing.T) {
 		t.Errorf("json lacks %s:\n%s", want, doc)
 	}
 	var summary bytes.Buffer
-	if err = printCallGraphSummary(r, false, false, "", &summary, callGraphRunJSON{}); err != nil {
+	if err = printCallGraphSummary(context.Background(), r, false, false, "", &summary, callGraphRunJSON{}); err != nil {
 		t.Fatalf("printCallGraphSummary: %v", err)
 	}
 	if !strings.HasPrefix(summary.String(), "example.com/mod@v1.0.0: Extracted — 0 nodes, 0 edges [CHA] frame tinygo/pico (linux/arm)\n") {

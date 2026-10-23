@@ -429,7 +429,8 @@ func NewContainerFrom(st *storage.Storage, storeRoot, goproxy, goBinary string, 
 	// child's to. This process is one or the other, never both: as a child it
 	// writes the lines its parent's stall detector reads, and as a parent it
 	// forwards what its children wrote.
-	cgAnalyser := cganalyser.New("0.1.0", goBinary, logger).WithProgress(callgraphNarration)
+	cgAnalyser := cganalyser.New("0.1.0", goBinary, logger).WithProgress(callgraphNarration).
+		WithIgnoredFiles(reportIgnoredPackages)
 	// A module analysed in isolation is its own main module, and the load runs
 	// with the network off, so every go.mod minimal version selection reads and
 	// every dependency the type checker compiles has to be in a module cache

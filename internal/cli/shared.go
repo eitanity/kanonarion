@@ -236,6 +236,11 @@ func findPolicyFile() string {
 	}
 }
 
+// readPackageModulesFmt names a non-standard package's module. A package the
+// go command could not find has no module, and is skipped rather than failing
+// the template beside go's own error.
+const readPackageModulesFmt = "{{if and (not .Standard) .Module}}{{.Module.Path}}@{{.Module.Version}}{{end}}"
+
 // readPackageModules runs "go list -deps" over pattern and returns the module
 // coordinates ("path@version") of every non-standard-library package reachable
 // from that pattern. This gives the exact set of modules linked into the binary
@@ -252,7 +257,7 @@ func findPolicyFile() string {
 // for.
 func readPackageModules(ctx context.Context, pattern string) ([]string, error) {
 	cmd := childproc.CommandContext(ctx, "go", withTinyGoTags([]string{"list", "-deps", "-f", // #nosec G204 -- pattern is a Go package path from a developer CLI flag
-		"{{if not .Standard}}{{.Module.Path}}@{{.Module.Version}}{{end}}", pattern})...)
+		readPackageModulesFmt + goListIgnoredFmt, pattern})...)
 	// The allow-list is the import closure of one package, and the Go toolchain
 	// resolves that against the build target. It is stated here rather than
 	// inherited so the closure and the walk it is filtered against agree on the
@@ -265,10 +270,12 @@ func readPackageModules(ctx context.Context, pattern string) ([]string, error) {
 		}
 		var ee *exec.ExitError
 		if errors.As(err, &ee) && len(ee.Stderr) > 0 {
-			return nil, fmt.Errorf("go list %s%s: %s", pattern, targetClause(), strings.TrimSpace(string(ee.Stderr)))
+			return nil, fmt.Errorf("go list %s%s: %s", pattern, targetClause(), withTinyGoRemedy(ctx, strings.TrimSpace(string(ee.Stderr))))
 		}
 		return nil, fmt.Errorf("go list %s%s: %w", pattern, targetClause(), err)
 	}
+	out, ignored := splitIgnoredRecords(out)
+	frameExcludes.report(".", ignored)
 	seen := make(map[string]bool)
 	var coords []string
 	for line := range strings.SplitSeq(string(out), "\n") {
@@ -343,7 +350,9 @@ const goListModuleRecordFmt = `{{if .Replace}}` +
 // goListModuleFmt is the record for a PACKAGE's module (`go list -deps`).
 // Standard-library packages and the main module emit an all-empty record and are
 // dropped on parse.
-const goListModuleFmt = `{{if and .Module (not .Standard)}}{{with .Module}}` + goListModuleRecordFmt + `{{end}}{{end}}`
+// A second line names the package's ignored Go files; see goListIgnoredFmt.
+const goListModuleFmt = `{{if and .Module (not .Standard)}}{{with .Module}}` + goListModuleRecordFmt + `{{end}}{{end}}` +
+	goListIgnoredFmt
 
 // goListBuildListFmt is the record for a BUILD-LIST module (`go list -m`), which
 // is the module itself rather than a package's. The main module is dropped: it
@@ -501,6 +510,8 @@ func resolveScopeModules(ctx context.Context, gomodPath string, scope depScope, 
 	if err != nil {
 		return nil, res, err
 	}
+	out, ignored := splitIgnoredRecords(out)
+	frameExcludes.report(filepath.Dir(gomodPath), ignored)
 	mods, err := parseGoListModuleRecords(out)
 	if err != nil {
 		return nil, res, err
@@ -582,9 +593,9 @@ func runGoList(ctx context.Context, dir string, args []string) ([]byte, error) {
 		}
 		var ee *exec.ExitError
 		if errors.As(err, &ee) && len(ee.Stderr) > 0 {
-			return nil, fmt.Errorf("go %s%s: %s", strings.Join(args, " "), targetClause(), strings.TrimSpace(string(ee.Stderr)))
+			return nil, fmt.Errorf("go %s%s: %s", shownGoListArgs(args), targetClause(), withTinyGoRemedy(ctx, strings.TrimSpace(string(ee.Stderr))))
 		}
-		return nil, fmt.Errorf("go %s%s: %w", strings.Join(args, " "), targetClause(), err)
+		return nil, fmt.Errorf("go %s%s: %w", shownGoListArgs(args), targetClause(), err)
 	}
 	return out, nil
 }
@@ -601,7 +612,7 @@ func parseGoListModuleRecords(out []byte) ([]scopeModule, error) {
 	var records []string
 	for line := range strings.SplitSeq(string(out), "\n") {
 		line = strings.TrimRight(line, "\r")
-		if strings.TrimSpace(strings.ReplaceAll(line, "\t", "")) == "" || seen[line] {
+		if strings.HasPrefix(line, ignoredRecordMarker) || strings.TrimSpace(strings.ReplaceAll(line, "\t", "")) == "" || seen[line] {
 			continue
 		}
 		seen[line] = true
@@ -873,6 +884,8 @@ func resetInvocationState() {
 	// rather than the last command's.
 	offlineRemedy = ""
 	invokedCommand = ""
+	invokedCmd, invokedArgs = nil, nil
+	frameExcludes.reset()
 	blobRefusals.reset()
 	if restoreGoproxy != nil {
 		if err := restoreGoproxy(); err != nil {

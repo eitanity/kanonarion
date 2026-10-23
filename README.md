@@ -191,7 +191,7 @@ All query commands support `--json` for machine-readable output, making them eas
 - **Air-gapped and vendored builds.** `walk --from-modcache` acquires from a carried-in module cache; `vendor` reconciles a `vendor/` tree against what the manifest resolves, because a vendored tree is the build.
 - **Policy gates.** Walk-traversal rules in YAML - max depth, whether replace directives and indirect requirements are followed, and which VCS forges may be cross-verified against - validated with `policy validate`.
 - **SBOM generation.** CycloneDX 1.6 software bill of materials from any walk, with a full dependency graph and per-component `SHA-256/384/512` artefact hashes computed at download. The Go standard library is a first-class component, verified against Go's published source-tarball checksum; `--stdlib-from-gomod` pins its version to the `go.mod` directive for reproducible release artifacts.
-- **Auditable evidence chain.** Every fetch, verification and policy decision is recorded in an append-only `audit.jsonl`: reproducible, time-stamped evidence of what kanonarion did and when.
+- **Auditable evidence chain.** Every fetch, verification and policy decision is recorded in an append-only `audit.jsonl`.
 
 ---
 

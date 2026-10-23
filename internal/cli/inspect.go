@@ -286,6 +286,8 @@ func resolveCoordForInspect(ctx context.Context, arg, _, goproxy string, stderr 
 // inspectSummary is the aggregate result of an inspect --gomod run.
 type inspectSummary struct {
 	ModuleCount int `json:"module_count"`
+	// FrameExcludes names the files only TinyGo builds that this frame left out.
+	FrameExcludes *frameExcludesJSON `json:"frame_excludes,omitempty"`
 	// The three failure tallies are counted by every run and emitted at zero. A
 	// run in which nothing failed is the result a reader most needs stated, and
 	// omitting the zeros made a clean run's summary the same document as one
@@ -585,6 +587,7 @@ func writeEmptyInspectScope(scope depScope, gomodPath string, stdout io.Writer) 
 			WalkIDs:         []string{},
 			DependencyScope: newScopeJSON(newScopeResolution(scope, false)),
 			Run:             inspectRunNotStarted(),
+			FrameExcludes:   frameExcludes.take(),
 		}); err != nil {
 			return fmt.Errorf("encoding summary: %w", err)
 		}
@@ -814,6 +817,7 @@ func inspectPolicySections(ctx context.Context, ctr *Container, gomodPath string
 func writeInspectJSON(stdout io.Writer, summary inspectSummary, overallStatus string) error {
 	enc := json.NewEncoder(stdout)
 	enc.SetIndent("", "  ")
+	summary.FrameExcludes = frameExcludes.take()
 	if err := enc.Encode(summary); err != nil {
 		return fmt.Errorf("encoding summary: %w", err)
 	}

@@ -9,7 +9,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -17,6 +19,7 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/adapters/childproc"
 	"github.com/eitanity/kanonarion/internal/adapters/goenv"
+	"github.com/eitanity/kanonarion/internal/gotoolchain"
 )
 
 // ErrNotOnPath is the refusal for a declaration with no tinygo to ask.
@@ -100,6 +103,25 @@ func Probe(ctx context.Context, binary, target string) (goenv.TinyGo, error) {
 	}
 	store(key, f)
 	return f, nil
+}
+
+// Provides reports whether TinyGo supplies the import path pkg: a directory
+// under the installed TinyGo's src when tinygo is on PATH, and otherwise one of
+// the top-level paths TinyGo adds to the standard library.
+func Provides(ctx context.Context, pkg string) bool {
+	bin, err := exec.LookPath("tinygo")
+	if err != nil {
+		return gotoolchain.IsTinyGoOwnPackage(pkg)
+	}
+	if pkg == "" || path.Clean(pkg) != pkg || path.IsAbs(pkg) || strings.HasPrefix(pkg, "..") {
+		return false
+	}
+	out, err := run(ctx, bin, "env", "TINYGOROOT")
+	if err != nil {
+		return gotoolchain.IsTinyGoOwnPackage(pkg)
+	}
+	info, err := os.Stat(filepath.Join(strings.TrimSpace(string(out)), "src", filepath.FromSlash(pkg)))
+	return err == nil && info.IsDir()
 }
 
 // run executes one probe. It inherits the caller's environment unchanged: these

@@ -586,6 +586,8 @@ type callGraphRunJSON struct {
 	// Derivations say, one per answer, whether this run measured it or served a
 	// record it already held.
 	Derivations []derivationJSON `json:"derivations,omitempty"`
+	// FrameExcludes names the files only TinyGo builds that this frame left out.
+	FrameExcludes *frameExcludesJSON `json:"frame_excludes,omitempty"`
 }
 
 // derivationJSON is one answer's provenance: measured here, or served.

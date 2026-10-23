@@ -35,7 +35,7 @@ func newRootCmd(stdout, stderr io.Writer) *cobra.Command {
 		// silence cobra's own error/usage printing here.
 		SilenceUsage:  true,
 		SilenceErrors: true,
-		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			// 1. Resolve store root (flag > env var > default).
 			if !cmd.Flags().Changed("store-root") {
 				if envStore := os.Getenv("KANONARION_STORE"); envStore != "" {
@@ -54,6 +54,8 @@ func newRootCmd(stdout, stderr io.Writer) *cobra.Command {
 			// built in a dozen of them — have no command to ask.
 			offlineRemedy = renderOfflineRemedy(cmd)
 			invokedCommand = cmd.CommandPath()
+			invokedCmd, invokedArgs = cmd, args
+			frameExcludes.enable(cmd)
 			if err := declareGoproxyFlag(cmd); err != nil {
 				return err
 			}
@@ -265,6 +267,7 @@ func Run(args []string, stdout, stderr io.Writer) error {
 	err := surfaceBlobRefusal(root.ExecuteContext(ctx))
 	storeSetAside.flush(stderr, err)
 	storeNotSearched.flush(stderr)
+	frameExcludes.flush(stderr)
 	if err == nil {
 		// A signal that arrived after the work was done stopped nothing.
 		return nil

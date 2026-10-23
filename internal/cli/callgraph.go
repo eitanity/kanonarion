@@ -145,7 +145,7 @@ func runCallGraphExtract(ctx context.Context, arg string, f cgFlags, stdout, std
 		return fmt.Errorf("extracting call graph: %w", err)
 	}
 
-	if err := printCallGraphSummary(result.Record, result.FromCache || result.Reused, jsonOut, "", stdout, run); err != nil {
+	if err := printCallGraphSummary(ctx, result.Record, result.FromCache || result.Reused, jsonOut, "", stdout, run); err != nil {
 		return err
 	}
 	if result.Reused {
@@ -260,13 +260,14 @@ func callGraphExtractionExit(r cgdomain.CallGraphRecord) error {
 // because stderr, where the same facts are said in words, is not a channel a
 // --json consumer reads.
 func printCallGraphSummary(
-	r cgdomain.CallGraphRecord, fromCache bool, jsonOut bool, dir string, stdout io.Writer, run callGraphRunJSON,
+	ctx context.Context, r cgdomain.CallGraphRecord, fromCache bool, jsonOut bool, dir string, stdout io.Writer, run callGraphRunJSON,
 ) error {
 	if jsonOut {
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
 		doc := toCallGraphJSON(r)
 		doc.callGraphRunJSON = run
+		doc.FrameExcludes = frameExcludes.take()
 		// No nodes and no edges. These commands report what the RUN did — the
 		// one fact no later read can recover — and the graph belongs to the
 		// record, read with 'callgraph-show --limit-nodes 0 --limit-edges 0
@@ -305,7 +306,7 @@ func printCallGraphSummary(
 	if err := writeExclusionInfo(stdout, r); err != nil {
 		return err
 	}
-	return writeIncompletenessRemedy(stdout, r, dir)
+	return writeIncompletenessRemedy(ctx, stdout, r, dir)
 }
 
 // writeIncompletenessRemedy prints, in text mode, what to do about a graph that
@@ -317,14 +318,14 @@ func printCallGraphSummary(
 // left to work out from that prose whether the fault was in the source or in
 // their module cache. The record has already classified it, so the remedy is
 // printed from the classification rather than re-derived by the reader.
-func writeIncompletenessRemedy(stdout io.Writer, r cgdomain.CallGraphRecord, dir string) error {
+func writeIncompletenessRemedy(ctx context.Context, stdout io.Writer, r cgdomain.CallGraphRecord, dir string) error {
 	// A failure the analyser limit caused is owed its remedy too: no graph is
 	// still not a fault in the source.
 	_, limited := gotoolchain.ReadAnalyserLimit(r.FailureDetail)
 	if !cgdomain.RecordIsIncomplete(r) && (!limited || !cgdomain.RecordIsFailure(r)) {
 		return nil
 	}
-	if _, err := fmt.Fprintln(stdout, cgdomain.IncompleteGraphRemedy(r.Coordinate, r.FailureCause, r.FailureDetail, dir)); err != nil {
+	if _, err := fmt.Fprintln(stdout, incompleteGraphRemedy(ctx, r.Coordinate, r.FailureCause, r.FailureDetail, dir)); err != nil {
 		return fmt.Errorf("writing incompleteness remedy: %w", err)
 	}
 	return nil

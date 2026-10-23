@@ -17,7 +17,9 @@ import (
 	"github.com/spf13/pflag"
 	"golang.org/x/tools/go/packages"
 
+	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/gotoolchain"
 )
 
 // The rule this guard holds the whole tree to is in docs/cli/conventions.md:
@@ -1432,5 +1434,61 @@ func TestTheLegitimateVersionPlaceholderStaysLegitimate(t *testing.T) {
 	}
 	if found == 0 {
 		t.Fatalf("no shipped message contains %q; the pin is measuring nothing", words)
+	}
+}
+
+// TestRemedyGuardJudgesTheTinyGoRemedies holds the two TinyGo lines — the
+// missing-package remedy and the frame notice — to the guard's verdict. Both
+// are built at run time from the invocation, which the source scan above
+// renders as opaque, so each is rendered here for every command that prints it.
+func TestRemedyGuardJudgesTheTinyGoRemedies(t *testing.T) {
+	t.Cleanup(func() { invokedCmd, invokedArgs = nil, nil })
+	slots := coordinateSlots(t)
+	local, err := coordinate.NewLocalCoordinate("example.com/blinky")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fetched, err := coordinate.NewModuleCoordinate("example.com/drivers", "v1.0.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	texts := []string{
+		gotoolchain.TinyGoPackageRemedy([]string{"machine"}, cgdomain.TinyGoReanalysisInstruction(local, "/work/tree")),
+		gotoolchain.TinyGoPackageRemedy([]string{"machine"}, cgdomain.TinyGoReanalysisInstruction(fetched, "")),
+	}
+	for _, args := range [][]string{
+		{"local", "."}, {"walk", "--gomod", "./go.mod", "--no-progress"}, {"audit", "--gomod", "./go.mod"},
+		{"inspect", "--gomod", "./go.mod"}, {"sbom", "--package", "./cmd/x", "--format", "spdx"},
+	} {
+		cmd, rest, ferr := newRootCmd(io.Discard, io.Discard).Find(args)
+		if ferr != nil {
+			t.Fatal(ferr)
+		}
+		if perr := cmd.ParseFlags(rest); perr != nil {
+			t.Fatal(perr)
+		}
+		invokedCmd, invokedArgs = cmd, cmd.Flags().Args()
+		texts = append(texts,
+			gotoolchain.TinyGoPackageRemedy([]string{"machine"}, tinyGoRerun()),
+			(&frameExcludesJSON{Files: []string{"v_tinygo.go"}, Command: tinyGoRerun()}).statement())
+	}
+	judged := 0
+	for _, text := range texts {
+		for _, inv := range invocationsIn(text) {
+			for _, conjunct := range strings.Split(inv.line, " && ") {
+				line, cmdName, positionals, ok := readInvocation(t, strings.TrimSpace(conjunct))
+				if !ok {
+					t.Errorf("%q is not read as an invocation of this CLI", conjunct)
+					continue
+				}
+				judged++
+				for _, v := range invocationViolations(t, slots, line, cmdName, positionals, true, scopeFacts{}) {
+					t.Errorf("%q: %s", line, v)
+				}
+			}
+		}
+	}
+	if judged != 14 {
+		t.Errorf("judged %d TinyGo invocations, want 14", judged)
 	}
 }

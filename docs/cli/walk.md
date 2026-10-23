@@ -531,16 +531,18 @@ whose dependencies do build for the target resolves normally.
 
 ### Declaring a TinyGo target (`--tinygo`)
 
-TinyGo compiles a different set of files than standard Go: it sets the `tinygo`
-build tag and tags of its own for each board, and it builds against its own
-standard library. A project with a file under `//go:build tinygo` can therefore
-need a module the standard build never selects. `--tinygo <target>` says the
-walk is about the build TinyGo makes for that target:
+TinyGo sets the `tinygo` tag and per-board tags, and builds against its own
+standard library, so a `//go:build tinygo` file can need a module the standard
+build never selects. `--tinygo <target>` walks TinyGo's build for that target:
 
 ```console
 $ kanonarion walk --gomod ./go.mod --tinygo pico
 $ kanonarion walk --gomod ./go.mod --tinygo wasip1
 ```
+
+Without it, a stderr notice (`frame_excludes` in `--json`) names the files only
+TinyGo builds. With it, files only standard Go builds are left out silently: a
+project that ships both builds needs a walk of each.
 
 **The `tinygo` command on `PATH` defines the target.** kanonarion asks it three
 questions and runs its own `go list` with the answers:
@@ -564,9 +566,8 @@ $ kanonarion walk --gomod ./go.mod --tinygo nosuchboard
 error: execute root command: tinygo does not know the target "nosuchboard": run `tinygo targets` for the names it offers
 ```
 
-Any other failure of those three commands is reported with the command and what
-it printed. `--tinygo` cannot be combined with `--target`, `--goos` or
-`--goarch`, and a positional module walk refuses it as it refuses `--target`.
+Any other failure of those three commands is reported with what it printed. A
+positional module walk refuses `--tinygo` as it refuses `--target`.
 
 **The walk records the frame.** The walk stores the TinyGo target, the TinyGo
 version and the tag set beside `goos`, `goarch` and `go_version`

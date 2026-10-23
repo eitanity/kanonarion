@@ -868,6 +868,10 @@ func marshalCanonical(r CallGraphRecord) ([]byte, error) {
 // exists for the never-silent-failure invariant, not a known failure mode.
 var canonicalMarshal = json.Marshal
 
+// encodeEdgeChunk is the same seam for the edge stream, which no canonicalEdge
+// can make fail today.
+var encodeEdgeChunk = func(enc *json.Encoder, chunk []canonicalEdge) error { return enc.Encode(chunk) }
+
 // canonicalEdgeChunk is how many edges are encoded at a time while streaming a
 // record into its digest. One at a time costs an allocation per edge; the whole
 // array at once is the copy the streaming exists to avoid.
@@ -959,7 +963,7 @@ func writeCanonicalEdges(h hash.Hash, edges []CallEdge) error {
 			chunk = append(chunk, canonicalEdgeOf(edges[i]))
 		}
 		buf.Reset()
-		if err := enc.Encode(chunk); err != nil {
+		if err := encodeEdgeChunk(enc, chunk); err != nil {
 			return fmt.Errorf("marshalling canonical callgraph edges: %w", err)
 		}
 		// Encode writes the chunk's own array and a trailing newline. The

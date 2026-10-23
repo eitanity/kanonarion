@@ -648,7 +648,7 @@ func symbolFailedPackage(symbolID string, failedPkgs []string) (string, bool) {
 // this path now answers and states what its answer does not cover.
 //
 // kind is "callers", "callees", or the transitive variants.
-func droppedEdgesNotice(kind, symbolID string, pr partialRoot) string {
+func droppedEdgesNotice(ctx context.Context, kind, symbolID string, pr partialRoot) string {
 	why := "did not typecheck when " + pr.coord.String() + " was analysed"
 	if l, ok := gotoolchain.ReadAnalyserLimit(pr.detail); ok {
 		why = "was not analysed: the kanonarion that analysed " + pr.coord.String() + " was built with " +
@@ -665,12 +665,12 @@ func droppedEdgesNotice(kind, symbolID string, pr partialRoot) string {
 	// the reader's to fix, and a gap this host's cold module cache opened is not a
 	// compile error to go looking for. Naming a command that cannot run and naming
 	// one that re-serves the record complained about are the same defect.
-	return line + ".\n" + domain.IncompleteGraphRemedy(pr.coord, pr.cause, pr.detail, pr.analysisRoot)
+	return line + ".\n" + incompleteGraphRemedy(ctx, pr.coord, pr.cause, pr.detail, pr.analysisRoot)
 }
 
 // writeDroppedEdgesNotice prints droppedEdgesNotice, in text mode only.
-func writeDroppedEdgesNotice(stdout io.Writer, kind, symbolID string, pr partialRoot) error {
-	if _, err := fmt.Fprintln(stdout, droppedEdgesNotice(kind, symbolID, pr)); err != nil {
+func writeDroppedEdgesNotice(ctx context.Context, stdout io.Writer, kind, symbolID string, pr partialRoot) error {
+	if _, err := fmt.Fprintln(stdout, droppedEdgesNotice(ctx, kind, symbolID, pr)); err != nil {
 		return fmt.Errorf("writing dropped-edges notice: %w", err)
 	}
 	return nil

@@ -140,6 +140,8 @@ type auditOutput struct {
 	envelopeScope
 	auditRunJSON
 	Modules []auditModuleResult `json:"modules"`
+	// FrameExcludes names the files only TinyGo builds that this frame left out.
+	FrameExcludes *frameExcludesJSON `json:"frame_excludes,omitempty"`
 }
 
 // newAuditOutput frames the rows, guaranteeing a non-nil modules array: an empty
@@ -149,7 +151,7 @@ func newAuditOutput(scope envelopeScope, run auditRunJSON, rows []auditModuleRes
 	if rows == nil {
 		rows = []auditModuleResult{}
 	}
-	return auditOutput{envelopeScope: scope, auditRunJSON: run, Modules: rows}
+	return auditOutput{envelopeScope: scope, auditRunJSON: run, Modules: rows, FrameExcludes: frameExcludes.take()}
 }
 
 type auditModuleResult struct {

@@ -115,7 +115,7 @@ func runLocalCallGraph(ctx context.Context, dir string, f localFlags, stdout, st
 		return fmt.Errorf("extracting local call graph: %w", err)
 	}
 
-	if err := printCallGraphSummary(result.Record, result.FromCache, jsonOut, abs, stdout,
+	if err := printCallGraphSummary(ctx, result.Record, result.FromCache, jsonOut, abs, stdout,
 		callGraphRunJSON{Derivations: []derivationJSON{localDerivation(result)}}); err != nil {
 		return err
 	}

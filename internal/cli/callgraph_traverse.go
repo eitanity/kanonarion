@@ -189,7 +189,7 @@ func writeEdgeQueryNotices(ctx context.Context, stdout io.Writer, label, symbolI
 	if !jsonOut {
 		switch {
 		case pr.failedPkg != "":
-			if err := writeDroppedEdgesNotice(stdout, label, symbolID, pr); err != nil {
+			if err := writeDroppedEdgesNotice(ctx, stdout, label, symbolID, pr); err != nil {
 				return err
 			}
 		case pr.isPartial:

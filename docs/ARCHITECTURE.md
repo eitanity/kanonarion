@@ -486,15 +486,13 @@ The read/serve verification path records what was *read*, using the generic
   status.
 - `verification_failed` - the read/serve path rejected a record: served without
   a positive trust anchor, or a stored record that failed re-verification
-  fail-closed. This is the single highest-value security event - a tampered or
-  mismatched blob being refused. Payload adds the rejection `reason`; the exact
+  fail-closed. Payload adds the rejection `reason`; the exact
   `verification_status` travels alongside it, so a hard mismatch is never
   conflated with an un-analysed/unknown outcome.
 
 Both use cases take the audit sink optionally (`WithAudit`, mirroring
 `WithSigner`); the composition root wires the shared `AuditingStore`. An emit
-failure fails the read: the assurance log can never silently miss what was
-served, and a rejected read never loses the fact that it was rejected.
+failure fails the read.
 
 The vulnerability scan records what was *found*, using the same envelope:
 

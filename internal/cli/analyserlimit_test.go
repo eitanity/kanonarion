@@ -57,7 +57,7 @@ func TestPrintCallGraphSummary_AnalyserLimitRemedy(t *testing.T) {
 		rec.FailureCause = cgdomain.FailureCauseEnvironment
 		rec.FailureDetail = analyserLimitDetail
 		var buf bytes.Buffer
-		if err := printCallGraphSummary(rec, false, false, "/work/tree", &buf, callGraphRunJSON{}); err != nil {
+		if err := printCallGraphSummary(context.Background(), rec, false, false, "/work/tree", &buf, callGraphRunJSON{}); err != nil {
 			t.Fatal(err)
 		}
 		out := buf.String()
