@@ -373,8 +373,7 @@ cross-context import ban because their whole job is composition:
 - **`internal/composition`** - the neutral composition root shared by the CLI
   and the public façade. It owns `Migrations()` (the schema's migration set),
   `NewQueries(storeRoot)` (wires the read stores and every `Query*` use case),
-  and `NewDriver(storeRoot)` (wires the fetch/verify, local walk-extract, and
-  validate-and-ingest pipelines).
+  and `NewDriver(storeRoot)` (wires the write pipelines every driver composes).
 - **`internal/composition/storage`** - the `Storage` value every root builds
   from: one field per record store, plus the blob store, audit sink,
   attestation store and signer. A backend produces it. Backends are registered

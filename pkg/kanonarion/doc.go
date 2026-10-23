@@ -8,6 +8,13 @@
 // substitution ports implemented by consumers, and the driver/serving/identity
 // surface.
 //
+// The write boundary: the driver hands out whole operations — serve one
+// coordinate, walk and extract a working tree, analyse a published version as
+// `inspect` does, re-scan a stored walk — and the per-module staleness
+// resolver. The stage use cases those compose (walk, extract, scan, rescan,
+// the batched latest resolver) are never reachable from here, so the CLI and
+// a consumer run one composition and the stages stay free to change.
+//
 // Stability: the entire surface is unstable pre-v1 (v0.x). Minor releases may
 // break it until the v1 freeze. Every exported identifier carries a doc comment
 // and a Stability line stating its consumer relationship; the relationship

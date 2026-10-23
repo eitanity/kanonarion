@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/driver"
 	"github.com/eitanity/kanonarion/internal/recordstamp"
 
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
@@ -648,52 +649,30 @@ func runVulnScanReporting(ctx context.Context, walkID string, force, fresh, enab
 	// scan — and that stream is the reason the flag exists.
 	progressOut := progressWriter(stderr, noProgress)
 
-	// --fresh refreshes the advisory database and nothing else. It happens before
-	// the reuse question below, which is asked against whatever database the
-	// refresh settled on.
-	if rerr := refreshScanSnapshot(ctx, ctr, walkID, fresh, stderr); rerr != nil {
-		return vulnScanRunFacts{}, rerr
-	}
-
-	// A scan of the same walk against the same advisory snapshot has already
-	// answered this question. Re-running govulncheck over the whole build list
-	// would reproduce the stored verdicts at the cost of the run — the dominant
-	// cost of the command — so the stored run is served instead, and the report
-	// says so rather than letting a served answer read as a fresh measurement.
-	// --force is the way to insist on measuring; a --fresh that downloaded a new
-	// database re-scans on its own, because the stored run no longer answers
-	// against it.
-	//
-	// The project directory goes with the question. Whether a stored run may be
-	// served depends on whether that directory still builds what the walk
-	// resolved, and that judgement belongs to the use case that owns the reuse
-	// decision — this call site only has to ask about the tree it would have
-	// scanned.
-	if facts, served, rerr := serveReusableScanRun(ctx, ctr, walkID, projectDir, force, jsonOut, narrateRun, wantRunFacts, surface, stdout, stderr); rerr != nil || served {
-		return facts, rerr
-	}
-
-	_, _ = fmt.Fprintf(progressOut, "Scanning walk %s...\n", walkID)
-
+	// The stage itself — refresh, then serve the stored run that already
+	// answers unless --force, else measure — is the driver's, so the library's
+	// coordinate analysis decides reuse exactly as this command does. Serving
+	// and narration stay here.
 	rollups := newVulnScanRollups()
 	// Counted off the same per-module feed the roll-ups are built from, so the
 	// figure covers every record this run wrote rather than the subset that
 	// reached a roll-up.
 	reach := vulnScanReachability{SourceReadByThisRun: true}
-
-	run, err := ctr.ScanWalk.Scan(ctx, application2.ScanWalkParams{
-		WalkID: walkID,
-		Force:  force,
-		// The refresh above already settled which database this run is judged
-		// against, and stored it; the scan resolves that stored snapshot. Passing
-		// the flag on would check the database a second time in one invocation.
-		Fresh:              false,
-		EnableReachability: enableReachability,
-		CallGraphWorkers:   callGraphWorkers,
-		BinaryModePrePass:  binaryModePrePass,
-		Operator:           operator,
-		ProjectDir:         projectDir,
-		NoVendor:           noVendor,
+	var served vulnScanRunFacts
+	run, reused, err := driver.ScanWalk(ctx, ctr.ScanWalk, driver.WalkScan{
+		WalkID:            walkID,
+		Force:             force,
+		Fresh:             fresh,
+		Reachability:      enableReachability,
+		CallGraphWorkers:  callGraphWorkers,
+		BinaryModePrePass: binaryModePrePass,
+		Operator:          operator,
+		// The project directory goes with the reuse question: a stored run may
+		// be served only while that directory still builds what the walk
+		// resolved.
+		ProjectDir: projectDir,
+		NoVendor:   noVendor,
+		Surface:    surface,
 		Progress: func(coord coordinate.ModuleCoordinate, record vuldomain.VulnerabilityRecord, current, total int) {
 			// Only the line is suppressed; the bucketing below always runs, because
 			// the roll-ups it feeds are the result, printed to stdout.
@@ -701,9 +680,29 @@ func runVulnScanReporting(ctx context.Context, walkID string, force, fresh, enab
 			rollups.add(coord, record)
 			reach.Answers += recordReachabilityVerdicts(record)
 		},
+	}, driver.ScanHooks{
+		Refreshed: func(refresh application2.SnapshotRefresh, rerr error) error {
+			if _, werr := fmt.Fprintf(stderr, "%s\n", advisoryRefreshLine(refresh, rerr)); werr != nil {
+				return fmt.Errorf("writing output: %w", werr)
+			}
+			return nil
+		},
+		Serve: func(prior vuldomain.WalkScanRun) error {
+			var serr error
+			served, serr = serveStoredScanRun(ctx, prior, ctr, jsonOut, narrateRun, wantRunFacts, surface, stdout, stderr)
+			return serr
+		},
+		Scanning: func() { _, _ = fmt.Fprintf(progressOut, "Scanning walk %s...\n", walkID) },
 	})
+	if reused {
+		return served, err
+	}
+	var scanFailed *driver.ScanFailedError
+	if errors.As(err, &scanFailed) {
+		return vulnScanRunFacts{}, stepError(ctx, "vuln scan", scanFailed.Err)
+	}
 	if err != nil {
-		return vulnScanRunFacts{}, stepError(ctx, "vuln scan", err)
+		return vulnScanRunFacts{}, err
 	}
 
 	// The toolchain axis goes to stderr, beside the result. It is also the
@@ -735,36 +734,6 @@ func useGoDir(goDir string) error {
 		return fmt.Errorf("unsetting GOROOT: %w", err)
 	}
 	return nil
-}
-
-// refreshScanSnapshot refreshes the advisory database when --fresh asks, and
-// says what the refresh settled on.
-func refreshScanSnapshot(ctx context.Context, ctr *Container, walkID string, fresh bool, stderr io.Writer) error {
-	if fresh {
-		refresh, rerr := ctr.ScanWalk.RefreshSnapshot(ctx, walkID)
-		if _, werr := fmt.Fprintf(stderr, "%s\n", advisoryRefreshLine(refresh, rerr)); werr != nil {
-			return fmt.Errorf("writing output: %w", werr)
-		}
-		if rerr != nil {
-			return fmt.Errorf("refreshing the advisory database: %w", rerr)
-		}
-	}
-	return nil
-}
-
-// serveReusableScanRun serves the stored run that already answers the walk
-// against the current snapshot, unless --force insists on measuring; served
-// reports that one did.
-func serveReusableScanRun(ctx context.Context, ctr *Container, walkID, projectDir string, force, jsonOut, narrateRun, wantRunFacts bool, surface string, stdout, stderr io.Writer) (vulnScanRunFacts, bool, error) {
-	if !force {
-		if prior, ok, rerr := ctr.ScanWalk.ReusableRun(ctx, walkID, projectDir); rerr != nil {
-			return vulnScanRunFacts{}, false, fmt.Errorf("checking for a reusable scan run: %w", rerr)
-		} else if ok {
-			facts, serr := serveStoredScanRun(ctx, prior, ctr, jsonOut, narrateRun, wantRunFacts, surface, stdout, stderr)
-			return facts, true, serr
-		}
-	}
-	return vulnScanRunFacts{}, false, nil
 }
 
 // advisoryRefreshLine renders what a --fresh refresh established, in one line.
@@ -1548,7 +1517,15 @@ func rescanWith(
 		return err
 	}
 
-	run, err := rescan.Rescan(ctx, req)
+	// Through the driver the library's Rescan entry is, so the two cannot ask
+	// the re-scan different questions.
+	run, err := driver.NewRescanUseCase(rescan).Run(ctx, driver.RescanRequest{
+		WalkID:       req.WalkID,
+		Snapshot:     req.Snapshot,
+		Reachability: req.EnableReachability,
+		Operator:     req.Operator,
+		Progress:     req.Progress,
+	})
 	if err != nil {
 		// A frame the re-scan cannot reproduce is the one failure here that has a
 		// route out, and the route is a different command — so it is named. The

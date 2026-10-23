@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/eitanity/kanonarion/internal/adapters/clock"
 	"github.com/eitanity/kanonarion/internal/adapters/goenv"
@@ -24,7 +25,9 @@ import (
 	fetchsumdb "github.com/eitanity/kanonarion/internal/adapters/sumdb/gosum"
 	fetchvcs "github.com/eitanity/kanonarion/internal/adapters/vcs/gitexec"
 	"github.com/eitanity/kanonarion/internal/adapters/yamlkeys"
+	cganalyser "github.com/eitanity/kanonarion/internal/callgraph/adapters/analyser/staticcha"
 	cgapp "github.com/eitanity/kanonarion/internal/callgraph/application"
+	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
 	"github.com/eitanity/kanonarion/internal/composition/storage"
 	sqlitestorage "github.com/eitanity/kanonarion/internal/composition/storage/sqlite"
 	"github.com/eitanity/kanonarion/internal/config"
@@ -46,6 +49,7 @@ import (
 	licdet "github.com/eitanity/kanonarion/internal/license/adapters/detector/licensecheck"
 	licapp "github.com/eitanity/kanonarion/internal/license/application"
 	sbomapp "github.com/eitanity/kanonarion/internal/sbom/application"
+	staleports "github.com/eitanity/kanonarion/internal/staleness/ports"
 	stdlibgit "github.com/eitanity/kanonarion/internal/stdlib/adapters/gitlsremote"
 	stdlibgodev "github.com/eitanity/kanonarion/internal/stdlib/adapters/godev"
 	stdliblic "github.com/eitanity/kanonarion/internal/stdlib/adapters/licenseident"
@@ -58,7 +62,14 @@ import (
 	tinygobridge "github.com/eitanity/kanonarion/internal/tinygo/adapters/walkbridge"
 	tinygoapp "github.com/eitanity/kanonarion/internal/tinygo/application"
 	tinygoports "github.com/eitanity/kanonarion/internal/tinygo/ports"
+	venlocalfs "github.com/eitanity/kanonarion/internal/vendortree/adapters/scanner/localfs"
 	venapp "github.com/eitanity/kanonarion/internal/vendortree/application"
+	vulncallgraph "github.com/eitanity/kanonarion/internal/vuln/adapters/callgraph"
+	vulnfetch "github.com/eitanity/kanonarion/internal/vuln/adapters/fetch"
+	"github.com/eitanity/kanonarion/internal/vuln/adapters/reachability"
+	vulnvendorclosure "github.com/eitanity/kanonarion/internal/vuln/adapters/vendorclosure/vendortree"
+	govulncheck "github.com/eitanity/kanonarion/internal/vuln/adapters/vuln/govulncheck"
+	osvdb "github.com/eitanity/kanonarion/internal/vuln/adapters/vulndb/osv"
 	vulnapp "github.com/eitanity/kanonarion/internal/vuln/application"
 	walkbuildlist "github.com/eitanity/kanonarion/internal/walk/adapters/buildlist/gotoolchain"
 	walkfetcher "github.com/eitanity/kanonarion/internal/walk/adapters/fetcher/local"
@@ -280,10 +291,11 @@ func closeStorage(st *storage.Storage) error {
 
 // Driver is the write/serving surface. It holds the individually
 // exported write use cases — the verified single-coordinate fetch/serve driver
-// that powers a gating module proxy, the local walk→extract driver, and the
-// validate-and-ingest boundary. The bulk extraction pipeline is deliberately
-// absent: it stays behind the CLI composition root so its orchestration shape is
-// free to change. Further drivers join this struct as additional fields.
+// that powers a gating module proxy, the local walk→extract driver, the
+// coordinate analysis and rescan drivers, and the validate-and-ingest
+// boundary. The stage use cases they compose stay behind this root, so their
+// orchestration shape is free to change. Further drivers join this struct as
+// additional fields.
 type Driver struct {
 	// FetchServe resolves a single ModuleCoordinate, fetching and verifying on a
 	// miss, and returns a BlobHandle for serving.
@@ -292,11 +304,31 @@ type Driver struct {
 	// its extraction stages, returning the records. Powers the local-walking
 	// gRPC client (source never leaves the machine).
 	LocalWalkExtract *driver.LocalWalkExtractUseCase
+	// CoordinateAnalysis runs, for a published module version, what
+	// `inspect <module>@<version>` runs: walk, extraction and vulnerability scan.
+	CoordinateAnalysis *driver.CoordinateAnalysisUseCase
+	// Rescan re-scans a stored walk against a fresh or pinned advisory
+	// snapshot, as `vuln-scan-rescan <walk-id>` does.
+	Rescan *driver.RescanUseCase
 	// ValidateIngest is the verified-fact boundary: it validates imported records
 	// against the same invariants extracted ones satisfy before persisting them
 	// (Ingest), and re-verifies records fail-closed on read (ReadVerified). Powers
 	// the consume side of the airgap bundle.
 	ValidateIngest *fetchapp.ValidateAndIngestUseCase
+
+	// staleness and stalenessTTL are the ledger and staleness.ttl the
+	// StalenessResolver method builds over.
+	staleness    staleports.Ledger
+	stalenessTTL time.Duration
+}
+
+// StalenessResolver builds the per-module staleness resolver over the
+// driver's ledger, with the store's staleness.ttl unless cfg names one.
+func (d *Driver) StalenessResolver(cfg StalenessResolverConfig) (*driver.StalenessResolver, error) {
+	if cfg.TTL == 0 {
+		cfg.TTL = d.stalenessTTL
+	}
+	return NewStalenessResolver(d.staleness, cfg)
 }
 
 // NewDriver opens the store under storeRoot through the backend its
@@ -421,17 +453,30 @@ func newDriverFrom(st *storage.Storage, storeRoot string, cfg configdomain.Confi
 		fetchUC = fetchUC.WithPrivateModules(goenv.NoProxy, nil)
 	}
 
-	localWalkExtract, err := newLocalWalkExtract(st, fetchUC, clk, stopwatch, logger, cgSubprocessExec, storeRoot)
+	pipeline, err := newWalkExtract(st, fetchUC, clk, stopwatch, logger, cgSubprocessExec, storeRoot)
 	if err != nil {
 		return nil, nil, errors.Join(err, closeStorage(st))
 	}
+	scanWalk, rescanWalk := newScanPipeline(st, fetchUC, clk, logger, storeRoot)
 
 	d := &Driver{
-		FetchServe:       fetchapp.NewServeModuleUseCase(fetchUC, st.Blobs).WithAudit(st.Audit),
-		LocalWalkExtract: localWalkExtract,
-		ValidateIngest:   fetchapp.NewValidateAndIngestUseCase(st.Facts).WithAudit(st.Audit),
+		FetchServe: fetchapp.NewServeModuleUseCase(fetchUC, st.Blobs).WithAudit(st.Audit),
+		LocalWalkExtract: driver.NewLocalWalkExtractUseCase(pipeline.walk, pipeline.extract, pipeline.stages).
+			WithWorkspaceProbe(walkbuildlist.New("", logger)),
+		CoordinateAnalysis: driver.NewCoordinateAnalysisUseCase(pipeline.walk, pipeline.extract, scanWalk, pipeline.stages, privateModulePath),
+		Rescan:             driver.NewRescanUseCase(rescanWalk),
+		ValidateIngest:     fetchapp.NewValidateAndIngestUseCase(st.Facts).WithAudit(st.Audit),
+		staleness:          st.Staleness,
+		stalenessTTL:       cfg.Staleness.TTL,
 	}
 	return d, func() error { return closeStorage(st) }, nil
+}
+
+// privateModulePath reports a module path GONOPROXY (else GOPRIVATE) names:
+// no proxy is ever asked about it.
+func privateModulePath(path string) bool {
+	_, ok := goenv.NoProxy(path)
+	return ok
 }
 
 // stagePipelineVersion is the per-stage extraction pipeline version the driver
@@ -439,11 +484,18 @@ func newDriverFrom(st *storage.Storage, storeRoot string, cfg configdomain.Confi
 // config knob: the driver runs the same built-in stages the CLI does.
 const stagePipelineVersion = "0.1.0"
 
-// newLocalWalkExtract wires the project-walk and extraction pipelines over the
-// storage value and fetch infrastructure, then constructs the local walk→extract
-// driver. Full git/sumdb verification is on (the fetcher does not skip VCS); the
-// driver runs the full built-in stage set by default.
-func newLocalWalkExtract(
+// walkExtract is the walk and extraction pipeline the driver's walking entries
+// share, with the stage set they run by default.
+type walkExtract struct {
+	walk    *walkapp.ExecuteWalkUseCase
+	extract *extractapp.ExtractUseCase
+	stages  []string
+}
+
+// newWalkExtract wires the walk and extraction pipelines over the storage
+// value and fetch infrastructure. Full git/sumdb verification is on (the
+// fetcher does not skip VCS); the full built-in stage set is the default.
+func newWalkExtract(
 	st *storage.Storage,
 	fetchUC *fetchapp.FetchModuleUseCase,
 	clk clock.System,
@@ -451,7 +503,7 @@ func newLocalWalkExtract(
 	logger *slog.Logger,
 	cgSubprocessExec extextractor.SubprocessExecutor,
 	storeRoot string,
-) (*driver.LocalWalkExtractUseCase, error) {
+) (walkExtract, error) {
 	blobs, factStore, audit := st.Blobs, st.Facts, st.Audit
 	walkStore, extStore, licStore, exStore := st.Walks, st.Extractions, st.Licenses, st.Examples
 	ifaceStore := st.Interfaces
@@ -528,9 +580,56 @@ func newLocalWalkExtract(
 		Logger: logger,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("wiring extract use case: %w", err)
+		return walkExtract{}, fmt.Errorf("wiring extract use case: %w", err)
 	}
+	return walkExtract{walk: executeWalkUC, extract: extractUC.WithAudit(audit), stages: stages.Stages()}, nil
+}
 
-	return driver.NewLocalWalkExtractUseCase(executeWalkUC, extractUC.WithAudit(audit), stages.Stages()).
-		WithWorkspaceProbe(walkbuildlist.New("", logger)), nil
+// newScanPipeline wires the walk scan and the re-scan over one module
+// scanner, as the CLI container does, at this host's frame. The call-graph
+// child is told the store root, as the extraction's is.
+func newScanPipeline(
+	st *storage.Storage,
+	fetchUC *fetchapp.FetchModuleUseCase,
+	clk clock.System,
+	logger *slog.Logger,
+	storeRoot string,
+) (*vulnapp.ScanWalkUseCase, *vulnapp.RescanWalkUseCase) {
+	vulnStore, cgStore := st.Vulnerabilities, st.CallGraphs
+	callSites := reachability.NewCallSiteStoreReader(cgStore, cgapp.PipelineVersion).
+		WithReadFrame(func() (cgdomain.BuildFrame, string) {
+			return cganalyser.DeclaredFrame(goenv.Target{}, goenv.TinyGo{}), ""
+		})
+	routeAnnotator := reachability.NewDispatchAnnotator(callSites, logger)
+	cgSpawner := vulncallgraph.NewOsCallGraphSpawner(cgChildBinary(), 0, io.Discard).
+		WithExtraArgs(extextractor.CallGraphSubprocessArgs(storeRoot, ""))
+	moduleScanner := vulnapp.NewScanModuleUseCase(
+		st.Facts, st.Blobs, vulnStore, st.Walks,
+		govulncheck.New("v1", vulnStore).WithLogger(logger),
+		osvdb.New(nil, vulnStore, clk).WithLogger(logger),
+		reachability.New(),
+		clk, vulnapp.PipelineVersion, logger,
+	).WithCallGraphLoader(reachability.NewCallGraphStoreLoader(cgStore, cgapp.PipelineVersion)).
+		WithCallGraphSpawner(cgSpawner).
+		WithRouteAnnotator(routeAnnotator).
+		WithAudit(st.Audit)
+	fetcher := vulnfetch.NewFetchModuleAdapter(fetchUC)
+	scanWalk := vulnapp.NewScanWalkUseCase(st.Walks, vulnStore, moduleScanner, fetcher, clk, vulnapp.PipelineVersion, logger).
+		WithAudit(st.Audit).WithHostMemory(meminfo.New()).WithRouteAnnotator(routeAnnotator).
+		WithVendoredClosure(vulnvendorclosure.New(venlocalfs.New(nil)))
+	rescanWalk := vulnapp.NewRescanWalkUseCase(st.Walks, vulnStore, moduleScanner, fetcher, clk, vulnapp.PipelineVersion, logger).
+		WithAudit(st.Audit).WithHostMemory(meminfo.New()).WithRouteAnnotator(routeAnnotator).
+		WithVendoredClosure(vulnvendorclosure.New(venlocalfs.New(nil)))
+	return scanWalk, rescanWalk
+}
+
+// cgChildBinary is the binary a reachability scan spawns for a call graph:
+// this one, as for the extraction stage. Empty when it cannot be resolved,
+// which fails that one analysis rather than the driver.
+func cgChildBinary() string {
+	bin, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	return bin
 }

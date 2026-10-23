@@ -13,6 +13,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/adapters/goenv"
 	"github.com/eitanity/kanonarion/internal/adapters/interrupt"
 	proxyadapter "github.com/eitanity/kanonarion/internal/adapters/proxy/direct"
+	"github.com/eitanity/kanonarion/internal/composition"
 	"github.com/eitanity/kanonarion/internal/composition/storage"
 	stalegolist "github.com/eitanity/kanonarion/internal/staleness/adapters/golist"
 	staleproxy "github.com/eitanity/kanonarion/internal/staleness/adapters/proxy"
@@ -29,8 +30,7 @@ import (
 // be tested for the one thing that distinguishes them: whether the ledger is
 // read at all.
 func newStalenessResolver(latest staleports.LatestResolver, ledger staleports.Ledger, ttl time.Duration, fresh bool) *staleapp.Resolver {
-	return staleapp.NewResolver(latest, ledger, cliClock, ttl, fresh).
-		WithPrivate(privateModulePath, stalegolist.NewPrivate("", ""))
+	return composition.StalenessResolverOver(latest, ledger, cliClock, ttl, fresh)
 }
 
 // privateModulePath reports a module path GONOPROXY (else GOPRIVATE) names:

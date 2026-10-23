@@ -940,6 +940,100 @@ func TestPublishedPortsNameOnlyPublishedTypes(t *testing.T) {
 	for _, v := range unpublishedEnumConstants(pkgs[0].Types) {
 		t.Error(v)
 	}
+	for _, v := range reachableStageTypes(pkgs[0].Types) {
+		t.Error(v)
+	}
+}
+
+// stageTypes are the use cases the façade's drivers compose and must never
+// hand out: reaching one would make the pipeline's orchestration shape public.
+var stageTypes = map[string]bool{
+	"internal/walk/application.ExecuteWalkUseCase": true,
+	"internal/extract/application.ExtractUseCase":  true,
+	"internal/vuln/application.ScanWalkUseCase":    true,
+	"internal/vuln/application.RescanWalkUseCase":  true,
+	"internal/vuln/application.ScanModuleUseCase":  true,
+	"internal/staleness/application.Resolver":      true,
+	"internal/staleness/ports.BatchLatestResolver": true,
+	"internal/staleness/ports.ProgressReporter":    true,
+}
+
+// reachableStageTypes returns one message per stage type a consumer can reach
+// from pkg/kanonarion's exported names, through exported fields, exported
+// methods and signatures.
+func reachableStageTypes(pkg *types.Package) []string {
+	w := surfaceWalk{seen: map[types.Type]bool{}, found: map[string]string{}}
+	scope := pkg.Scope()
+	for _, name := range scope.Names() {
+		if obj := scope.Lookup(name); obj.Exported() {
+			w.visit(obj.Type(), name)
+		}
+	}
+	out := make([]string, 0, len(w.found))
+	for typ, via := range w.found {
+		out = append(out, fmt.Sprintf("%s is reachable from pkg/kanonarion through %s — a stage use case must stay behind the composition root", typ, via))
+	}
+	sort.Strings(out)
+	return out
+}
+
+// surfaceWalk follows everything an external caller can name from one
+// exported identifier.
+type surfaceWalk struct {
+	seen  map[types.Type]bool
+	found map[string]string
+}
+
+// visitNamed records a stage type and follows the exported methods of *T,
+// which a caller holding a T or a *T can both reach.
+func (w *surfaceWalk) visitNamed(n *types.Named, via string) {
+	obj := n.Origin().Obj()
+	if obj.Pkg() != nil {
+		key := strings.TrimPrefix(obj.Pkg().Path(), modulePath+"/") + "." + obj.Name()
+		if stageTypes[key] {
+			w.found[key] = via
+		}
+	}
+	mset := types.NewMethodSet(types.NewPointer(n))
+	for i := 0; i < mset.Len(); i++ {
+		if m := mset.At(i).Obj(); m.Exported() {
+			w.visit(m.Type(), via+"."+m.Name())
+		}
+	}
+	w.visit(n.Underlying(), via)
+}
+
+func (w *surfaceWalk) visit(typ types.Type, via string) {
+	typ = types.Unalias(typ)
+	if w.seen[typ] {
+		return
+	}
+	w.seen[typ] = true
+	switch tt := typ.(type) {
+	case *types.Named:
+		w.visitNamed(tt, via)
+	case *types.Struct:
+		for i := 0; i < tt.NumFields(); i++ {
+			if f := tt.Field(i); f.Exported() {
+				w.visit(f.Type(), via+"."+f.Name())
+			}
+		}
+	case *types.Interface:
+		for i := 0; i < tt.NumMethods(); i++ {
+			w.visit(tt.Method(i).Type(), via+"."+tt.Method(i).Name())
+		}
+	case *types.Signature:
+		for _, tuple := range []*types.Tuple{tt.Params(), tt.Results()} {
+			for i := 0; i < tuple.Len(); i++ {
+				w.visit(tuple.At(i).Type(), via)
+			}
+		}
+	case *types.Map:
+		w.visit(tt.Key(), via)
+		w.visit(tt.Elem(), via)
+	case interface{ Elem() types.Type }: // pointer, slice, array, chan
+		w.visit(tt.Elem(), via)
+	}
 }
 
 // unpublishedEnumConstants returns one message per exported constant of a

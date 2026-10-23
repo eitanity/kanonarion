@@ -143,6 +143,9 @@ var allowedPortAliases = map[string]bool{
 	"SumDBResult": true, "SumDBUnavailability": true,
 	"VulnerabilityRecordGeneration": true,
 	"WalkPresence":                  true, "CallGraphOutcomeReader": true, "CallGraphOutcome": true,
+	// The staleness resolver's upstream, so a consumer can supply its own and
+	// still tell an absent path from a failed lookup.
+	"LatestResolver": true, "LatestInfo": true,
 }
 
 // facadeAlias is one exported type-alias declaration in the façade package.

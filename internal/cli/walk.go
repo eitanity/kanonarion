@@ -600,32 +600,9 @@ func rootIngestFailure(rec domain.WalkRecord) string {
 func runWalk(ctx context.Context, arg string, f commonWalkFlags, force, allowPartial bool, workerCount int, operator, policyPath string, skipVCSVerify bool, scope domain.WalkScope, depth domain.WalkDepth, progress walkports.ProgressReporter, uc ExecuteWalkUseCase, records fetchRecordReader, stdout, stderr io.Writer) (application.ExecuteWalkResult, error) {
 	logger := buildLogger(logLevel, stderr)
 
-	path, version, err := parseModuleArg(arg)
+	coord, err := resolveWalkCoordinate(ctx, arg, f.goproxy, stderr)
 	if err != nil {
-		return application.ExecuteWalkResult{}, fmt.Errorf("invalid argument %q: %w", arg, err)
-	}
-	if version == "" {
-		return application.ExecuteWalkResult{}, moduleVersionRequired("walk", path)
-	}
-	if perr := refusePrivateCoordinate(path, true); perr != nil {
-		return application.ExecuteWalkResult{}, perr
-	}
-
-	var coord coordinate.ModuleCoordinate
-	if version == "latest" {
-		proxy, proxyErr := fetchadapterproxy.New(f.goproxy, false)
-		if proxyErr != nil {
-			return application.ExecuteWalkResult{}, proxyAdapterError(proxyErr)
-		}
-		coord, err = resolveLatest(ctx, path, proxy, stderr)
-		if err != nil {
-			return application.ExecuteWalkResult{}, err
-		}
-	} else {
-		coord, err = coordinate.NewModuleCoordinate(path, version)
-		if err != nil {
-			return application.ExecuteWalkResult{}, fmt.Errorf("invalid coordinate %q: %w", arg, err)
-		}
+		return application.ExecuteWalkResult{}, err
 	}
 
 	policy, policyHash, err := loadPolicy(ctx, policyPath, logger)
@@ -648,17 +625,49 @@ func runWalk(ctx context.Context, arg string, f commonWalkFlags, force, allowPar
 	if err != nil {
 		return application.ExecuteWalkResult{}, fmt.Errorf("executing walk: %w", err)
 	}
+	return result, reportCoordinateWalk(ctx, result, allowPartial, records, stdout, stderr)
+}
 
+// resolveWalkCoordinate parses a positional module@version, refusing a private
+// path and resolving @latest through the proxy.
+func resolveWalkCoordinate(ctx context.Context, arg, goproxy string, stderr io.Writer) (coordinate.ModuleCoordinate, error) {
+	path, version, err := parseModuleArg(arg)
+	if err != nil {
+		return coordinate.ModuleCoordinate{}, fmt.Errorf("invalid argument %q: %w", arg, err)
+	}
+	if version == "" {
+		return coordinate.ModuleCoordinate{}, moduleVersionRequired("walk", path)
+	}
+	if perr := refusePrivateCoordinate(path, true); perr != nil {
+		return coordinate.ModuleCoordinate{}, perr
+	}
+	if version == "latest" {
+		proxy, proxyErr := fetchadapterproxy.New(goproxy, false)
+		if proxyErr != nil {
+			return coordinate.ModuleCoordinate{}, proxyAdapterError(proxyErr)
+		}
+		return resolveLatest(ctx, path, proxy, stderr)
+	}
+	coord, err := coordinate.NewModuleCoordinate(path, version)
+	if err != nil {
+		return coordinate.ModuleCoordinate{}, fmt.Errorf("invalid coordinate %q: %w", arg, err)
+	}
+	return coord, nil
+}
+
+// reportCoordinateWalk states what a coordinate walk produced — its
+// verification coverage and its record — and returns the exit it earns.
+func reportCoordinateWalk(ctx context.Context, result application.ExecuteWalkResult, allowPartial bool, records fetchRecordReader, stdout, stderr io.Writer) error {
 	rec := result.Record
 	// Stated on stderr and, under --json, in the document: see the same report on
 	// the project path above.
 	coverage, cerr := walkCoverageReport(ctx, rec, records, stderr)
 	if cerr != nil {
-		return result, cerr
+		return cerr
 	}
 	if jsonOut {
 		if encErr := writeWalkRecordWithCoverageJSON(stdout, rec, coverage); encErr != nil {
-			return result, fmt.Errorf("encoding JSON: %w", encErr)
+			return fmt.Errorf("encoding JSON: %w", encErr)
 		}
 	} else {
 		if _, pErr := fmt.Fprintf(stdout, "walk %s: %s depth=%s (%d nodes, %d failed)\n",
@@ -666,7 +675,7 @@ func runWalk(ctx context.Context, arg string, f commonWalkFlags, force, allowPar
 			len(rec.Graph.Nodes),
 			domain.CountNodeFailures(rec),
 		); pErr != nil {
-			return result, fmt.Errorf("writing output: %w", pErr)
+			return fmt.Errorf("writing output: %w", pErr)
 		}
 	}
 
@@ -675,7 +684,7 @@ func runWalk(ctx context.Context, arg string, f commonWalkFlags, force, allowPar
 	// this arm used to state the fetch sentence over all of them, which is the
 	// one sentence walkPartialMessage exists to stop being said unconditionally.
 	// No root is ingested on this path, so there is no ingest failure to pass.
-	return result, walkExit(rec.OverallStatus, allowPartial,
+	return walkExit(rec.OverallStatus, allowPartial,
 		"walk failed: target module could not be fetched",
 		walkPartialMessage(rec, ""))
 }

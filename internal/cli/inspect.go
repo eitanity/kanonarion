@@ -7,10 +7,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/driver"
+	extstages "github.com/eitanity/kanonarion/internal/extract/adapters/stages/local"
 
 	"github.com/spf13/cobra"
 
@@ -164,10 +167,6 @@ func runInspect(ctx context.Context, arg string, f inspectFlags, stdout, stderr 
 		return rerr
 	}
 
-	wf := commonWalkFlags{
-		goproxy: f.goproxy,
-	}
-
 	logger := buildLogger(logLevel, stderr)
 	callgraphNarration = callgraphNarrationFor(stderr, f.noProgress, activeConfig.Preferences.Progress)
 	ctr, cleanup, err := NewContainer(storeRoot, f.goproxy, f.goBinary, f.skipVCS, activeConfig, logger)
@@ -180,8 +179,7 @@ func runInspect(ctx context.Context, arg string, f inspectFlags, stdout, stderr 
 	if _, werr := fmt.Fprintf(stderr, "==> inspect: walking %s\n", arg); werr != nil {
 		return fmt.Errorf("writing output: %w", werr)
 	}
-	progress := newWalkProgressReporter(stderr, f.noProgress, activeConfig, logLevel)
-	walkResult, err := runWalk(ctx, arg, wf, f.force, true, 0, "", f.policyPath, f.skipVCS, domain.WalkScopeCode, domain.WalkDepthFull, progress, ctr.ExecuteWalk, nil, io.Discard, stderr)
+	walkResult, req, err := walkInspectCoordinate(ctx, arg, f, ctr.ExecuteWalk, logger, stderr)
 	if err != nil {
 		return fmt.Errorf("walk: %w", err)
 	}
@@ -208,10 +206,11 @@ func runInspect(ctx context.Context, arg string, f inspectFlags, stdout, stderr 
 	if _, werr := fmt.Fprintf(stderr, "==> inspect: extracting walk %s (frame %s)\n", walkID, walkRec.Graph.Frame()); werr != nil {
 		return fmt.Errorf("writing output: %w", werr)
 	}
+	xreq := driver.CoordinateExtractRequest(walkID, req, extstages.New().Stages())
 	ef := extractFlags{
 		goBinary:   f.goBinary,
-		stages:     []string{"license", "interface", "callgraph", "example"},
-		force:      f.force,
+		stages:     xreq.Stages,
+		force:      xreq.Force,
 		noProgress: f.noProgress,
 	}
 	extractRun, err := extractWalk(ctx, walkID, ef, stderr)
@@ -233,7 +232,8 @@ func runInspect(ctx context.Context, arg string, f inspectFlags, stdout, stderr 
 	// reader with the repetitive half of the presentation and threw away the
 	// concise half. stdout stays the clean data channel because inspect always
 	// scans with jsonOut=false, so nothing machine-readable is written here.
-	scan, serr := runVulnScanReporting(ctx, walkID, f.force, f.fresh, f.reachable, 1, false, false, f.goBinary, os.Getenv("USER"), "", f.policyPath, vulnapp.ServeSurfaceInspect, false, f.noProgress, true, true, stderr, stderr)
+	sreq := driver.CoordinateScanRequest(walkID, req)
+	scan, serr := runVulnScanReporting(ctx, walkID, sreq.Force, sreq.Fresh, sreq.Reachability, sreq.CallGraphWorkers, sreq.BinaryModePrePass, false, f.goBinary, sreq.Operator, sreq.ProjectDir, f.policyPath, sreq.Surface, sreq.NoVendor, f.noProgress, true, true, stderr, stderr)
 	if serr != nil {
 		return fmt.Errorf("vuln-scan: %w", serr)
 	}
@@ -258,6 +258,37 @@ func runInspect(ctx context.Context, arg string, f inspectFlags, stdout, stderr 
 		Snapshot:  scan.Snapshot,
 		Toolchain: inspectToolchain(scan, scanState),
 	}, stdout, stderr)
+}
+
+// walkInspectCoordinate runs the coordinate analysis's walk stage: the walk
+// request is the driver's, and only the progress, the loaded depth policy and
+// the VCS choice are added here. It returns the analysis request the later
+// stages are built from.
+func walkInspectCoordinate(ctx context.Context, arg string, f inspectFlags, uc ExecuteWalkUseCase, logger *slog.Logger, stderr io.Writer) (application.ExecuteWalkResult, driver.CoordinateAnalysisRequest, error) {
+	coord, err := resolveWalkCoordinate(ctx, arg, f.goproxy, stderr)
+	if err != nil {
+		return application.ExecuteWalkResult{}, driver.CoordinateAnalysisRequest{}, err
+	}
+	req := driver.CoordinateAnalysisRequest{
+		Coordinate:      coord,
+		Force:           f.force,
+		Reachability:    f.reachable,
+		FreshAdvisories: f.fresh,
+		Operator:        os.Getenv("USER"),
+	}
+	policy, policyHash, err := loadPolicy(ctx, f.policyPath, logger)
+	if err != nil {
+		return application.ExecuteWalkResult{}, req, fmt.Errorf("loading policy: %w", err)
+	}
+	wreq := driver.CoordinateWalkRequest(req)
+	wreq.SkipVCSVerify = f.skipVCS
+	wreq.Policy, wreq.PolicyHash = &policy, policyHash
+	wreq.Progress = newWalkProgressReporter(stderr, f.noProgress, activeConfig, logLevel)
+	result, err := uc.Execute(ctx, wreq)
+	if err != nil {
+		return application.ExecuteWalkResult{}, req, fmt.Errorf("executing walk: %w", err)
+	}
+	return result, req, reportCoordinateWalk(ctx, result, true, nil, io.Discard, stderr)
 }
 
 // resolveCoordForInspect parses the module arg, resolving @latest if needed.
