@@ -170,9 +170,9 @@ values there, as they did when `verdict` and `reachability_state` gained theirs)
   a record that names no frame. `callgraph-show` text gains a `frame:` line and
   `--history` a `frame:` line per generation, both absent on such a record.
 
-## Fetch record: pipeline `0.5.0` → `0.6.0`, and fetch migration 11 - which directory the VCS check hashed
+## Fetch record: pipeline `0.5.0` → `0.6.0`, and fetch migrations 11 and 12 - which directory the VCS check hashed, and the version's own time
 
-**Derivation change, one additive field, one store migration.** A module that
+**Derivation change, two additive fields, two store migrations.** A module that
 lives in a subdirectory of its repository (`service/s3` of the AWS SDK,
 `client/v3` of etcd) is tagged under that directory (`service/s3/v1.2.3`), and
 the proxy zips that directory alone. A `0.5.0` build looked for the module's
@@ -214,6 +214,23 @@ as the go command names it (`client` for `go.etcd.io/etcd/client/v3`), and an
 SBOM component's `vcs` reference comment names the directory compared. Neither
 changes for a record that names no directory.
 
+`FactRecord` also gains `version_time`: the time the module proxy or module
+cache gave for the version in its `.info`, in UTC with full precision
+(`time.RFC3339Nano`). It is empty where the source gave none, on every record
+written before the field, and on a `0.6.0` record written before it. Fetch
+migration 12 adds the column:
+
+```sql
+ALTER TABLE fetch_records ADD COLUMN version_time TEXT NOT NULL DEFAULT ''
+```
+
+It is `omitempty` in the canonical JSON on the same terms as `git_subdir`, and
+the pipeline stays `0.6.0`. Store `v90` -> `v91`. `fetch --json` always carries
+`version_time`: the time, or `null` where the record holds none. `use` writes it
+as the `.info` `Time`, as the go command writes it, and leaves `Time` out where
+the record holds none. It used to write the time the store first fetched the
+module there.
+
 Fetch records are append-only, so `0.5.0` and older rows stay as written and
 keep their detail. A fetch at `0.6.0` does not serve a `0.5.0` row from cache:
 the next full fetch of a coordinate (`fetch`, `walk --force`) appends a `0.6.0`
@@ -222,8 +239,9 @@ coordinate held as a full record at any version, or as a `0.6.0` go.mod-only
 record; a coordinate held only as a `0.5.0` go.mod-only record is fetched once
 more. A walk or scan that is itself reused fetches nothing.
 
-An older build meets a `v90` store at the schema gate: it names `fetch@v11` as a
-migration it does not know and refuses, and `store info` still reads the store.
+An older build meets a `v91` store at the schema gate: it names `fetch@v11` and
+`fetch@v12`, or `fetch@v12` alone, as migrations it does not know and refuses, and
+`store info` still reads the store.
 
 ## Native record: pipeline `0.4.0` → `0.5.0`
 

@@ -135,6 +135,13 @@ func VCSURLBinding(b domain.VCSURLBinding) Option {
 	}
 }
 
+// VersionTime sets the time the module source reported for the version.
+// Leaving it unset is how a record whose source gave none, or one written
+// before the field, is represented.
+func VersionTime(at time.Time) Option {
+	return func(r *domain.FactRecord) { r.VersionTime = domain.VersionTimeOf(at) }
+}
+
 // Unsealed returns a record with no content hash at all. Use it for tests that
 // prove an unsealed record is rejected — Record would seal it and the test
 // would pass without exercising the guard.

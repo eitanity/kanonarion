@@ -324,6 +324,7 @@ func (uc *FetchModuleUseCase) Execute(ctx context.Context, req FetchRequest) (_ 
 		SumDBCheck:         sumdbLeg(sumdbAnswered),
 		VCSCheck:           vcsLeg(req.SkipVCSVerify, vcsLegUnavailable),
 		VCSURLBinding:      urlBinding,
+		VersionTime:        info.Time,
 	}
 
 	// Step 7: seal and append. Sealing computes the content hash at construction,

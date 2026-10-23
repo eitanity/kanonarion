@@ -67,7 +67,7 @@ func checkoutFiles(dir string) ([]modzip.File, error) {
 		if d.IsDir() {
 			return nil
 		}
-		rel, err := filepath.Rel(dir, p)
+		rel, err := relPath(dir, p)
 		if err != nil {
 			return fmt.Errorf("relativising %s: %w", p, err)
 		}
@@ -79,6 +79,10 @@ func checkoutFiles(dir string) ([]modzip.File, error) {
 	}
 	return files, nil
 }
+
+// relPath is a seam over filepath.Rel: every path the walk yields lies under
+// dir, so its error branch is reachable only through it.
+var relPath = filepath.Rel
 
 // checkoutFile is one file of a checkout, as golang.org/x/mod/zip reads it.
 type checkoutFile struct {

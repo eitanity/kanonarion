@@ -1,6 +1,8 @@
 package domain
 
 import (
+	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -23,5 +25,22 @@ func TestCheckoutFiles_FailuresAreReported(t *testing.T) {
 	}
 	if _, err := f.Open(); err == nil || !strings.Contains(err.Error(), "opening gone") {
 		t.Errorf("Open of a vanished file = %v, want it named", err)
+	}
+}
+
+// A path the walk yields that cannot be made relative to the checkout is
+// reported, never hashed under another name.
+func TestCheckoutFiles_RelativisingFailureIsReported(t *testing.T) {
+	original := relPath
+	t.Cleanup(func() { relPath = original })
+	injected := errors.New("injected")
+	relPath = func(string, string) (string, error) { return "", injected }
+
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/m\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := checkoutFiles(dir); !errors.Is(err, injected) || !strings.Contains(err.Error(), "relativising") {
+		t.Errorf("checkoutFiles = %v, want the relativising failure", err)
 	}
 }

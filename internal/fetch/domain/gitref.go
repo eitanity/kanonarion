@@ -33,12 +33,16 @@ func (d RepoSubdir) MarshalJSON() ([]byte, error) {
 	if d == "" {
 		return []byte("null"), nil
 	}
-	b, err := json.Marshal(string(d))
+	b, err := marshalJSONString(string(d))
 	if err != nil {
 		return nil, fmt.Errorf("marshalling git_subdir: %w", err)
 	}
 	return b, nil
 }
+
+// marshalJSONString is a seam over json.Marshal: a string cannot fail to
+// marshal, so the error branches it feeds are reachable only through it.
+var marshalJSONString = func(s string) ([]byte, error) { return json.Marshal(s) }
 
 // ShortHash returns the first 12 characters of CommitHash, matching the
 // commit prefix embedded in pseudo-versions.

@@ -72,6 +72,10 @@ type fakeDownload struct {
 	goModHash domain2.ModuleHash
 }
 
+// fakeVersionTime is the version time the fake proxy reports by default: fixed,
+// since it now reaches the sealed record.
+var fakeVersionTime = time.Date(2025, 6, 1, 12, 0, 0, 0, time.UTC)
+
 func (f *fakeProxy) Info(_ context.Context, coord coordinate.ModuleCoordinate) (ports.ModuleInfo, error) {
 	if f.infoErr != nil {
 		return ports.ModuleInfo{}, f.infoErr
@@ -80,7 +84,7 @@ func (f *fakeProxy) Info(_ context.Context, coord coordinate.ModuleCoordinate) (
 	defer f.mu.Unlock()
 	info, ok := f.infos[coord.String()]
 	if !ok {
-		info = ports.ModuleInfo{Version: coord.Version(), Time: time.Now()}
+		info = ports.ModuleInfo{Version: coord.Version(), Time: fakeVersionTime}
 	}
 	return info, nil
 }

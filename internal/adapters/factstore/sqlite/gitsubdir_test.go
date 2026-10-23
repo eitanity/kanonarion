@@ -42,11 +42,11 @@ func TestGitSubdirRoundTripsThroughTheStore(t *testing.T) {
 func TestGitSubdirMigrationOnAPreviousSchemaStore(t *testing.T) {
 	ctx := context.Background()
 	all := sqlite.Migrations()
-	last := all[len(all)-1]
-	if last.Module != "fetch" || last.Version != 11 {
-		t.Fatalf("last fetch migration = %s@v%d, want fetch@v11", last.Module, last.Version)
+	at := slices.IndexFunc(all, func(m sqlitestore.Migration) bool { return m.Module == "fetch" && m.Version == 11 })
+	if at < 0 {
+		t.Fatal("no fetch@v11 migration")
 	}
-	previous := all[:len(all)-1]
+	previous := all[:at]
 	dsn := filepath.Join(t.TempDir(), "mirror.db")
 
 	// A store as the previous build leaves it, holding one record.
@@ -88,16 +88,5 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		t.Fatalf("closing: %v", err)
 	}
 
-	handle, err := sqlitestore.Open(dsn, nil, sqlitestore.IntentCreate)
-	if err != nil {
-		t.Fatalf("reopening: %v", err)
-	}
-	defer func() { _ = handle.Close() }()
-	state, err := sqlitestore.ReadMigrationState(handle, previous)
-	if err != nil {
-		t.Fatalf("ReadMigrationState: %v", err)
-	}
-	if !slices.Equal(state.Unknown, []string{sqlitestore.MigrationKey("fetch", 11)}) {
-		t.Errorf("unknown to the previous build = %v, want [fetch@v11]", state.Unknown)
-	}
+	assertUnknownToPrevious(t, dsn, previous, all[at:])
 }

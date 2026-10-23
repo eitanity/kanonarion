@@ -66,6 +66,10 @@ Verification has two independent checks:
   checkout hash …" for such a module) until the coordinate is fetched again:
   `fetch --force`, or the next full fetch of it.
 
+The record's `version_time` is the version's own time, as the module proxy
+or module cache gave it in the version's `.info`. It is `null` in `--json` when
+the source gave none or the record was written by an earlier version.
+
 `@<version>` may be an explicit version or `@latest`. Omitting it is only
 valid with `--list-versions` or a scope flag (`--gomod`/`--tool`/`--project`).
 

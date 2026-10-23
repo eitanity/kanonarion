@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
@@ -126,6 +127,7 @@ func (uc *FetchModuleUseCase) executeFromCache(ctx context.Context, req FetchReq
 		return FetchResult{}, err
 	}
 	log.InfoContext(ctx, "download_ok", slog.Int("zip_bytes", len(zipData)))
+	versionTime := uc.cachedVersionTime(ctx, log, req.Coordinate)
 
 	// Step 3: verify against the local go.sum. A missing entry or a hash
 	// mismatch is a hard failure — no blob is stored and no record is written.
@@ -169,6 +171,7 @@ func (uc *FetchModuleUseCase) executeFromCache(ctx context.Context, req FetchReq
 		AcquisitionMode:    domain2.AcquisitionModcache,
 		MeasurementKind:    domain2.MeasurementAcquired,
 		VCSCheck:           route.vcs,
+		VersionTime:        versionTime,
 	}
 
 	// Step 6: seal and append. This mode's anchor is the local go.sum alone, so it
@@ -176,6 +179,18 @@ func (uc *FetchModuleUseCase) executeFromCache(ctx context.Context, req FetchReq
 	// serves the stronger measurement and this run adds evidence, replacing none.
 	// Sign-on-process call site 2: fact-produce.
 	return uc.persistAndSign(ctx, log, req, m)
+}
+
+// cachedVersionTime is the version time the module cache's .info holds. The
+// cache, not the time, anchors this measurement, so an .info that cannot be read
+// records the time as unknown rather than refusing a fetch that otherwise holds.
+func (uc *FetchModuleUseCase) cachedVersionTime(ctx context.Context, log *slog.Logger, coord coordinate.ModuleCoordinate) time.Time {
+	info, err := uc.proxy.Info(ctx, coord)
+	if err != nil {
+		log.WarnContext(ctx, "module_cache_info_unavailable", slog.String("error", err.Error()))
+		return time.Time{}
+	}
+	return info.Time
 }
 
 // executeGoModOnlyModcache is the go.mod-only counterpart to executeModcache:

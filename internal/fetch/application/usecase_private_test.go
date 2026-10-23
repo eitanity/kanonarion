@@ -62,7 +62,9 @@ func (f *privateFixture) useCase(anchor ports.SumDBClient) *application.FetchMod
 // TestExecute_PrivateModuleIsReadFromTheCacheAgainstTheProjectGoSum: a private
 // module is verified against the project go.sum alone, records VerifiedByGoSum
 // with the variable named and the private VCS leg, stores its bytes, and never
-// reaches the checksum database, git, or the proxy's .info.
+// reaches the checksum database or git. Its .info is read through the proxy
+// port, which the router sends to the module cache, so the network proxy is
+// never contacted.
 func TestExecute_PrivateModuleIsReadFromTheCacheAgainstTheProjectGoSum(t *testing.T) {
 	f := newPrivateFixture(t)
 	anchor := &countingSumDB{fakeSumDB: fakeSumDB{result: ports.SumDBResult{Available: true, ZipHash: f.zip, GoModHash: f.mod}}}

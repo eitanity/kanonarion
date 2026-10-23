@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
@@ -700,19 +701,29 @@ func copyGoMod(ctx context.Context, blobs ports.BlobStore, root *os.Root, record
 // the zip, each only when absent.
 func writeDerivedModCacheFiles(root *os.Root, record fetchdomain.CompositeRecord, coord coordinate.ModuleCoordinate, relDir string) error {
 	// 3. Create INFO
+	// Time is the version's own time; with none recorded it is left out, which
+	// the go command reads as unknown, rather than standing in a fetch time.
+	versionTime, hasTime, err := fetchdomain.ParseVersionTime(record.VersionTime)
+	if err != nil {
+		return fmt.Errorf("reading the version time of %s: %w", coord, err)
+	}
 	info := struct {
 		Version string
-		Time    string
-		Origin  struct {
-			VCS    string
-			URL    string
+		Time    *time.Time `json:",omitempty"`
+		// Origin mirrors the go command's codehost.Origin tags: a field the
+		// record does not hold is left out, never written empty.
+		Origin struct {
+			VCS    string `json:",omitempty"`
+			URL    string `json:",omitempty"`
 			Subdir string `json:",omitempty"`
-			Hash   string
-			Ref    string
+			Hash   string `json:",omitempty"`
+			Ref    string `json:",omitempty"`
 		}
 	}{
 		Version: coord.Version(),
-		Time:    record.FirstFetchedAt.Format("2006-01-02T15:04:05Z"),
+	}
+	if hasTime {
+		info.Time = &versionTime
 	}
 	info.Origin.VCS = "git"
 	info.Origin.URL = record.GitURL

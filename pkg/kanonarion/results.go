@@ -82,6 +82,12 @@ type FactRecord = fetchdomain.FactRecord
 // Stability: result type (received by consumers); unstable pre-v1.
 type RepoSubdir = fetchdomain.RepoSubdir
 
+// VersionTime is the time the module source reported for a fetch record's
+// version, RFC 3339 in UTC; empty (JSON null) where the record holds none.
+//
+// Stability: result type (received by consumers); unstable pre-v1.
+type VersionTime = fetchdomain.VersionTime
+
 // WalkRecord is the persisted result of a dependency-graph walk: the resolved
 // graph, per-node fetch results, and overall status for a target module.
 //

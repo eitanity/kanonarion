@@ -219,5 +219,9 @@ never opens a socket. See
   the go command names it (`client` for `go.etcd.io/etcd/client/v3`). It is left
   out where the record names no directory, as a record from an earlier version
   does.
+- The `.info` `Time` is the version's own time, as the module proxy or module
+  cache reported it when the module was fetched. It is left out where the record
+  holds none (a record from an earlier version, or a source that gave no time),
+  and the go command then reports the version's time as unknown.
 
 See also: [`walk`](walk.md), [`fetch`](fetch.md).
