@@ -413,6 +413,9 @@ type vulnScanRunFacts struct {
 	// states the same fact in its own document, and a second count over the same
 	// run is a second thing to be wrong.
 	Reachability vulnScanReachability
+	// Counts is the run's module tally, so `audit` can say how much of a partial
+	// run was analysed without re-reading the run.
+	Counts vuldomain.WalkScanCounts
 }
 
 // vulnScanSnapshotJSON names the advisory database generation an answer was
@@ -716,7 +719,7 @@ func runVulnScanReporting(ctx context.Context, walkID string, force, fresh, enab
 		return vulnScanRunFacts{}, perr
 	}
 	return vulnScanRunFacts{RunID: run.ID, Snapshot: vulnScanSnapshotOf(run.Snapshot), Reused: false,
-			Toolchain: toolchain, Reachability: reach},
+			Toolchain: toolchain, Reachability: reach, Counts: run.Counts},
 		vulnScanCoverageExit(run)
 }
 
@@ -936,7 +939,7 @@ func serveStoredScanRun(ctx context.Context, run vuldomain.WalkScanRun, ctr *Con
 		return vulnScanRunFacts{}, perr
 	}
 	return vulnScanRunFacts{RunID: run.ID, Snapshot: vulnScanSnapshotOf(run.Snapshot), Reused: true,
-			Toolchain: toolchain, Reachability: reach},
+			Toolchain: toolchain, Reachability: reach, Counts: run.Counts},
 		vulnScanCoverageExit(run)
 }
 

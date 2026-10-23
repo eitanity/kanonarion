@@ -31,6 +31,8 @@ import "time"
 type auditRunJSON struct {
 	Walk auditWalkJSON `json:"walk"`
 	Scan auditScanJSON `json:"scan"`
+	// VulnerabilityScan is the derivation's scan line as data.
+	VulnerabilityScan auditVulnScanJSON `json:"vulnerability_scan"`
 	// Reachability is `vuln-scan --json`'s own object under its own key: how many
 	// of this answer's verdicts depend on the project's source, and whether this
 	// invocation is the one that read it.
@@ -91,6 +93,39 @@ type auditScanJSON struct {
 	Snapshot vulnScanSnapshotJSON `json:"snapshot"`
 }
 
+// auditVulnScanJSON states what the derivation's scan line states: derived,
+// reused (naming the run), failed (with the reason), or not_run for an empty
+// scope; Partial is present when the run left modules unanalysed.
+type auditVulnScanJSON struct {
+	Status  string                `json:"status"`
+	Run     string                `json:"run,omitempty"`
+	Reason  string                `json:"reason,omitempty"`
+	Partial *auditScanPartialJSON `json:"partial,omitempty"`
+}
+
+// auditScanPartialJSON is how many of the run's modules it analysed.
+type auditScanPartialJSON struct {
+	Analysed int `json:"analysed"`
+	Modules  int `json:"modules"`
+}
+
+// auditVulnScanOf projects the derivation's scan line.
+func auditVulnScanOf(d auditDerivation) auditVulnScanJSON {
+	var out auditVulnScanJSON
+	switch {
+	case d.scanErr != nil:
+		return auditVulnScanJSON{Status: "failed", Reason: oneLine(d.scanErr.Error())}
+	case d.scanReused:
+		out = auditVulnScanJSON{Status: "reused", Run: d.scanRun.ID}
+	default:
+		out = auditVulnScanJSON{Status: "derived"}
+	}
+	if d.scanPartial {
+		out.Partial = &auditScanPartialJSON{Analysed: scanAnalysed(d.scanFacts.Counts), Modules: d.scanFacts.Counts.Total}
+	}
+	return out
+}
+
 // auditStalenessJSON dates the staleness column for the run as a whole.
 //
 // It is the machine-readable half of the table's footer, which is printed on
@@ -138,12 +173,13 @@ func newAuditRunJSON(d auditDerivation, results []auditModuleResult, ttl time.Du
 	native *nativeWalkRollup,
 ) auditRunJSON {
 	return auditRunJSON{
-		Walk:         auditWalkOf(d),
-		Scan:         auditScanOf(d),
-		Reachability: auditReachabilityOf(d),
-		Toolchain:    toolchainSectionOf(d.toolchain),
-		Staleness:    auditStalenessOf(results, ttl, now),
-		Native:       native,
+		Walk:              auditWalkOf(d),
+		Scan:              auditScanOf(d),
+		VulnerabilityScan: auditVulnScanOf(d),
+		Reachability:      auditReachabilityOf(d),
+		Toolchain:         toolchainSectionOf(d.toolchain),
+		Staleness:         auditStalenessOf(results, ttl, now),
+		Native:            native,
 	}
 }
 
@@ -155,7 +191,8 @@ func newAuditRunJSON(d auditDerivation, results []auditModuleResult, ttl time.Du
 // "nothing to report".
 func unauditedRunJSON() auditRunJSON {
 	return auditRunJSON{
-		Toolchain: unjudgedToolchainSection("no dependency was audited, so this run took no walk and judged no toolchain"),
+		VulnerabilityScan: auditVulnScanJSON{Status: "not_run", Reason: "no dependency was audited"},
+		Toolchain:         unjudgedToolchainSection("no dependency was audited, so this run took no walk and judged no toolchain"),
 	}
 }
 
@@ -178,7 +215,7 @@ func auditWalkOf(d auditDerivation) auditWalkJSON {
 // off the facts the scan leg handed back, because those are the two places the
 // run is known — and each is the measurement its own statement was built from.
 func auditScanOf(d auditDerivation) auditScanJSON {
-	if d.scanReused {
+	if d.scanReused && d.scanErr == nil {
 		return auditScanJSON{
 			Answered: true,
 			RunID:    d.scanRun.ID,
@@ -192,7 +229,7 @@ func auditScanOf(d auditDerivation) auditScanJSON {
 	return auditScanJSON{
 		Answered: true,
 		RunID:    d.scanFacts.RunID,
-		Reused:   false,
+		Reused:   d.scanFacts.Reused,
 		Snapshot: d.scanFacts.Snapshot,
 	}
 }

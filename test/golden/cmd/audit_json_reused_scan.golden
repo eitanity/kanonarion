@@ -23,6 +23,10 @@ exit 0
       "version": "2026-02-14T00:00:00Z"
     }
   },
+  "vulnerability_scan": {
+    "status": "reused",
+    "run": "vscan-$ULID-1772323200000000000"
+  },
   "reachability_basis": {
     "answers": 1,
     "source_read_by_this_run": false

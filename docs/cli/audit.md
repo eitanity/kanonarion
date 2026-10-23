@@ -338,7 +338,7 @@ object states the facts about the run, which a bare array had nowhere to put:
 | `dependency_scope` | The go.mod dependency scope that resolved the rows (`code`, `tool` or `complete`) and the test axis it applied (`included`, `excluded` or `unavailable`). Never null on `audit`, which always resolves a scope. |
 | `module_count` | How many modules that scope resolved. It is the number the `notice:` line on stderr states. A module that failed to render is missing from `modules`, named on stderr, and the run exits non-zero. |
 | `walk` | Which walk fixed the dependency set: `id`, `completed_at` (the record's date, RFC 3339), and `reused` - true when this run re-resolved the go.mod, found the resolution identical to a stored walk, and served that record. `resolved` is false when no walk was taken at all. |
-| `scan` | Which vulnerability scan run filled the `vuln_status` column: `run_id`, `reused`, and the advisory `snapshot` it was judged against. `answered` is false when no run answered - an empty scope, or a scan leg that failed and said so on stderr. The run id is stated on both arms, which the stderr sentence is not: a scan derived by this run names no id there. |
+| `scan` | Which vulnerability scan run filled the `vuln_status` column: `run_id`, `reused`, and the advisory `snapshot` it was judged against. `answered` is false when no run answered - an empty scope, or a failed scan leg. |
 | `reachability_basis` | How much of the answer depends on the project's own source: `answers` counts the findings carrying a reachability answer, and `source_read_by_this_run` is false on a served run, whose reachability answers came from source this invocation did not re-read. The same object `vuln-scan --json` publishes under the same key. |
 | `toolchain` | The toolchain axis, in the shape [`vuln-scan --json`](vuln-scan.md) publishes: `judged`, `status`, the `version` judged, the `snapshot` it was judged against, `reason` when nothing was judged, the `covering` advisory ids, and `statement`, the sentence stderr shows, verbatim. The toolchain is not a dependency of the artefact: it is no row and is counted in no roll-up. |
 | `staleness` | Dates the staleness column for the run as a whole - the machine-readable half of the table's `latest as of ...` footer, which the text form prints on stdout. `as_of` is the OLDEST lookup behind the column, `age` is how old it was when this run read it, `ttl` is the `staleness.ttl` in force in the same units, and `refresh_with` names the command that re-queries. `measured` is false when no row carries a lookup. |
@@ -601,24 +601,25 @@ derivation:
 ```
 
 Reading the walk line: **"re-resolved and found identical"** means the `go.mod`
-was resolved again this run and produced the same dependency set as the named
-walk, so that walk's record — and every licence, vulnerability and SBOM record
-keyed to it — answers this run too. **"derived by this run"** means a new walk
-was recorded.
+resolved again to the named walk's dependency set, so that walk and every record
+keyed to it answer this run. **"derived by this run"** means a new walk was
+recorded.
 
 Reading the scan line: **"reused run … of &lt;date&gt;"** names the scan run whose
-answers you are reading and when it was made; `govulncheck` did not run. The
-findings, roll-ups and exit code are the ones that run produced.
+answers you are reading and when it was made; `govulncheck` did not run.
+**"failed — &lt;reason&gt;"** means the scan did not answer or analysed no module;
+**"it analysed N of M modules"** marks a partial run. Both exit `1`. A stored
+vulnerability record failing its integrity check reads `(integrity check failed)`
+in its row and exits `10`. Precedence: `10`, `5`, `1`.
 
-Which advisories apply is fixed by the resolved module versions, so reuse is
-sound there. Reachability is not: `govulncheck` reads source, and source is not
-a reuse condition below. The reachability clause therefore appears whenever the
-run answered any, and it states what those answers rest on rather than claiming
-your tree is unchanged — nothing re-read it.
+Which advisories apply is fixed by the resolved versions, so reuse is sound
+there. Reachability reads source, which is no reuse condition, so its clause
+states what those answers rest on rather than claiming your tree is unchanged.
 
-Under `--json` the same three facts are the `walk`, `scan` and
-`reachability_basis` keys of the object. The scan's run id is there on both arms,
-including the derived one the sentence names only in prose.
+Under `--json` these are the `walk`, `scan`, `vulnerability_scan` and
+`reachability_basis` keys. `vulnerability_scan` is `{"status": "derived"}`,
+`{"status": "reused", "run": …}` or `{"status": "failed", "reason": …}`, with
+`partial: {analysed, modules}` on a partial run.
 
 A new walk is recorded whenever the target, scope, depth, policy, build
 environment, resolved graph (every module at every selected version, every edge,
