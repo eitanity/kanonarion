@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -420,7 +421,9 @@ ORDER BY extracted_at ASC, rowid ASC`
 		if serr := rows.Scan(&blob, &stored); serr != nil {
 			return nil, fmt.Errorf("scanning example record: %w", serr)
 		}
-		rec, aside, rerr := decodeRecord(blob, stored)
+		rec, aside, rerr := decodeRecord(blob, stored, func(r domain2.ExampleRecord) []recordseal.Filed {
+			return keyedBy(coord.Path(), coord.Version(), pipelineVersion, r)
+		})
 		if rerr != nil {
 			return nil, rerr
 		}
@@ -443,8 +446,10 @@ ORDER BY extracted_at ASC, rowid ASC`
 // decodeRecord turns one stored blob into a verified record. A row that cannot
 // be decoded, parsed or verified is an error rather than an absence, except one
 // whose bytes hash to the seal it is filed under (storedHash) in a shape this
-// build cannot reproduce: that comes back as a set-aside row instead.
-func decodeRecord(blob []byte, storedHash string) (domain2.ExampleRecord, *recordseal.SetAsideRow, error) {
+// build cannot reproduce: that comes back as a set-aside row instead. filed
+// names what the read selected the row by; a verified record sealed otherwise is
+// refused, because its seal proves the bytes and not where they were filed.
+func decodeRecord(blob []byte, storedHash string, filed func(domain2.ExampleRecord) []recordseal.Filed) (domain2.ExampleRecord, *recordseal.SetAsideRow, error) {
 	raw, decErr := blobcodec.Decode(blob)
 	if decErr != nil {
 		return domain2.ExampleRecord{}, nil, fmt.Errorf("decompressing example record: %w", decErr)
@@ -474,7 +479,24 @@ func decodeRecord(blob []byte, storedHash string) (domain2.ExampleRecord, *recor
 			Reason:      cerr,
 		}, nil
 	}
+	if merr := recordseal.CheckFiled(RecordKind, "example_records", misfiledRemedy, filed(rec)...); merr != nil {
+		return domain2.ExampleRecord{}, nil, fmt.Errorf("%w: %w", ports.ErrExampleIntegrity, merr)
+	}
 	return rec, nil, nil
+}
+
+// misfiledRemedy is what clears a misfiled example row. The ledger is
+// append-only, so no re-extraction removes the row and every read of its key
+// meets it again.
+const misfiledRemedy = "no kanonarion command clears it: the ledger is append-only, so a re-extraction appends beside the row " +
+	"and every read of this coordinate still meets it; restore the store from a copy taken before the row was moved"
+
+// keyedBy is the key an example row is filed under, against the record's seal.
+func keyedBy(path, version, pipeline string, r domain2.ExampleRecord) []recordseal.Filed {
+	return []recordseal.Filed{
+		recordseal.Key(path+"@"+version, r.Coordinate.String()),
+		recordseal.Column("pipeline_version", "pipeline_version", pipeline, r.PipelineVersion),
+	}
 }
 
 // IdenticalGeneration returns the generation the ledger already holds that
@@ -531,7 +553,11 @@ ORDER BY extracted_at DESC, content_hash DESC`
 		if serr := rows.Scan(&blob, &stored); serr != nil {
 			return domain2.ExampleRecord{}, false, fmt.Errorf("scanning example generation of %s: %w", rec.Coordinate, serr)
 		}
-		held, aside, derr := decodeRecord(blob, stored)
+		held, aside, derr := decodeRecord(blob, stored, func(r domain2.ExampleRecord) []recordseal.Filed {
+			return append(keyedBy(rec.Coordinate.Path(), rec.Coordinate.Version(), rec.PipelineVersion, r),
+				recordseal.Column("overall_status", "overall_status", strconv.Itoa(int(rec.OverallStatus)), strconv.Itoa(int(r.OverallStatus))),
+				recordseal.Column("example_count", "examples", strconv.Itoa(len(rec.Examples)), strconv.Itoa(len(r.Examples))))
+		})
 		if derr != nil {
 			return domain2.ExampleRecord{}, false, derr
 		}

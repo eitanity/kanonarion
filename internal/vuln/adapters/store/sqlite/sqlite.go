@@ -974,7 +974,9 @@ ORDER BY julianday(scanned_at) ASC, rowid ASC`
 		if serr := rows.Scan(&serialised); serr != nil {
 			return nil, nil, fmt.Errorf("scanning vulnerability record: %w", serr)
 		}
-		rec, drifted, derr := splitRecordRow(serialised)
+		rec, drifted, derr := splitRecordRow(serialised, selectedBy(path, version,
+			filedAs{"pipeline_version", pipelineVersion}, filedAs{"snapshot_source", snapshotSource},
+			filedAs{"snapshot_version", snapshotVersion}))
 		if derr != nil {
 			return nil, nil, derr
 		}
@@ -1211,7 +1213,7 @@ ORDER BY julianday(vr.scanned_at) ASC, vr.rowid ASC`
 		if serr := rows.Scan(&serialised, &scannedAt, &rowID); serr != nil {
 			return nil, fmt.Errorf("scanning vulnerability record: %w", serr)
 		}
-		rec, bad := recordRow(serialised)
+		rec, bad := recordRow(serialised, selectedBy(coord.Path(), coord.Version(), filedAs{"pipeline_version", pipelineVersion}))
 		if bad != nil {
 			unreadable = append(unreadable, *bad)
 			continue
@@ -1227,7 +1229,7 @@ ORDER BY julianday(vr.scanned_at) ASC, vr.rowid ASC`
 // queryRecords runs a query selecting only the serialised column and decodes
 // every row, verifying each record's seal. what names the read in error
 // messages.
-func (s *Store) queryRecords(ctx context.Context, what, query string, args ...any) ([]domain.VulnerabilityRecord, error) {
+func (s *Store) queryRecords(ctx context.Context, what string, sel recordSelection, query string, args ...any) ([]domain.VulnerabilityRecord, error) {
 	rows, err := s.db.DB().QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("querying %s: %w", what, err)
@@ -1245,7 +1247,7 @@ func (s *Store) queryRecords(ctx context.Context, what, query string, args ...an
 		if serr := rows.Scan(&serialised); serr != nil {
 			return nil, fmt.Errorf("scanning %s: %w", what, serr)
 		}
-		rec, bad := recordRow(serialised)
+		rec, bad := recordRow(serialised, sel)
 		if bad != nil {
 			unreadable = append(unreadable, *bad)
 			continue
@@ -1353,10 +1355,11 @@ ON CONFLICT (walk_scan_run_id, module_path, module_version) DO NOTHING`
 
 // GetWalkScanRun retrieves a walk scan run.
 func (s *Store) GetWalkScanRun(ctx context.Context, id string) (domain.WalkScanRun, bool, error) {
-	const q = `SELECT serialised FROM walk_scan_runs WHERE id = ?`
+	const q = `SELECT walk_id, serialised FROM walk_scan_runs WHERE id = ?`
 
+	var walkID string
 	var serialised []byte
-	err := s.db.DB().QueryRowContext(ctx, q, id).Scan(&serialised)
+	err := s.db.DB().QueryRowContext(ctx, q, id).Scan(&walkID, &serialised)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.WalkScanRun{}, false, nil
 	}
@@ -1364,7 +1367,7 @@ func (s *Store) GetWalkScanRun(ctx context.Context, id string) (domain.WalkScanR
 		return domain.WalkScanRun{}, false, fmt.Errorf("querying walk scan run: %w", err)
 	}
 
-	run, derr := decodeRun(serialised)
+	run, derr := decodeRun(serialised, id, walkID)
 	if errors.Is(derr, recordseal.ErrGenerationDrift) {
 		// One run has no other generation to serve instead: an absence for this
 		// build, never an integrity failure.
@@ -1385,7 +1388,7 @@ func (s *Store) GetWalkScanRun(ctx context.Context, id string) (domain.WalkScanR
 
 // ListWalkScanRuns lists scan runs for a walk.
 func (s *Store) ListWalkScanRuns(ctx context.Context, walkID string) ([]domain.WalkScanRun, error) {
-	const q = `SELECT serialised FROM walk_scan_runs WHERE walk_id = ? ORDER BY julianday(started_at) DESC, id DESC`
+	const q = `SELECT id, walk_id, serialised FROM walk_scan_runs WHERE walk_id = ? ORDER BY julianday(started_at) DESC, id DESC`
 
 	rows, err := s.db.DB().QueryContext(ctx, q, walkID)
 	if err != nil {
@@ -1406,7 +1409,7 @@ func (s *Store) ListWalkScanRuns(ctx context.Context, walkID string) ([]domain.W
 // listing in memory, and a page is only the rows the previous page did not show
 // if two calls order the population identically.
 func (s *Store) ListAllWalkScanRuns(ctx context.Context) ([]domain.WalkScanRun, error) {
-	const q = `SELECT serialised FROM walk_scan_runs ORDER BY julianday(started_at) DESC, id DESC`
+	const q = `SELECT id, walk_id, serialised FROM walk_scan_runs ORDER BY julianday(started_at) DESC, id DESC`
 
 	rows, err := s.db.DB().QueryContext(ctx, q)
 	if err != nil {
@@ -1436,11 +1439,12 @@ func collectRuns(rows *sql.Rows) ([]domain.WalkScanRun, []ports.UnreadableRow, e
 		unreadable []ports.UnreadableRow
 	)
 	for rows.Next() {
+		var id, walkID string
 		var serialised []byte
-		if err := rows.Scan(&serialised); err != nil {
+		if err := rows.Scan(&id, &walkID, &serialised); err != nil {
 			return nil, nil, fmt.Errorf("scanning walk scan run: %w", err)
 		}
-		run, derr := decodeRun(serialised)
+		run, derr := decodeRun(serialised, id, walkID)
 		if derr != nil {
 			unreadable = append(unreadable, unreadableRunRow(serialised, derr))
 			continue
@@ -1756,7 +1760,7 @@ ORDER BY vr.module_path, vr.module_version, julianday(vr.scanned_at) ASC, vr.row
 			order = append(order, k)
 			candidates[k] = nil
 		}
-		rec, drifted, derr := splitRecordRow(serialised)
+		rec, drifted, derr := splitRecordRow(serialised, selectedBy(path, version, filedAs{"content_hash", gotHash}))
 		if derr != nil {
 			return nil, derr
 		}
@@ -1843,7 +1847,8 @@ SELECT serialised FROM vulnerability_records
 WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
 ORDER BY julianday(scanned_at) DESC, rowid DESC`
 
-	return s.queryRecords(ctx, "vulnerability records for module", q,
+	return s.queryRecords(ctx, "vulnerability records for module",
+		selectedBy(coord.Path(), coord.Version(), filedAs{"pipeline_version", pipelineVersion}), q,
 		coord.Path(), coord.Version(), pipelineVersion)
 }
 
@@ -1874,7 +1879,8 @@ SELECT serialised FROM vulnerability_records
 WHERE module_path = ? AND module_version = ?
 ORDER BY julianday(scanned_at) DESC, rowid DESC`
 
-	return s.queryRecords(ctx, "vulnerability records for module across generations", q,
+	return s.queryRecords(ctx, "vulnerability records for module across generations",
+		selectedBy(coord.Path(), coord.Version()), q,
 		coord.Path(), coord.Version())
 }
 
@@ -1976,7 +1982,7 @@ ORDER BY ` + latest + ` DESC, walk_id`
 // without naming it: the coordinate comes back on the record, so a caller that
 // already names the row — an unreadable-row report does — does not have to
 // print the identity twice to state one fault.
-func classifyRecord(serialised []byte) (domain.VulnerabilityRecord, error) {
+func classifyRecord(serialised []byte, sel recordSelection) (domain.VulnerabilityRecord, error) {
 	var h domain.VulnerabilityRecordHasher
 	rec, err := h.Unmarshal(serialised)
 	if err != nil {
@@ -1998,7 +2004,58 @@ func classifyRecord(serialised []byte) (domain.VulnerabilityRecord, error) {
 		//nolint:wrapcheck // recordseal is this module's own classifier; the callers supply the framing
 		return rec, recordseal.Excluding(h.SealExcludes()...).Classify(serialised, rec.ContentHash, verr)
 	}
-	return rec, nil
+	return rec, sel.check(rec)
+}
+
+// recordSelection is what a read selected a vulnerability record row by: its
+// coordinate, and the columns the query filtered or pinned on.
+type recordSelection struct {
+	path, version string
+	columns       []filedAs
+}
+
+// filedAs is one column a read selected on and the value it bound.
+type filedAs struct{ column, value string }
+
+func selectedBy(path, version string, columns ...filedAs) recordSelection {
+	return recordSelection{path: path, version: version, columns: columns}
+}
+
+// misfiledRemedy is what clears a misfiled vulnerability row. The ledger is
+// append-only, so a re-scan appends beside the row and every read of its key
+// meets it again.
+const misfiledRemedy = "no kanonarion command clears it: the ledger is append-only, so a re-scan appends beside the row " +
+	"and every read of this coordinate still meets it; restore the store from a copy taken before the row was moved"
+
+// check compares the selection with the values sealed in r. A verified record
+// filed under another key is refused, because its seal proves the bytes and not
+// where they were filed.
+func (sel recordSelection) check(r domain.VulnerabilityRecord) error {
+	filed := make([]recordseal.Filed, 0, 1+len(sel.columns))
+	filed = append(filed, recordseal.Key(sel.path+"@"+sel.version, r.Coordinate.String()))
+	for _, c := range sel.columns {
+		field, sealed := sealedColumn(c.column, r)
+		filed = append(filed, recordseal.Column(c.column, field, c.value, sealed))
+	}
+	//nolint:wrapcheck // the callers wrap it with the integrity sentinel or the row's identity
+	return recordseal.CheckFiled("vulnerability record", "vulnerability_records", misfiledRemedy, filed...)
+}
+
+// sealedColumn is the sealed field a vulnerability_records column projects, and
+// its value in r.
+func sealedColumn(column string, r domain.VulnerabilityRecord) (string, string) {
+	switch column {
+	case "pipeline_version":
+		return "pipeline_version", r.PipelineVersion
+	case "snapshot_source":
+		return "database_snapshot.source", r.DatabaseSnapshot.Source()
+	case "snapshot_version":
+		return "database_snapshot.version", r.DatabaseSnapshot.Version()
+	case "rooting":
+		return "rooting", string(domain.RecordRooting(r))
+	default:
+		return "content_hash", r.ContentHash
+	}
 }
 
 // recordRow decodes one stored record, or names it as a row this build cannot
@@ -2009,8 +2066,8 @@ func classifyRecord(serialised []byte) (domain.VulnerabilityRecord, error) {
 // record reads fan out over four store methods and reach vuln-by-id, vuln-show
 // and its history alike. The reads that compose one group go through
 // splitRecordRow instead, which ends the read on an altered row.
-func recordRow(serialised []byte) (domain.VulnerabilityRecord, *ports.UnreadableRow) {
-	rec, derr := classifyRecord(serialised)
+func recordRow(serialised []byte, sel recordSelection) (domain.VulnerabilityRecord, *ports.UnreadableRow) {
+	rec, derr := classifyRecord(serialised, sel)
 	if derr != nil {
 		row := unreadableRecordRow(serialised, derr)
 		return domain.VulnerabilityRecord{}, &row
@@ -2023,8 +2080,8 @@ func recordRow(serialised []byte) (domain.VulnerabilityRecord, *ports.Unreadable
 // comes back as a set-aside row. Every other failure is ErrVulnIntegrity and ends
 // the read, never absence: a detected tamper reported as "nothing here" becomes a
 // silent re-scan that overwrites the evidence of the tamper.
-func splitRecordRow(serialised []byte) (domain.VulnerabilityRecord, *ports.UnreadableRow, error) {
-	rec, cerr := classifyRecord(serialised)
+func splitRecordRow(serialised []byte, sel recordSelection) (domain.VulnerabilityRecord, *ports.UnreadableRow, error) {
+	rec, cerr := classifyRecord(serialised, sel)
 	if cerr == nil {
 		return rec, nil, nil
 	}
@@ -2094,8 +2151,9 @@ func recordIdentityFrom(serialised []byte) (string, ports.RowGeneration, string)
 // decodeRun parses a stored walk scan run and checks its seal, on the same
 // terms as splitRecordRow: a run this build cannot reproduce but whose bytes
 // hash to their own seal comes back as ErrGenerationDrift without
-// ErrVulnIntegrity.
-func decodeRun(serialised []byte) (domain.WalkScanRun, error) {
+// ErrVulnIntegrity. A verified run whose sealed id or walk id is not the row's
+// is refused as ErrVulnIntegrity.
+func decodeRun(serialised []byte, id, walkID string) (domain.WalkScanRun, error) {
 	var h domain.WalkScanRunHasher
 	run, err := h.Unmarshal(serialised)
 	if err != nil {
@@ -2108,8 +2166,18 @@ func decodeRun(serialised []byte) (domain.WalkScanRun, error) {
 		}
 		return domain.WalkScanRun{}, fmt.Errorf("%w: run %s: %w", ports.ErrVulnIntegrity, run.ID, cerr)
 	}
+	if merr := recordseal.CheckFiled("walk scan run", "walk_scan_runs", runMisfiledRemedy,
+		recordseal.Key(id, run.ID),
+		recordseal.Column("walk_id", "walk_id", walkID, run.WalkID)); merr != nil {
+		return domain.WalkScanRun{}, fmt.Errorf("%w: %w", ports.ErrVulnIntegrity, merr)
+	}
 	return run, nil
 }
+
+// runMisfiledRemedy is what clears a misfiled scan run row. A run row is never
+// rewritten, and a re-scan appends a run under a new id beside it.
+const runMisfiledRemedy = "no kanonarion command clears it: a scan run row is never rewritten, so every read of this run id meets it; " +
+	"restore the store from a copy taken before the row was moved"
 
 // InternalDB returns the underlying sqlitestore.DB for testing/wiring.
 func (s *Store) InternalDB() sqlitestore.DB {

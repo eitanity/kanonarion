@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -356,7 +357,9 @@ ORDER BY julianday(extracted_at) ASC, rowid ASC`
 		if serr := rows.Scan(&blob, &stored); serr != nil {
 			return nil, fmt.Errorf("scanning license record: %w", serr)
 		}
-		rec, aside, rerr := decodeRecord(blob, stored)
+		rec, aside, rerr := decodeRecord(blob, stored, func(r domain2.LicenseRecord) []recordseal.Filed {
+			return keyedBy(coord.Path(), coord.Version(), pipelineVersion, r)
+		})
 		if rerr != nil {
 			return nil, rerr
 		}
@@ -379,8 +382,10 @@ ORDER BY julianday(extracted_at) ASC, rowid ASC`
 // decodeRecord turns one stored blob into a verified record. A row that cannot
 // be decoded, parsed or verified is an error rather than an absence, except one
 // whose bytes hash to the seal it is filed under (storedHash) in a shape this
-// build cannot reproduce: that comes back as a set-aside row instead.
-func decodeRecord(blob []byte, storedHash string) (domain2.LicenseRecord, *recordseal.SetAsideRow, error) {
+// build cannot reproduce: that comes back as a set-aside row instead. filed
+// names what the read selected the row by; a verified record sealed otherwise is
+// refused, because its seal proves the bytes and not where they were filed.
+func decodeRecord(blob []byte, storedHash string, filed func(domain2.LicenseRecord) []recordseal.Filed) (domain2.LicenseRecord, *recordseal.SetAsideRow, error) {
 	raw, decErr := blobcodec.Decode(blob)
 	if decErr != nil {
 		return domain2.LicenseRecord{}, nil, fmt.Errorf("decompressing license record: %w", decErr)
@@ -410,7 +415,34 @@ func decodeRecord(blob []byte, storedHash string) (domain2.LicenseRecord, *recor
 			Reason:      cerr,
 		}, nil
 	}
+	if merr := recordseal.CheckFiled(RecordKind, "licence_records", misfiledRemedy, filed(rec)...); merr != nil {
+		return domain2.LicenseRecord{}, nil, fmt.Errorf("%w: %w", ports.ErrLicenceIntegrity, merr)
+	}
 	return rec, nil, nil
+}
+
+// misfiledRemedy is what clears a misfiled licence row. The ledger is
+// append-only, so no re-extraction removes the row and every read of its key
+// meets it again.
+const misfiledRemedy = "no kanonarion command clears it: the ledger is append-only, so a re-extraction appends beside the row " +
+	"and every read of this coordinate still meets it; restore the store from a copy taken before the row was moved"
+
+// keyedBy is the key a licence row is filed under, against the record's seal.
+func keyedBy(path, version, pipeline string, r domain2.LicenseRecord) []recordseal.Filed {
+	return []recordseal.Filed{
+		recordseal.Key(path+"@"+version, r.Coordinate.String()),
+		recordseal.Column("pipeline_version", "pipeline_version", pipeline, r.PipelineVersion),
+	}
+}
+
+// listedBy is keyedBy plus the record columns a listing selects and shows.
+func listedBy(sum ports.LicenseSummary, status, copyright int, r domain2.LicenseRecord) []recordseal.Filed {
+	return append(keyedBy(sum.ModulePath, sum.ModuleVersion, sum.PipelineVersion, r),
+		recordseal.Column("primary_spdx", "primary_spdx", sum.PrimarySPDX, r.PrimarySPDX),
+		recordseal.Column("spdx_expression", "expression", sum.Expression, r.Expression),
+		recordseal.Column("overall_status", "overall_status", strconv.Itoa(status), strconv.Itoa(int(r.OverallStatus))),
+		recordseal.Column("copyright_status", "copyright_status", strconv.Itoa(copyright), strconv.Itoa(int(r.CopyrightStatus))),
+	)
 }
 
 // IdenticalGeneration returns the generation the ledger already holds that
@@ -472,7 +504,15 @@ ORDER BY julianday(extracted_at) DESC, content_hash DESC`
 		if serr := rows.Scan(&blob, &stored); serr != nil {
 			return domain2.LicenseRecord{}, false, fmt.Errorf("scanning licence generation of %s: %w", rec.Coordinate, serr)
 		}
-		held, aside, derr := decodeRecord(blob, stored)
+		held, aside, derr := decodeRecord(blob, stored, func(r domain2.LicenseRecord) []recordseal.Filed {
+			return append(keyedBy(rec.Coordinate.Path(), rec.Coordinate.Version(), rec.PipelineVersion, r),
+				recordseal.Column("primary_spdx", "primary_spdx", rec.PrimarySPDX, r.PrimarySPDX),
+				recordseal.Column("spdx_expression", "expression", rec.Expression, r.Expression),
+				recordseal.Column("overall_status", "overall_status", strconv.Itoa(int(rec.OverallStatus)), strconv.Itoa(int(r.OverallStatus))),
+				recordseal.Column("copyright_status", "copyright_status", strconv.Itoa(int(rec.CopyrightStatus)), strconv.Itoa(int(r.CopyrightStatus))),
+				recordseal.Column("provenance_confidence", "provenance.confidence",
+					strconv.Itoa(int(rec.Provenance.Confidence)), strconv.Itoa(int(r.Provenance.Confidence))))
+		})
 		if derr != nil {
 			return domain2.LicenseRecord{}, false, derr
 		}
@@ -555,7 +595,9 @@ func (s *Store) ListLicenseRecords(ctx context.Context, filter ports.LicenseFilt
 			// licence files. Measured on the maintainer's store,
 			// `license-list --limit 0 --json` over 1,828 records goes from 0.03s
 			// to 0.08s; --copyright already paid more (0.13s) for the same reason.
-			rec, aside, derr := decodeRecord(blob, sum.ContentHash)
+			rec, aside, derr := decodeRecord(blob, sum.ContentHash, func(r domain2.LicenseRecord) []recordseal.Filed {
+				return listedBy(sum, status, copyrightStatus, r)
+			})
 			if derr != nil {
 				return nil, derr
 			}

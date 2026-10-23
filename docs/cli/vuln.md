@@ -1707,6 +1707,8 @@ the build that wrote it, or upgrade.
 A record whose bytes do **not** hash to their own seal has been altered. Every
 command that meets one refuses at exit `10`, as before.
 
+A record or scan run whose seal verifies but which is filed under another coordinate, run id or walk id, or under a column value its seal does not state, is refused at exit `10` too, naming the table; a listing such as `vuln-by-id` names it as `unreadable`, and a re-scan refuses rather than append beside it.
+
 #### Commands that answer for one coordinate
 
 `vuln-show`, `reachability --vuln` and `context` answer from the generations this

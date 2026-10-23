@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/adapters/blobcodec"
+	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
 	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
@@ -159,6 +160,9 @@ ORDER BY artefact_identity`
 		if rec.Ecosystem != domain.EcosystemGo {
 			return domain.Record{}, false, fmt.Errorf("%w: got %q, want %q", domain.ErrUnsupportedEcosystem, rec.Ecosystem, domain.EcosystemGo)
 		}
+		if merr := checkFiled(coord.Path(), coord.Version(), domain.PipelineFingerprint(), identity, rec); merr != nil {
+			return domain.Record{}, false, merr
+		}
 		identities = append(identities, identity)
 		records = append(records, rec)
 	}
@@ -179,6 +183,19 @@ ORDER BY artefact_identity`
 		return domain.Record{}, false, fmt.Errorf("%w: %s is described by %d artefacts %v",
 			ports.ErrNativeConflict, coord, len(identities), identities)
 	}
+}
+
+// checkFiled compares the key a native row is filed under with the values its
+// record states. The store keeps one row per key, so re-measuring the row's own
+// coordinate overwrites it.
+func checkFiled(path, version, generation, identity string, rec domain.Record) error {
+	remedy := "re-measure it with kanonarion native " + path + "@" + version + " --force, which overwrites the row"
+	//nolint:wrapcheck // the refusal names the row, the table and the remedy itself
+	return recordseal.CheckFiled("native record", "native_records", remedy,
+		recordseal.Key(path+"@"+version, rec.Coordinate.String()),
+		recordseal.Column("pipeline_fingerprint", "pipeline_version+recipe_catalogue_version", generation,
+			rec.PipelineVersion+"+recipes."+rec.RecipeCatalogueVersion),
+		recordseal.Column("artefact_identity", "artefact_identity", identity, rec.ArtefactIdentity))
 }
 
 // listNativeColumns is the projection every listed row is built from. The
@@ -404,11 +421,10 @@ func scanNativeSummary(row nativeSummaryScanner) (ports.NativeSummary, error) {
 	// and the columns are the index over it. A record whose coordinate does not
 	// match the row it was stored under is refused rather than listed under a
 	// name it does not claim.
-	coord := rec.Coordinate
-	if coord.Path() != modulePath || coord.Version() != moduleVersion {
-		return ports.NativeSummary{}, fmt.Errorf("native record stored under %s@%s describes %s",
-			modulePath, moduleVersion, coord)
+	if merr := checkFiled(modulePath, moduleVersion, generation, identity, rec); merr != nil {
+		return ports.NativeSummary{}, merr
 	}
+	coord := rec.Coordinate
 	// The timestamp is read from the column rather than the record: it is the
 	// value the ordering was applied to, so a row that sorted here cannot then
 	// report a different instant.

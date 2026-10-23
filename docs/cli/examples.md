@@ -209,6 +209,8 @@ it again; `examples-list` and `examples-find` leave the module out and name it.
 A record whose stored bytes do **not** hash to its seal has been altered, and
 every command that meets one refuses at exit `10`, as before.
 
+A record whose seal verifies but which is filed under another coordinate, or under a column value its seal does not state, is refused at exit `10` too by every read that decodes it, naming the table: `examples` warns and extracts the coordinate again, and nothing removes the row, because the ledger is append-only.
+
 ## Limitations
 
 - No fetched code is executed. Extraction is purely lexical/syntactic.

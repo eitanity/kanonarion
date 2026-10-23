@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -445,7 +446,9 @@ ORDER BY extracted_at ASC, rowid ASC`
 		if serr := rows.Scan(&blob, &storedHash); serr != nil {
 			return nil, fmt.Errorf("scanning interface record: %w", serr)
 		}
-		rec, rerr := decodeRecord(blob, storedHash)
+		rec, rerr := decodeRecord(blob, storedHash, func(r domain2.InterfaceRecord) []recordseal.Filed {
+			return keyedBy(coord.Path(), coord.Version(), pipelineVersion, r)
+		})
 		if rerr != nil {
 			return nil, rerr
 		}
@@ -462,8 +465,10 @@ ORDER BY extracted_at ASC, rowid ASC`
 //
 // Verification is recordseal.VerifyBlob rather than a re-marshal: this store has
 // verified the stored bytes against the seal they carry from the start, which is
-// why it never suffered the generation-drift bug the licence store did.
-func decodeRecord(blob []byte, storedHash string) (domain2.InterfaceRecord, error) {
+// why it never suffered the generation-drift bug the licence store did. filed
+// names what the read selected the row by; a verified record sealed otherwise is
+// refused, because its seal proves the bytes and not where they were filed.
+func decodeRecord(blob []byte, storedHash string, filed func(domain2.InterfaceRecord) []recordseal.Filed) (domain2.InterfaceRecord, error) {
 	raw, decErr := blobcodec.Decode(blob)
 	if decErr != nil {
 		return domain2.InterfaceRecord{}, fmt.Errorf("decompressing interface record: %w", decErr)
@@ -476,7 +481,36 @@ func decodeRecord(blob []byte, storedHash string) (domain2.InterfaceRecord, erro
 	if err != nil {
 		return domain2.InterfaceRecord{}, fmt.Errorf("unmarshalling interface record: %w", err)
 	}
+	if merr := recordseal.CheckFiled(recordKind, "interface_records", misfiledRemedy, filed(rec)...); merr != nil {
+		return domain2.InterfaceRecord{}, fmt.Errorf("%w: %w", ports.ErrInterfaceIntegrity, merr)
+	}
 	return rec, nil
+}
+
+// recordKind names an interface record in a refusal.
+const recordKind = "interface record"
+
+// misfiledRemedy is what clears a misfiled interface row. The ledger is
+// append-only, so no re-extraction removes the row and every read of its key
+// meets it again.
+const misfiledRemedy = "no kanonarion command clears it: the ledger is append-only, so a re-extraction appends beside the row " +
+	"and every read of this coordinate still meets it; restore the store from a copy taken before the row was moved"
+
+// keyedBy is the key an interface row is filed under, against the record's seal.
+func keyedBy(path, version, pipeline string, r domain2.InterfaceRecord) []recordseal.Filed {
+	return []recordseal.Filed{
+		recordseal.Key(path+"@"+version, r.Coordinate.String()),
+		recordseal.Column("pipeline_version", "pipeline_version", pipeline, r.PipelineVersion),
+	}
+}
+
+// summarisedBy is keyedBy plus the record columns a listing or a prefilter
+// selects on.
+func summarisedBy(path, version, pipeline string, status, packages int, r domain2.InterfaceRecord) []recordseal.Filed {
+	return append(keyedBy(path, version, pipeline, r),
+		recordseal.Column("overall_status", "overall_status", strconv.Itoa(status), strconv.Itoa(int(r.OverallStatus))),
+		recordseal.Column("package_count", "packages", strconv.Itoa(packages), strconv.Itoa(len(r.Packages))),
+	)
 }
 
 // IdenticalGeneration returns the generation the ledger already holds that
@@ -558,7 +592,10 @@ ORDER BY extracted_at DESC, content_hash DESC`
 			}
 			haveSeal = true
 		}
-		held, derr := decodeRecord(blob, storedHash)
+		held, derr := decodeRecord(blob, storedHash, func(r domain2.InterfaceRecord) []recordseal.Filed {
+			return summarisedBy(rec.Coordinate.Path(), rec.Coordinate.Version(), rec.PipelineVersion,
+				int(rec.OverallStatus), len(rec.Packages), r)
+		})
 		if derr != nil {
 			return domain2.InterfaceRecord{}, false, derr
 		}
@@ -824,7 +861,9 @@ func appendInterfaceFilter(q string, args []any, filter ports.InterfaceFilter) (
 // withAnalyserLimit reads a Partial summary's analyser limit from its blob.
 func withAnalyserLimit(sum ports.InterfaceSummary, partialBlobs map[string][]byte) (ports.InterfaceSummary, error) {
 	if blob, ok := partialBlobs[sum.ContentHash]; ok {
-		rec, derr := decodeRecord(blob, sum.ContentHash)
+		rec, derr := decodeRecord(blob, sum.ContentHash, func(r domain2.InterfaceRecord) []recordseal.Filed {
+			return summarisedBy(sum.ModulePath, sum.ModuleVersion, sum.PipelineVersion, int(sum.OverallStatus), sum.PackageCount, r)
+		})
 		if derr != nil {
 			return ports.InterfaceSummary{}, derr
 		}

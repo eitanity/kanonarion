@@ -14,7 +14,9 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/adapters/childproc"
 	"github.com/eitanity/kanonarion/internal/adapters/interrupt"
+	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
 	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
+	sqlitestorage "github.com/eitanity/kanonarion/internal/composition/storage/sqlite"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 )
 
@@ -58,6 +60,7 @@ func newRootCmd(stdout, stderr io.Writer) *cobra.Command {
 			if err := requireStoreRoot(storeRoot); err != nil {
 				return err
 			}
+			recordseal.SetStoreLocation(sqlitestorage.DatabasePath(storeRoot))
 
 			// 3. Load config from store root. A store with no config file
 			// resolves to the built-in defaults and is not an error. A file

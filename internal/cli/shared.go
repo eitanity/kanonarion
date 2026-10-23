@@ -858,6 +858,7 @@ func resolveToolModule(toolPath string, reqVersions map[string]string) (modPath,
 func resetInvocationState() {
 	storeSetAside.reset()
 	storeNotSearched.reset()
+	recordseal.SetStoreLocation("")
 	modcacheMode, modcacheDir, goSumPath = false, "", ""
 	projectGoSumPath = ""
 	// The built-in defaults, which is what a store with no config file loads —
@@ -1881,6 +1882,11 @@ func ExitCodeForError(err error) int {
 		if errors.Is(err, sentinel) {
 			return ExitIntegrity
 		}
+	}
+	// A genuine record filed under a key its seal does not carry, raised by a
+	// store with no integrity sentinel of its own.
+	if recordseal.IsMisfiled(err) {
+		return ExitIntegrity
 	}
 	for _, sentinel := range moduleNotFetched {
 		if errors.Is(err, sentinel) {

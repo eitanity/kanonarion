@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/adapters/blobcodec"
+	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
 	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
 	"github.com/eitanity/kanonarion/internal/fips/domain"
 )
@@ -103,5 +104,17 @@ WHERE project_module_path = ? AND pipeline_fingerprint = ?`
 	if rec.Ecosystem != domain.EcosystemGo {
 		return domain.Record{}, false, fmt.Errorf("%w: got %q, want %q", domain.ErrUnsupportedEcosystem, rec.Ecosystem, domain.EcosystemGo)
 	}
+	// The record states the project and catalogue it describes; one filed under
+	// another key is refused rather than served as this project's answer.
+	if err := recordseal.CheckFiled("fips record", "fips_records", misfiledRemedy,
+		recordseal.Key(projectModulePath, rec.ProjectModulePath),
+		recordseal.Column("pipeline_fingerprint", "pipeline_version+catalogue_version", domain.PipelineFingerprint(),
+			rec.PipelineVersion+"+cat."+rec.CatalogueVersion)); err != nil {
+		return domain.Record{}, false, err //nolint:wrapcheck // the refusal names the row, the table and the remedy itself
+	}
 	return rec, true, nil
 }
+
+// misfiledRemedy is what clears a misfiled fips row: the store keeps one row per
+// project and fingerprint, so a re-scan of the project overwrites it.
+const misfiledRemedy = "re-scan the project with kanonarion fips, which overwrites the row"

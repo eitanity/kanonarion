@@ -571,6 +571,8 @@ whose licence would be the target, it exits `4`).
 A record whose stored bytes do **not** hash to its seal has been altered, and
 every command that meets one refuses at exit `10`, as before.
 
+A record whose seal verifies but which is filed under another coordinate, or under a column value its seal does not state, is refused at exit `10` too, naming the table: `licence-list` and `licence --history` refuse, `licence` warns and extracts the coordinate again, and nothing removes the row, because the ledger is append-only.
+
 ## Assurance log
 
 Each fresh extraction appends a `license_extracted` event to the append-only

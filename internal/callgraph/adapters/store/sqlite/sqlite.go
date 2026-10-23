@@ -1260,7 +1260,8 @@ func (s *Store) latestWorktreeGeneration(ctx context.Context, coord coordinate.M
 	if qerr != nil {
 		return domain2.CallGraphRecord{}, false, qerr
 	}
-	rec, ok, _, derr := s.decodeRecord(ctx, row.blob, row.hash, row.analyser, newIdentifierPool())
+	sel := selection{coord: coord, pipeline: pipelineVersion, frame: req.Frame, root: row.root, scanDigest: row.scanDigest}
+	rec, ok, _, derr := s.decodeRecord(ctx, row.blob, row.hash, row.analyser, newIdentifierPool(), sel)
 	if derr != nil {
 		return domain2.CallGraphRecord{}, false, derr
 	}
@@ -1575,7 +1576,8 @@ WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
 	if !found {
 		return domain2.CallGraphRecord{}, false, nil
 	}
-	rec, ok, aside, derr := s.decodeRecord(ctx, best.blob, best.hash, best.analyser, newIdentifierPool())
+	sel := selection{coord: coord, pipeline: pipelineVersion, frame: frame, root: root, scanDigest: scanDigest}
+	rec, ok, aside, derr := s.decodeRecord(ctx, best.blob, best.hash, best.analyser, newIdentifierPool(), sel)
 	if derr != nil {
 		return domain2.CallGraphRecord{}, false, derr
 	}
@@ -1702,7 +1704,10 @@ ORDER BY julianday(extracted_at) DESC, content_hash DESC`
 	var asides []recordseal.SetAsideRow
 	defer func() { s.setAside.Report(asides) }()
 	for _, c := range candidates {
-		held, ok, aside, derr := s.decodeRecord(ctx, c.blob, c.hash, c.analyser, pool)
+		held, ok, aside, derr := s.decodeRecord(ctx, c.blob, c.hash, c.analyser, pool, selection{
+			coord: rec.Coordinate, pipeline: rec.PipelineVersion, frame: rec.Frame, frameSelected: true,
+			root: rec.AnalysisRoot, rootSelected: true, scanDigest: rec.WorktreeScanDigest, scanDigestSelected: true,
+		})
 		if derr != nil {
 			return domain2.CallGraphRecord{}, false, derr
 		}
@@ -1879,7 +1884,8 @@ ORDER BY julianday(extracted_at) ASC, rowid ASC`
 	pool := newIdentifierPool()
 	var asides []recordseal.SetAsideRow
 	for _, st := range raw {
-		rec, ok, aside, derr := s.decodeRecord(ctx, st.blob, st.hash, st.analyser, pool)
+		rec, ok, aside, derr := s.decodeRecord(ctx, st.blob, st.hash, st.analyser, pool,
+			selection{coord: coord, pipeline: pipelineVersion, frame: frame})
 		if derr != nil {
 			return nil, derr
 		}
@@ -1952,6 +1958,9 @@ func (s *Store) LatestCallGraphOutcome(ctx context.Context, coord coordinate.Mod
 		return ports.CallGraphOutcome{}, false, fmt.Errorf("%w: embedded hash %q does not match stored %q",
 			ports.ErrCallGraphIntegrity, rec.ContentHash, row.hash)
 	}
+	if merr := (selection{coord: coord, pipeline: pipelineVersion}).check(rec); merr != nil {
+		return ports.CallGraphOutcome{}, false, merr
+	}
 	return ports.CallGraphOutcome{
 		ContentHash:   rec.ContentHash,
 		OverallStatus: rec.OverallStatus,
@@ -1979,7 +1988,10 @@ func (s *Store) LatestCallGraphOutcome(ctx context.Context, coord coordinate.Mod
 // This gate is also why the ledger does not need a purge on every analyser shape
 // change: the stale generation stays in the table, readable as history, and
 // answers nothing.
-func (s *Store) decodeRecord(ctx context.Context, blob []byte, storedHash, analyser string, pool *identifierPool) (domain2.CallGraphRecord, bool, *recordseal.SetAsideRow, error) {
+//
+// sel is what the read selected the row by; a verified record sealed otherwise is
+// refused, because its seal proves the bytes and not where they were filed.
+func (s *Store) decodeRecord(ctx context.Context, blob []byte, storedHash, analyser string, pool *identifierPool, sel selection) (domain2.CallGraphRecord, bool, *recordseal.SetAsideRow, error) {
 	raw, decErr := blobcodec.Decode(blob)
 	if decErr != nil {
 		return domain2.CallGraphRecord{}, false, nil, fmt.Errorf("decompressing callgraph record: %w", decErr)
@@ -2019,6 +2031,9 @@ func (s *Store) decodeRecord(ctx context.Context, blob []byte, storedHash, analy
 			Reason:      recordseal.Drift(verr),
 		}, nil
 	}
+	if merr := sel.check(rec); merr != nil {
+		return domain2.CallGraphRecord{}, false, nil, merr
+	}
 	// Projected AFTER verification, and it changes nothing about it: the analyser
 	// is outside the seal, so the hash is computed over bytes that never carried
 	// it. The order is deliberate all the same — a field the seal does not cover
@@ -2035,6 +2050,49 @@ func (s *Store) decodeRecord(ctx context.Context, blob []byte, storedHash, analy
 	}
 	rec.Analyser = id
 	return rec, true, nil, nil
+}
+
+// selection is what a read selected a call graph row by: its key and pipeline
+// always, and the frame, analysis root and scan digest when the query filtered
+// on them. A zero frame or an empty root or digest selected nothing, unless the
+// matching flag says the query bound it as a value.
+type selection struct {
+	coord                                           coordinate.ModuleCoordinate
+	pipeline                                        string
+	frame                                           domain2.BuildFrame
+	root, scanDigest                                string
+	frameSelected, rootSelected, scanDigestSelected bool
+}
+
+// misfiledRemedy is what clears a misfiled call graph row. The ledger is
+// append-only, so a re-analysis appends beside the row and every read of its key
+// meets it again.
+const misfiledRemedy = "no kanonarion command clears it: the ledger is append-only, so a re-analysis appends beside the row " +
+	"and every read of this coordinate still meets it; restore the store from a copy taken before the row was moved"
+
+// check compares the selection with the values sealed in r.
+func (sel selection) check(r domain2.CallGraphRecord) error {
+	filed := []recordseal.Filed{
+		recordseal.Key(sel.coord.String(), r.Coordinate.String()),
+		recordseal.Column("pipeline_version", "pipeline_version", sel.pipeline, r.PipelineVersion),
+	}
+	if sel.frameSelected || !sel.frame.IsZero() {
+		filed = append(filed,
+			recordseal.Column("goos", "frame.goos", sel.frame.GOOS, r.Frame.GOOS),
+			recordseal.Column("goarch", "frame.goarch", sel.frame.GOARCH, r.Frame.GOARCH),
+			recordseal.Column("goarm", "frame.goarm", sel.frame.GOARM, r.Frame.GOARM),
+			recordseal.Column("tinygo_target", "frame.tinygo_target", sel.frame.TinyGoTarget, r.Frame.TinyGoTarget))
+	}
+	if sel.rootSelected || sel.root != "" {
+		filed = append(filed, recordseal.Column("analysis_root", "analysis_root", sel.root, r.AnalysisRoot))
+	}
+	if sel.scanDigestSelected || sel.scanDigest != "" {
+		filed = append(filed, recordseal.Column("worktree_scan_digest", "worktree_scan_digest", sel.scanDigest, r.WorktreeScanDigest))
+	}
+	if err := recordseal.CheckFiled(recordKind, "callgraph_records", misfiledRemedy, filed...); err != nil {
+		return fmt.Errorf("%w: %w", ports.ErrCallGraphIntegrity, err)
+	}
+	return nil
 }
 
 // storedBytesHashToSeal reports whether the stored blob, with the edges kept

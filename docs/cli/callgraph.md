@@ -1800,6 +1800,8 @@ and `local` treat that coordinate as not yet analysed and measure it again.
 A record whose stored bytes or edge rows do **not** hash to its seal has been
 altered, and every command that meets one refuses at exit `10`, as before.
 
+A record whose seal verifies but which is filed under another coordinate, or under a pipeline version, build frame, analysis root or scan digest its seal does not state, is refused at exit `10` too by every read that decodes it, naming the table: `callgraph` warns and analyses the coordinate again, and nothing removes the row, because the ledger is append-only.
+
 ## Which working tree answered
 
 A local coordinate is shared by every checkout of the module path, so a project

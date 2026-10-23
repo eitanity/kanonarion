@@ -141,7 +141,9 @@ ORDER BY julianday(vr.scanned_at) ASC, vr.rowid ASC`
 		}
 		key := strings.Join(k[:], "\x00")
 		frames[key] = domain.Rooting(k[5])
-		rec, unreadable := recordRow(serialised)
+		rec, unreadable := recordRow(serialised, selectedBy(k[0], k[1],
+			filedAs{"pipeline_version", k[2]}, filedAs{"snapshot_source", k[3]},
+			filedAs{"snapshot_version", k[4]}, filedAs{"rooting", k[5]}))
 		if unreadable != nil {
 			bad = append(bad, *unreadable)
 			continue
@@ -163,7 +165,8 @@ func (s *Store) byFindingInWalk(ctx context.Context, findingID, walkID string) (
 	// module produces. A run that named no hash reaches every generation of
 	// its key, as in ListVulnerabilityRecordsForModuleInWalk.
 	const q = `
-SELECT DISTINCT vr.serialised, vr.rowid
+SELECT DISTINCT vr.serialised, vr.rowid, vr.module_path, vr.module_version, vr.pipeline_version,
+       vr.snapshot_source, vr.snapshot_version, vr.rooting
 FROM vulnerability_records vr
 JOIN vulnerability_findings_index fi
   ON fi.module_path      = vr.module_path
@@ -193,11 +196,14 @@ WHERE fi.finding_id = ? AND wsr.walk_id = ?`
 		var (
 			serialised []byte
 			rowID      int64
+			k          [6]string
 		)
-		if err := rows.Scan(&serialised, &rowID); err != nil {
+		if err := rows.Scan(&serialised, &rowID, &k[0], &k[1], &k[2], &k[3], &k[4], &k[5]); err != nil {
 			return nil, nil, fmt.Errorf("scanning vulnerability record: %w", err)
 		}
-		rec, unreadable := recordRow(serialised)
+		rec, unreadable := recordRow(serialised, selectedBy(k[0], k[1],
+			filedAs{"pipeline_version", k[2]}, filedAs{"snapshot_source", k[3]},
+			filedAs{"snapshot_version", k[4]}, filedAs{"rooting", k[5]}))
 		if unreadable != nil {
 			bad = append(bad, *unreadable)
 			continue

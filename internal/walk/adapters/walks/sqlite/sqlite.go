@@ -480,14 +480,20 @@ func scanPresentIDs(rows *sql.Rows, present map[string]bool) (retErr error) {
 // whose bytes hash to their seal in a shape this build cannot reproduce is
 // *recordseal.NothingServable: a walk has no other generation to serve instead.
 func (s *Store) GetWalk(ctx context.Context, id string) (domain.WalkRecord, error) {
-	const q = `SELECT serialised, content_hash, project_dir, identity_hash FROM walks WHERE id = ?`
+	const q = `SELECT serialised, content_hash, project_dir, identity_hash,
+	                  target_path, target_version, scope, pipeline_version,
+	                  goos, goarch, go_version, tinygo_target, tinygo_version
+	           FROM walks WHERE id = ?`
 	row := s.db.DB().QueryRowContext(ctx, q, id)
 
 	var blob []byte
 	var storedHash string
 	var projectDir string
 	var identityHash string
-	if err := row.Scan(&blob, &storedHash, &projectDir, &identityHash); errors.Is(err, sql.ErrNoRows) {
+	var cols walkColumns
+	if err := row.Scan(&blob, &storedHash, &projectDir, &identityHash,
+		&cols.targetPath, &cols.targetVersion, &cols.scope, &cols.pipeline,
+		&cols.goos, &cols.goarch, &cols.goVersion, &cols.tinyGoTarget, &cols.tinyGoVersion); errors.Is(err, sql.ErrNoRows) {
 		return domain.WalkRecord{}, walkports.ErrWalkNotFound
 	} else if err != nil {
 		return domain.WalkRecord{}, fmt.Errorf("querying walk record: %w", err)
@@ -518,6 +524,9 @@ func (s *Store) GetWalk(ctx context.Context, id string) (domain.WalkRecord, erro
 		return domain.WalkRecord{}, &recordseal.NothingServable{Kind: RecordKind, ID: id,
 			Aside: &recordseal.SetAside{Rows: []recordseal.SetAsideRow{row}}}
 	}
+	if merr := cols.check(id, rec); merr != nil {
+		return domain.WalkRecord{}, merr
+	}
 	// The project directory rides beside the sealed blob, not inside it: the
 	// canonical form the hash covers has no such field, so a column that differs
 	// between two checkouts of one project cannot make their walks differ. It is
@@ -529,6 +538,42 @@ func (s *Store) GetWalk(ctx context.Context, id string) (domain.WalkRecord, erro
 	// verification it plays no part in.
 	rec.IdentityHash = identityHash
 	return rec, nil
+}
+
+// walkColumns are the columns a listing selects walks by. Every walk read ends
+// in GetWalk, so comparing them here covers whichever of them chose the walk.
+type walkColumns struct {
+	targetPath, targetVersion, scope, pipeline           string
+	goos, goarch, goVersion, tinyGoTarget, tinyGoVersion string
+}
+
+// misfiledRemedy is what clears a misfiled walk row. Nothing rewrites a stored
+// walk, so the row answers every read of its id until the store is restored.
+const misfiledRemedy = "no kanonarion command clears it: a walk row is never rewritten, so every read of this walk id meets it; " +
+	"restore the store from a copy taken before the row was moved, or walk the project again for a new walk id"
+
+// check compares the walk's id and columns with the values sealed in rec.
+func (c walkColumns) check(id string, rec domain.WalkRecord) error {
+	scope := string(rec.Scope)
+	if scope == "" {
+		scope = string(domain.WalkScopeCode)
+	}
+	env := rec.Graph.BuildEnv
+	err := recordseal.CheckFiled(RecordKind, "walks", misfiledRemedy,
+		recordseal.Key(id, rec.ID),
+		recordseal.Column("target", "target", c.targetPath+"@"+c.targetVersion, rec.Target.String()),
+		recordseal.Column("scope", "scope", c.scope, scope),
+		recordseal.Column("pipeline_version", "pipeline_version", c.pipeline, rec.PipelineVersion),
+		recordseal.Column("goos", "graph.build_env.goos", c.goos, env.GOOS),
+		recordseal.Column("goarch", "graph.build_env.goarch", c.goarch, env.GOARCH),
+		recordseal.Column("go_version", "graph.build_env.go_version", c.goVersion, env.GoVersion),
+		recordseal.Column("tinygo_target", "graph.build_env.tinygo_target", c.tinyGoTarget, env.TinyGoTarget),
+		recordseal.Column("tinygo_version", "graph.build_env.tinygo_version", c.tinyGoVersion, env.TinyGoVersion),
+	)
+	if err != nil {
+		return fmt.Errorf("%w: %w", walkports.ErrWalkIntegrity, err)
+	}
+	return nil
 }
 
 // ListWalks returns summaries ordered by started_at descending.

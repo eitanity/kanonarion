@@ -112,7 +112,7 @@ func runVerificationCoverage(
 			return walkIDMiss(ctx, walks, walkID, stderr)
 		}
 		if isWalkIntegrity(err) {
-			return &exitError{code: ExitIntegrity, msg: fmt.Sprintf("walk record %q failed integrity check", walkID)}
+			return walkIntegrityRefusal(err, fmt.Sprintf("walk record %q failed integrity check", walkID))
 		}
 		if none := walkNotServable(err); none != nil {
 			return none

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -38,6 +39,10 @@ func openTestStoreDB(t *testing.T) (*nativesqlite.Store, sqlitestore.DB) {
 func putAt(t *testing.T, db sqlitestore.DB, rec domain.Record, generation, artefact string) {
 	t.Helper()
 	rec.ArtefactIdentity = artefact
+	// A row at a generation states that generation, as every write of one did.
+	if pv, recipes, ok := strings.Cut(generation, "+recipes."); ok {
+		rec.PipelineVersion, rec.RecipeCatalogueVersion = pv, recipes
+	}
 	raw := mustMarshal(t, rec)
 	const q = `INSERT INTO native_records (
         module_path, module_version, pipeline_fingerprint, artefact_identity,
