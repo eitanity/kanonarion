@@ -28,6 +28,9 @@ func TestProbe_ReadsTheFourOutputs(t *testing.T) {
 	if f.GOOS() != "linux" || f.GOARCH() != "arm" || f.GOARM() != "6" {
 		t.Errorf("platform = %s/%s GOARM=%s", f.GOOS(), f.GOARCH(), f.GOARM())
 	}
+	if f.HostGOOS() != "linux" || f.HostGOARCH() != "amd64" {
+		t.Errorf("host = %s/%s, want the platform tinygo version names, which names its release archive", f.HostGOOS(), f.HostGOARCH())
+	}
 	if want := tinygotest.Pico().Tags; !reflect.DeepEqual(f.Tags(), want) {
 		t.Errorf("tags = %v, want %v", f.Tags(), want)
 	}
@@ -167,5 +170,20 @@ func TestProbe_ACancelledInfoIsNotAnUnknownTarget(t *testing.T) {
 	}
 	if errors.As(err, new(*tinygo.UnknownTargetError)) {
 		t.Errorf("a cancelled probe was reported as an unknown target: %v", err)
+	}
+}
+
+// TestProbe_AVersionLineWithoutAPlatformLeavesTheHostUnnamed: the frame is
+// still complete, and the release leg then says it cannot name an archive.
+func TestProbe_AVersionLineWithoutAPlatformLeavesTheHostUnnamed(t *testing.T) {
+	fake := tinygotest.Install(t, map[string]tinygotest.Target{"pico": tinygotest.Pico()})
+	bin := script(t, `if [ "$1" = version ]; then echo "tinygo version 0.42.0 (using go version go1.27.2 and LLVM version 22.1.4)"; exit 0; fi
+exec "`+fake.Bin+`" "$@"`)
+	f, err := tinygo.Probe(context.Background(), bin, "pico")
+	if err != nil {
+		t.Fatalf("Probe: %v", err)
+	}
+	if f.Version() != "0.42.0" || f.GoVersion() != "go1.27.2" || f.HostGOOS() != "" || f.HostGOARCH() != "" {
+		t.Errorf("version %s %s host %q/%q", f.Version(), f.GoVersion(), f.HostGOOS(), f.HostGOARCH())
 	}
 }

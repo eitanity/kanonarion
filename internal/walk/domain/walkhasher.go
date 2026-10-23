@@ -145,9 +145,11 @@ type canonicalStdlibFacts struct {
 // canonicalTinyGoFacts is the fixed-field-order form of TinyGoFacts, in sorted
 // JSON-key order; a map marshals with its keys sorted.
 type canonicalTinyGoFacts struct {
-	Mixed    map[string][]string `json:"mixed,omitempty"`
-	Packages []string            `json:"packages"`
-	Target   string              `json:"target"`
+	// Custody is omitempty so a TinyGo walk recorded before it hashes as it did.
+	Custody  *canonicalTinyGoCustody `json:"custody,omitempty"`
+	Mixed    map[string][]string     `json:"mixed,omitempty"`
+	Packages []string                `json:"packages"`
+	Target   string                  `json:"target"`
 }
 
 type canonicalWalkEdge struct {
@@ -529,7 +531,10 @@ func canonicalWalkNodes(nodes []GraphNode) []canonicalWalkNode {
 		out[i].Stdlib = toCanonicalStdlibFacts(n.Stdlib)
 		out[i].Packages = n.Packages
 		if n.TinyGo != nil {
-			out[i].TinyGo = &canonicalTinyGoFacts{Mixed: n.TinyGo.Mixed, Packages: n.TinyGo.Packages, Target: n.TinyGo.Target}
+			out[i].TinyGo = &canonicalTinyGoFacts{
+				Custody: toCanonicalTinyGoCustody(n.TinyGo.Custody),
+				Mixed:   n.TinyGo.Mixed, Packages: n.TinyGo.Packages, Target: n.TinyGo.Target,
+			}
 		}
 	}
 	return out
@@ -731,7 +736,11 @@ func nodesFromCanonical(c canonicalWalkRecord) ([]GraphNode, error) {
 			Packages: n.Packages,
 		}
 		if n.TinyGo != nil {
-			nodes[i].TinyGo = &TinyGoFacts{Target: n.TinyGo.Target, Packages: n.TinyGo.Packages, Mixed: n.TinyGo.Mixed}
+			custody, cerr := fromCanonicalTinyGoCustody(n.TinyGo.Custody)
+			if cerr != nil {
+				return nil, fmt.Errorf("node %d: %w", i, cerr)
+			}
+			nodes[i].TinyGo = &TinyGoFacts{Target: n.TinyGo.Target, Packages: n.TinyGo.Packages, Mixed: n.TinyGo.Mixed, Custody: custody}
 		}
 		if n.OriginalCoordinate != nil {
 			oc, oerr := coordinate.NewModuleCoordinate(n.OriginalCoordinate.Path, n.OriginalCoordinate.Version)

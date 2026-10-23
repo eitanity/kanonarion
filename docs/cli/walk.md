@@ -601,11 +601,78 @@ $ kanonarion walk-show 01M574CJB0W75P6DEF00F3V1EM --json | jq '.graph.nodes[] | 
 16
 ```
 
-The node is never fetched, extracted or scanned as a module: TinyGo ships with
-its toolchain. If the project itself requires `github.com/tinygo-org/tinygo`,
+The node is never extracted or scanned as a module: TinyGo ships with its
+toolchain. If the project itself requires `github.com/tinygo-org/tinygo`,
 the split rides on that dependency's node and no second node is added. If the
 package listing fails, the build list fails with the `go list` error, as any
 other build-list failure does; no walk is recorded with the split missing.
+
+**The walk records whether TinyGo's source is the source TinyGo released.**
+The files checked are every file TinyGo's packages compile for the target, from
+every file list `go list` reports (`.go`, `.s`/`.S`, `.c`, `.h` and the rest),
+followed to where they really live under `TINYGOROOT/src`. Each file is checked
+against one anchor:
+
+- **The module.** kanonarion fetches `github.com/tinygo-org/tinygo@v<release>`
+  as it fetches any module: verified against the checksum database, and
+  recorded in the fetch ledger. A file whose path is in the module zip under
+  `src/` is checked against the zip.
+- **The release archive.** TinyGo generates some files, such as the
+  `device/rp` register files, when it builds a release, and the module zip
+  does not carry them. These files are checked against the archive TinyGo
+  publishes on GitHub for the platform `tinygo version` names:
+  `tinygo<release>.<goos>-<goarch>.tar.gz`, or `.zip` on Windows. The archive
+  is downloaded only when a compiled file needs it, and its SHA-256 must match
+  the digest GitHub publishes for it. The archive itself is not kept. The
+  store keeps the SHA-256 of every file under its `src/`, so the next walk
+  for that TinyGo release and platform downloads nothing. A release that
+  publishes no digest for the archive, or has no such archive, is kept the
+  same way and is not asked again. A failure to reach GitHub is not kept, and
+  the next walk tries again. `--force` asks GitHub again in every case.
+
+The result is `tinygo.custody` on the TinyGo node:
+
+| Field | Meaning |
+|-------|---------|
+| `module`, `module_verification` | the module coordinate and how its fetch was verified |
+| `release_asset`, `release_outcome` | the archive and what became of it: `digest_matched`, `digest_mismatch`, `no_digest_published`, `asset_absent` or `unavailable`. Absent when no file needed the archive |
+| `release_published_digest`, `release_observed_digest`, `release_measured_at` | the digest GitHub publishes, the digest of the bytes downloaded, and when they were measured |
+| `verified_by_module`, `verified_by_release` | how many files match their anchor |
+| `differs` | each file whose bytes are not its anchor's, by `path` and `anchor` (`module` or `release`) |
+| `not_established` | the files no anchor could check, grouped by reason: each `reason` once, with its `paths` sorted |
+
+```console
+$ kanonarion walk-show 01M5K9NHJQSW5Z23YEWTTF4SQG --json | jq '.graph.nodes[] | select(.tinygo) | .tinygo.custody | {verified_by_module, verified_by_release, differs, not_established}'
+{
+  "verified_by_module": 185,
+  "verified_by_release": 3,
+  "differs": [],
+  "not_established": []
+}
+```
+
+A differing file is a disagreement between this installation and the release.
+It is reported and never repaired. When the archive does not match its
+published digest, no file is checked against it: the files it was needed for
+are not established, and the record keeps both digests. Checking the source
+never fails the walk. A part that cannot run leaves its files not established,
+with the reason, and logs one warning. For example, the module cannot be
+fetched, GitHub cannot be reached, or the release has no such asset or no
+digest. When the module zip cannot be read, the release archive is not
+consulted either, because the zip decides which files need it.
+
+Offline (`--from-modcache`, or an environment that declares no network),
+nothing is downloaded:
+
+- The module is fetched the way `--from-modcache` fetches every module: from
+  the module cache, checked against the project's `go.sum`. A project's
+  `go.sum` does not normally list TinyGo. The module is then checked only if
+  the store already holds a verified fetch of it, from an earlier connected
+  walk or from `kanonarion fetch github.com/tinygo-org/tinygo@v<release>`.
+  Otherwise every file is not established, and the reason names `go.sum`.
+- The archive's file list is used only if the store already holds it.
+  Otherwise the files that need it are not established, with the reason
+  `release archive unavailable offline`.
 
 **Only the same declaration selects it.** Every command that takes `--target`
 takes `--tinygo`, and a read declaring `--tinygo pico` answers only from a walk

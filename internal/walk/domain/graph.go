@@ -236,6 +236,9 @@ type TinyGoFacts struct {
 	Target   string
 	Packages []string
 	Mixed    map[string][]string
+	// Custody is whether the installed TinyGo source the build compiles is
+	// the source TinyGo released; nil when it was not established at all.
+	Custody *TinyGoCustody
 }
 
 // TinyGoNode builds the node a TinyGo walk records for TinyGo itself, at the

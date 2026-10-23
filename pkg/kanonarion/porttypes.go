@@ -1024,6 +1024,43 @@ type StdlibFacts = walkdomain.StdlibFacts
 // may be added within a major version (§4).
 type TinyGoFacts = walkdomain.TinyGoFacts
 
+// TinyGoCustody records whether the TinyGo source a build compiled is the
+// source TinyGo released, file by file, against its module zip and its
+// release archive.
+//
+// Stability: supporting type of the WalkStore port; unstable pre-v1. Fields
+// may be added within a major version (§4).
+type TinyGoCustody = walkdomain.TinyGoCustody
+
+// TinyGoFileDiffers is a compiled TinyGo file whose installed bytes are not
+// its anchor's.
+//
+// Stability: supporting type of the WalkStore port; unstable pre-v1. Fields
+// may be added within a major version (§4).
+type TinyGoFileDiffers = walkdomain.TinyGoFileDiffers
+
+// TinyGoFileNotEstablished is a compiled TinyGo file no anchor could judge,
+// with the reason.
+//
+// Stability: supporting type of the WalkStore port; unstable pre-v1. Fields
+// may be added within a major version (§4).
+type TinyGoFileNotEstablished = walkdomain.TinyGoFileNotEstablished
+
+// TinyGoAnchor names what an installed TinyGo file was compared with.
+//
+// Stability: supporting type of the WalkStore port; unstable pre-v1. Values
+// may be added within a major version; treat an unrecognised value
+// conservatively (§4).
+type TinyGoAnchor = walkdomain.TinyGoAnchor
+
+// TinyGoReleaseOutcome is what became of the TinyGo release archive a walk
+// consulted.
+//
+// Stability: supporting type of the WalkStore port; unstable pre-v1. Values
+// may be added within a major version; treat an unrecognised value
+// conservatively (§4).
+type TinyGoReleaseOutcome = walkdomain.TinyGoReleaseOutcome
+
 // StdlibVerificationStatus records how far the standard-library source
 // tarball was verified.
 //

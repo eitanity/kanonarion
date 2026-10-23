@@ -74,6 +74,7 @@ in a use case.
 | Ingest | fetch | `internal/fetch` | Fetch and verify a single module version |
 | Ingest | walk | `internal/walk` | Resolve and fetch the full transitive closure |
 | Ingest | stdlib | `internal/stdlib` | Establish the Go standard library's chain of custody (go.dev/dl tarball, checksum, VCS anchor, licence) |
+| Ingest | tinygo | `internal/tinygo` | Measure a TinyGo release archive against the digest GitHub publishes for it |
 | Extract | extract | `internal/extract` | Orchestrate per-module extraction stages |
 | Extract | iface | `internal/iface` | Extract the public API surface |
 | Extract | callgraph | `internal/callgraph` | Build the intra-module call graph |
@@ -125,6 +126,16 @@ the walk context never imports stdlib), where `audit` and `sbom` read them. The
 anchor is deliberately weaker than a sumdb transparency-log entry and recorded as
 such. *Adapters:* `godev` (manifest + tarball), `gitlsremote` (commit),
 `licenseident` (SPDX), `store/sqlite`, `walkbridge`.
+
+**tinygo** - measures the archive TinyGo publishes on GitHub for a release and
+host platform: its published SHA-256, the SHA-256 of the bytes downloaded and,
+when they match, the SHA-256 of every file under its `src/`. The archive is not
+kept; one measurement per release and asset is, append-only. The walk checks a
+TinyGo build's compiled files against TinyGo's module zip, fetched like any
+module, and asks this context (through `walkports.TinyGoReleaseAcquirer` and
+the `walkbridge` adapter) only for the files the zip does not carry. Offline it
+serves a held measurement and reaches nothing. *Adapters:* `github` (release
+listing + archive), `store/sqlite`, `walkbridge`.
 
 ### Extract
 

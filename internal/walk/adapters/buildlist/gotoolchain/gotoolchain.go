@@ -126,11 +126,12 @@ func (r *Resolver) Resolve(ctx context.Context, projectDir string) (walkports.Bu
 	// which decides how its advisories read. A listing that fails fails the build
 	// list rather than yielding a walk that silently holds no split.
 	if r.tinygo.Declared() {
-		facts, goPkgs, aerr := r.attributeTinyGo(ctx, projectDir)
+		split, aerr := r.attributeTinyGo(ctx, projectDir)
 		if aerr != nil {
 			return walkports.BuildList{}, aerr
 		}
-		bl.TinyGo, bl.GoPackages = facts, goPkgs
+		bl.TinyGo, bl.GoPackages, bl.TinyGoFiles = split.facts, split.goPkgs, split.files
+		bl.TinyGoHostGOOS, bl.TinyGoHostGOARCH = r.tinygo.HostGOOS(), r.tinygo.HostGOARCH()
 	}
 	return bl, nil
 }

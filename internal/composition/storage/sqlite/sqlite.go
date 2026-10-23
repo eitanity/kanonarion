@@ -32,6 +32,7 @@ import (
 	sbomstore "github.com/eitanity/kanonarion/internal/sbom/adapters/store/sqlite"
 	stalesqlite "github.com/eitanity/kanonarion/internal/staleness/adapters/store/sqlite"
 	stdlibsqlite "github.com/eitanity/kanonarion/internal/stdlib/adapters/store/sqlite"
+	tinygosqlite "github.com/eitanity/kanonarion/internal/tinygo/adapters/store/sqlite"
 	vensqlite "github.com/eitanity/kanonarion/internal/vendortree/adapters/store/sqlite"
 	vulnsqlite "github.com/eitanity/kanonarion/internal/vuln/adapters/store/sqlite"
 	walksqlite "github.com/eitanity/kanonarion/internal/walk/adapters/walks/sqlite"
@@ -58,6 +59,7 @@ func Migrations() []sqlitestore.Migration {
 	m = append(m, stdlibsqlite.Migrations()...)
 	m = append(m, stalesqlite.Migrations()...)
 	m = append(m, nativesqlite.Migrations()...)
+	m = append(m, tinygosqlite.Migrations()...)
 	return m
 }
 
@@ -196,6 +198,7 @@ func open(req storage.Request, inspect bool) (*storage.Storage, error) {
 		Stdlib:            stdlib,
 		Staleness:         stalesqlite.New(db),
 		Native:            nativesqlite.New(db).WithSupersededArtefacts(superseded),
+		TinyGoReleases:    tinygosqlite.New(db),
 		Signer:            noopsigner.New(),
 		Schema:            schema,
 		Writable: func(ctx context.Context) error {

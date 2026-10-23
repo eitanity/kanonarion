@@ -50,6 +50,7 @@ var tempPrefixes = []string{
 	"kanonarion-bin-",
 	"kanonarion-githome-",
 	"kanonarion-toolchain-",
+	"kanonarion-tinygo-",
 	"kanonarion_probe_bin",
 	childproc.ScratchPrefix,
 }

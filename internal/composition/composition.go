@@ -53,6 +53,10 @@ import (
 	stdlibbridge "github.com/eitanity/kanonarion/internal/stdlib/adapters/walkbridge"
 	stdlibapp "github.com/eitanity/kanonarion/internal/stdlib/application"
 	stdlibports "github.com/eitanity/kanonarion/internal/stdlib/ports"
+	tinygogithub "github.com/eitanity/kanonarion/internal/tinygo/adapters/github"
+	tinygobridge "github.com/eitanity/kanonarion/internal/tinygo/adapters/walkbridge"
+	tinygoapp "github.com/eitanity/kanonarion/internal/tinygo/application"
+	tinygoports "github.com/eitanity/kanonarion/internal/tinygo/ports"
 	venapp "github.com/eitanity/kanonarion/internal/vendortree/application"
 	vulnapp "github.com/eitanity/kanonarion/internal/vuln/application"
 	walkbuildlist "github.com/eitanity/kanonarion/internal/walk/adapters/buildlist/gotoolchain"
@@ -128,6 +132,16 @@ func NewStdlibAcquirer(store stdlibports.Store, blobs fetchports.BlobStore, clk 
 		blobs, clk, logger,
 	).WithAudit(audit)
 	return stdlibbridge.New(acquirer)
+}
+
+// NewTinyGoReleaseAcquirer wires the TinyGo release-archive measurement over the
+// given store. Offline it serves held measurements and wires no network client.
+func NewTinyGoReleaseAcquirer(store tinygoports.Store, clk fetchports.Clock, logger *slog.Logger, offline bool) *tinygobridge.Bridge {
+	if offline {
+		return tinygobridge.New(tinygoapp.NewOfflineAcquirer(store, clk, logger))
+	}
+	client := tinygogithub.New()
+	return tinygobridge.New(tinygoapp.NewAcquirer(client, client, store, clk, logger))
 }
 
 // NewOfflineStdlibAcquirer wires the offline standard-library chain-of-custody

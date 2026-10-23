@@ -604,3 +604,15 @@ func TestDirectDependenciesOf_ALeafIsHeldWithNoDependencies(t *testing.T) {
 		t.Errorf("DirectDependenciesOf(leaf) = %v, want none", coordStrings(got))
 	}
 }
+
+// TestDirectDependenciesOf_TwoEdgesToOneModuleNameItOnce: two requirements on
+// one dependency are one direct dependency.
+func TestDirectDependenciesOf_TwoEdgesToOneModuleNameItOnce(t *testing.T) {
+	g := directDepsGraph()
+	lib, dep := coord("example.com/lib", "v3.3.0"), coord("example.com/cast", "v1.10.0")
+	g.Edges = append(g.Edges, domain.GraphEdge{From: lib, To: dep, ConstraintVersion: "v1.9.0"})
+	got, held := g.DirectDependenciesOf(lib)
+	if s := coordStrings(got); !held || len(s) != 1 || s[0] != "example.com/cast@v1.10.0" {
+		t.Errorf("DirectDependenciesOf(lib) = %v, %v", s, held)
+	}
+}

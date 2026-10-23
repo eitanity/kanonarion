@@ -26,6 +26,7 @@ import (
 	sbomports "github.com/eitanity/kanonarion/internal/sbom/ports"
 	stalenessports "github.com/eitanity/kanonarion/internal/staleness/ports"
 	stdlibports "github.com/eitanity/kanonarion/internal/stdlib/ports"
+	tinygoports "github.com/eitanity/kanonarion/internal/tinygo/ports"
 	vendorports "github.com/eitanity/kanonarion/internal/vendortree/ports"
 	vulnports "github.com/eitanity/kanonarion/internal/vuln/ports"
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
@@ -103,6 +104,9 @@ type Storage struct {
 	Stdlib            stdlibports.Store
 	Staleness         stalenessports.Ledger
 	Native            nativeports.NativeStore
+	// TinyGoReleases nil means TinyGo release measurements are not kept, so
+	// every TinyGo walk that needs one measures it again.
+	TinyGoReleases tinygoports.Store
 
 	// Signer nil means the no-op signer.
 	Signer fetchports.Signer

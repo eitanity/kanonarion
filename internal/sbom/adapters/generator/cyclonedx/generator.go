@@ -12,6 +12,7 @@ import (
 	"maps"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -785,6 +786,7 @@ func appendTinyGoProperties(comp *cdx.Component, node walkdomain.GraphNode) {
 			}
 			props = append(props, cdx.Property{Name: "kanonarion:tinygo:mixed", Value: strings.Join(parts, ";")})
 		}
+		props = append(props, tinygoCustodyProperties(f.Custody)...)
 	}
 	if len(props) == 0 {
 		return
@@ -795,6 +797,47 @@ func appendTinyGoProperties(comp *cdx.Component, node walkdomain.GraphNode) {
 	}
 	all = append(all, props...)
 	comp.Properties = &all
+}
+
+// tinygoCustodyProperties states whether the installed TinyGo source the build
+// compiled is the source TinyGo released, on the TinyGo component. Nothing is
+// stated when custody was not established at all.
+func tinygoCustodyProperties(c *walkdomain.TinyGoCustody) []cdx.Property {
+	if c == nil {
+		return nil
+	}
+	const p = "kanonarion:tinygo:custody:"
+	props := []cdx.Property{
+		{Name: p + "module", Value: c.Module},
+		{Name: p + "module_verification", Value: c.ModuleVerification},
+		{Name: p + "verified_by_module", Value: strconv.Itoa(c.VerifiedByModule)},
+	}
+	if c.ReleaseAsset != "" {
+		props = append(props,
+			cdx.Property{Name: p + "release_asset", Value: c.ReleaseAsset},
+			cdx.Property{Name: p + "release_outcome", Value: string(c.ReleaseOutcome)},
+		)
+		if c.ReleasePublishedDigest != "" {
+			props = append(props, cdx.Property{Name: p + "release_published_sha256", Value: c.ReleasePublishedDigest})
+		}
+		if c.ReleaseObservedDigest != "" {
+			props = append(props, cdx.Property{Name: p + "release_observed_sha256", Value: c.ReleaseObservedDigest})
+		}
+		if !c.ReleaseMeasuredAt.IsZero() {
+			props = append(props, cdx.Property{Name: p + "release_measured_at", Value: c.ReleaseMeasuredAt.UTC().Format(time.RFC3339)})
+		}
+	}
+	props = append(props, cdx.Property{Name: p + "verified_by_release", Value: strconv.Itoa(c.VerifiedByRelease)})
+	for _, anchor := range []walkdomain.TinyGoAnchor{walkdomain.TinyGoAnchorModule, walkdomain.TinyGoAnchorRelease} {
+		if paths := c.DiffersFrom(anchor); len(paths) > 0 {
+			props = append(props, cdx.Property{Name: p + "differs_from_" + string(anchor), Value: strings.Join(paths, ",")})
+		}
+	}
+	reasons, byReason := c.NotEstablishedByReason()
+	for _, r := range reasons {
+		props = append(props, cdx.Property{Name: p + "not_established", Value: r + ": " + strings.Join(byReason[r], ",")})
+	}
+	return append(props, cdx.Property{Name: p + "anchor_limitation", Value: c.Statement()})
 }
 
 // buildEnvProperties renders the resolved build environment as CycloneDX

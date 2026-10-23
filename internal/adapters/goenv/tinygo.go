@@ -16,6 +16,9 @@ type TinyGo struct {
 	target, version, goVersion, goos, goarch, goarm, goroot string
 	sourceRoot, llvmTriple                                  string
 	tags                                                    []string
+	// hostGOOS and hostGOARCH are the platform the tinygo binary was built
+	// for, as tinygo version reports it; they name its release archive.
+	hostGOOS, hostGOARCH string
 }
 
 // NewTinyGo is a complete frame. A partial one would let the missing half come
@@ -43,6 +46,20 @@ func NewTinyGo(target, version, goVersion, goos, goarch, goarm, goroot, sourceRo
 		tags: append([]string(nil), tags...),
 	}, nil
 }
+
+// WithHost returns the frame with the platform tinygo itself was built for.
+func (f TinyGo) WithHost(goos, goarch string) TinyGo {
+	f.hostGOOS, f.hostGOARCH = goos, goarch
+	return f
+}
+
+// HostGOOS is the operating system the tinygo binary was built for, empty
+// when it was not reported.
+func (f TinyGo) HostGOOS() string { return f.hostGOOS }
+
+// HostGOARCH is the architecture the tinygo binary was built for, empty when
+// it was not reported.
+func (f TinyGo) HostGOARCH() string { return f.hostGOARCH }
 
 // Declared reports whether this value names a TinyGo target at all.
 func (f TinyGo) Declared() bool { return f.target != "" }

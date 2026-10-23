@@ -83,6 +83,15 @@ type StdlibAcquirer interface {
 	AcquireStdlib(ctx context.Context, goVersion string, force, skipVCS bool) (walkdomain.StdlibFacts, domain.ArtifactDigests, error)
 }
 
+// TinyGoReleaseAcquirer measures the TinyGo release archive for one release and
+// host platform: its published digest, the digest of the bytes downloaded and,
+// when they match, the SHA-256 of every file under its src directory. It never
+// fails: a leg that cannot run is an outcome with its reason. force re-acquires
+// past a held measurement.
+type TinyGoReleaseAcquirer interface {
+	AcquireTinyGoRelease(ctx context.Context, version, goos, goarch string, force bool) walkdomain.TinyGoRelease
+}
+
 // ProgressReporter receives walk fetch-phase progress so a long, otherwise
 // silent run can show proof of life. The walker calls Advance once per distinct
 // module as it is fetched (cache hits included), passing the running total. The
@@ -173,6 +182,13 @@ type BuildList struct {
 	// on any other build list.
 	TinyGo     *walkdomain.TinyGoFacts
 	GoPackages []string
+	// TinyGoFiles is every file TinyGo's packages compile for the target, by
+	// path under TINYGOROOT/src with the installed bytes' SHA-256. TinyGoHostGOOS
+	// and TinyGoHostGOARCH are the platform tinygo itself was built for, which
+	// names its release archive.
+	TinyGoFiles      []walkdomain.TinyGoSourceFile
+	TinyGoHostGOOS   string
+	TinyGoHostGOARCH string
 }
 
 // BuildListResolver computes the authoritative build list for a project from the

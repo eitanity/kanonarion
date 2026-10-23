@@ -399,6 +399,10 @@ func NewContainerFrom(st *storage.Storage, storeRoot, goproxy, goBinary string, 
 		resolver = resolver.WithStdlibAcquirer(
 			composition.NewStdlibAcquirer(st.Stdlib, blobs, clk, auditSink, logger), skipVCSVerify)
 	}
+	// TinyGo custody's release leg follows the stdlib's offline rule: serve a
+	// held measurement and reach nothing when the run or environment is offline.
+	resolver = resolver.WithTinyGoReleaseAcquirer(
+		composition.NewTinyGoReleaseAcquirer(st.TinyGoReleases, clk, logger, offlineStdlibAnchor(modcacheMode)))
 	walker := walkapp.NewWalker(resolver, fetcher, localFetcher, clk, stopwatch, 0, logger)
 
 	executeWalkUC := walkapp.NewExecuteWalkUseCase(walker, walkStore, "", "", logger).WithAudit(auditSink)

@@ -105,9 +105,10 @@ type GraphResolver struct {
 	fetcher         walkports.ModuleFetcher
 	blobs           fetchports.BlobStore
 	clock           fetchports.Clock
-	buildList       walkports.BuildListResolver // nil = internal resolver only
-	stdlib          walkports.StdlibAcquirer    // nil = stdlib node carries no custody chain
-	skipVCSVerify   bool                        // skip the stdlib googlesource commit anchor
+	buildList       walkports.BuildListResolver     // nil = internal resolver only
+	stdlib          walkports.StdlibAcquirer        // nil = stdlib node carries no custody chain
+	tinygoRelease   walkports.TinyGoReleaseAcquirer // nil = the TinyGo node carries no custody
+	skipVCSVerify   bool                            // skip the stdlib googlesource commit anchor
 	pipelineVersion string
 	workerCount     int // bounded fetch concurrency; ≤0 = defaultWorkerCount
 	logger          *slog.Logger
@@ -322,6 +323,7 @@ func (r *GraphResolver) resolveProject(ctx context.Context, target coordinate.Mo
 	// modules. Skipped silently when no toolchain version can be determined.
 	r.injectStdlib(ctx, &g, target, goModBytes, stdlibFromGoMod, force)
 	injectTinyGo(&g, target, tinygo)
+	r.establishTinyGoCustody(ctx, &g, tinygo, force)
 
 	return g, sources, nil
 }

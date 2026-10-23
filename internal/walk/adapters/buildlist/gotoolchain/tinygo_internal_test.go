@@ -2,6 +2,8 @@ package gotoolchain
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -79,10 +81,11 @@ func TestAttributeStandard_PartitionsBySupplier(t *testing.T) {
 	out := m.listing(t, m.pkg("machine", "machine.go"), m.pkg("io", "io.go"),
 		m.pkg("sync", "mutex.go", "pool.go", "once.go"), module)
 
-	facts, goPkgs, err := attributeStandard(out, m.tinygo, m.golang)
+	split, err := attributeStandard(out, m.tinygo, m.golang)
 	if err != nil {
 		t.Fatalf("attributeStandard: %v", err)
 	}
+	facts, goPkgs := split.facts, split.goPkgs
 	if want := []string{"machine", "sync"}; !reflect.DeepEqual(facts.Packages, want) {
 		t.Errorf("TinyGo packages = %v, want %v (tinygo-only and mixed)", facts.Packages, want)
 	}
@@ -96,23 +99,23 @@ func TestAttributeStandard_PartitionsBySupplier(t *testing.T) {
 
 func TestAttributeStandard_NoMixedPackageLeavesMixedNil(t *testing.T) {
 	m := newMergedTree(t)
-	facts, _, err := attributeStandard(m.listing(t, m.pkg("machine", "machine.go"), m.pkg("io", "io.go")), m.tinygo, m.golang)
+	split, err := attributeStandard(m.listing(t, m.pkg("machine", "machine.go"), m.pkg("io", "io.go")), m.tinygo, m.golang)
 	if err != nil {
 		t.Fatalf("attributeStandard: %v", err)
 	}
-	if facts.Mixed != nil {
-		t.Errorf("mixed = %v, want nil so the canonical form omits it", facts.Mixed)
+	if split.facts.Mixed != nil {
+		t.Errorf("mixed = %v, want nil so the canonical form omits it", split.facts.Mixed)
 	}
 }
 
 func TestAttributeStandard_APackageWithoutGoFilesIsAttributedByItsDirectory(t *testing.T) {
 	m := newMergedTree(t)
-	facts, goPkgs, err := attributeStandard(m.listing(t, m.pkg("machine"), m.pkg("io")), m.tinygo, m.golang)
+	split, err := attributeStandard(m.listing(t, m.pkg("machine"), m.pkg("io")), m.tinygo, m.golang)
 	if err != nil {
 		t.Fatalf("attributeStandard: %v", err)
 	}
-	if !reflect.DeepEqual(facts.Packages, []string{"machine"}) || !reflect.DeepEqual(goPkgs, []string{"io"}) {
-		t.Errorf("TinyGo %v, Go %v", facts.Packages, goPkgs)
+	if !reflect.DeepEqual(split.facts.Packages, []string{"machine"}) || !reflect.DeepEqual(split.goPkgs, []string{"io"}) {
+		t.Errorf("TinyGo %v, Go %v", split.facts.Packages, split.goPkgs)
 	}
 }
 
@@ -146,11 +149,52 @@ func TestAttributeStandard_RefusesWhatItCannotAttribute(t *testing.T) {
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			_, _, err := attributeStandard(tc.out, tc.tinygoRoot, tc.goRt)
+			_, err := attributeStandard(tc.out, tc.tinygoRoot, tc.goRt)
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Errorf("err = %v, want one containing %q", err, tc.want)
 			}
 		})
+	}
+}
+
+// TestAttributeStandard_CustodyCoversEveryCompiledFileOfTinyGo: every compiled
+// list counts, only TinyGo's own tree is hashed, and a Go-served file of a mixed
+// package or a file of a Go-only package is the stdlib's, not TinyGo's.
+func TestAttributeStandard_CustodyCoversEveryCompiledFileOfTinyGo(t *testing.T) {
+	m := newMergedTree(t)
+	asm := filepath.Join(m.tinygo, "src", "machine", "boot.S")
+	if err := os.WriteFile(asm, []byte("nop\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	machine := m.pkg("machine", "machine.go")
+	machine.SFiles = []string{"boot.S"}
+	out := m.listing(t, machine, m.pkg("io", "io.go"), m.pkg("sync", "mutex.go", "pool.go", "once.go"))
+
+	split, err := attributeStandard(out, m.tinygo, m.golang)
+	if err != nil {
+		t.Fatalf("attributeStandard: %v", err)
+	}
+	var paths []string
+	for _, f := range split.files {
+		paths = append(paths, f.Path)
+	}
+	if want := []string{"machine/boot.S", "machine/machine.go", "sync/mutex.go"}; !reflect.DeepEqual(paths, want) {
+		t.Errorf("custody files = %v, want %v", paths, want)
+	}
+	sum := sha256.Sum256([]byte("nop\n"))
+	if got, want := split.files[0].SHA256, hex.EncodeToString(sum[:]); got != want {
+		t.Errorf("boot.S hash = %s, want %s: the installed bytes", got, want)
+	}
+}
+
+// TestAttributeStandard_CustodyRefusesAFileItCannotRead: a compiled file that
+// does not resolve fails the listing rather than leaving custody short.
+func TestAttributeStandard_CustodyRefusesAFileItCannotRead(t *testing.T) {
+	m := newMergedTree(t)
+	machine := m.pkg("machine", "machine.go")
+	machine.CFiles = []string{"gone.c"}
+	if _, err := attributeStandard(m.listing(t, machine), m.tinygo, m.golang); err == nil || !strings.Contains(err.Error(), "resolving gone.c") {
+		t.Errorf("err = %v, want the unresolvable file named", err)
 	}
 }
 

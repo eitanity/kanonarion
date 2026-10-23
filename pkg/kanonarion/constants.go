@@ -568,6 +568,29 @@ const (
 	ResolutionTinyGo               = walkdomain.ResolutionTinyGo
 )
 
+// The values of TinyGoAnchor, as the internal package defines them.
+//
+// Stability: supporting constants of the TinyGoAnchor type; unstable pre-v1.
+// Values may be added within a major version; treat an unrecognised value
+// conservatively (§4).
+const (
+	TinyGoAnchorModule  = walkdomain.TinyGoAnchorModule
+	TinyGoAnchorRelease = walkdomain.TinyGoAnchorRelease
+)
+
+// The values of TinyGoReleaseOutcome, as the internal package defines them.
+//
+// Stability: supporting constants of the TinyGoReleaseOutcome type; unstable
+// pre-v1. Values may be added within a major version; treat an unrecognised
+// value conservatively (§4).
+const (
+	TinyGoReleaseAssetAbsent    = walkdomain.TinyGoReleaseAssetAbsent
+	TinyGoReleaseDigestMatched  = walkdomain.TinyGoReleaseDigestMatched
+	TinyGoReleaseDigestMismatch = walkdomain.TinyGoReleaseDigestMismatch
+	TinyGoReleaseNoDigest       = walkdomain.TinyGoReleaseNoDigest
+	TinyGoReleaseUnavailable    = walkdomain.TinyGoReleaseUnavailable
+)
+
 // The values of ReuseGate, as the internal package defines them.
 //
 // Stability: supporting constants of the ReuseGate type; unstable pre-v1.

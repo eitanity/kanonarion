@@ -170,6 +170,54 @@ values there, as they did when `verdict` and `reachability_state` gained theirs)
   a record that names no frame. `callgraph-show` text gains a `frame:` line and
   `--history` a `frame:` line per generation, both absent on such a record.
 
+## TinyGo store: module `tinygo`, migration 1 - the release archive a TinyGo walk checked against, and a walk record field
+
+**One new table, one additive walk-record field, no pipeline bump.** A walk
+taken with `--tinygo` now checks every file TinyGo's packages compile against
+TinyGo's module zip and, for the files the zip does not carry, against the
+release archive TinyGo publishes on GitHub. The archive is not kept. Migration
+1 of the new `tinygo` module adds one append-only table holding each
+measurement of an archive:
+
+```sql
+CREATE TABLE IF NOT EXISTS tinygo_release_measurements (
+    tinygo_version   TEXT NOT NULL,
+    asset            TEXT NOT NULL,
+    url              TEXT NOT NULL,
+    published_sha256 TEXT NOT NULL,
+    observed_sha256  TEXT NOT NULL,
+    outcome          TEXT NOT NULL,
+    reason           TEXT NOT NULL DEFAULT '',
+    manifest         TEXT NOT NULL DEFAULT '',
+    measured_at      TEXT NOT NULL,
+    PRIMARY KEY (tinygo_version, asset, measured_at, observed_sha256)
+)
+```
+
+A row records a fact about the release: `outcome` is `digest_matched` or
+`digest_mismatch` when the archive was downloaded and its digest compared, and
+`no_digest_published` or `asset_absent` when the release lists the archive
+without a digest, or has no such archive or no such release. A failure to
+reach GitHub writes no row. `manifest` holds one `<sha256>  <path>` line for
+every file under the archive's `src/`, and is empty for every outcome but
+`digest_matched`. A walk reads the row appended last for its TinyGo release and
+asset, and `walk --force` appends a new one. Store `v91` -> `v92`.
+
+The walk record's TinyGo node gains `tinygo.custody`: the module and its fetch
+verification, the archive, its outcome, both digests and the measurement time,
+the counts verified by each anchor, the differing files, and the files not
+established grouped by reason (each reason once, with its sorted paths). It
+is `omitempty`, so every walk recorded before it, and every walk without
+`--tinygo`, keeps its content hash and its identity. A TinyGo walk taken after the change carries the field, so its
+identity differs from the same walk taken before. `--gomod` walks always
+re-resolve, so the walk pipeline stays `1.11.0` and the next TinyGo walk
+records the field. `walk-show --json` carries it. The SBOM's TinyGo component
+gains the `kanonarion:tinygo:custody:*` properties.
+
+An older build meets a `v92` store at the schema gate: it names `tinygo@v1` as
+a migration it does not know and refuses, and `store info` still reads the
+store.
+
 ## Fetch record: pipeline `0.5.0` → `0.6.0`, and fetch migrations 11 and 12 - which directory the VCS check hashed, and the version's own time
 
 **Derivation change, two additive fields, two store migrations.** A module that

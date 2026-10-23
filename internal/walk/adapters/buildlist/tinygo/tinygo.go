@@ -52,7 +52,7 @@ func Probe(ctx context.Context, binary, target string) (goenv.TinyGo, error) {
 	if err != nil {
 		return goenv.TinyGo{}, err
 	}
-	version, goVersion, err := parseVersion(versionOut)
+	version, goVersion, host, err := parseVersion(versionOut)
 	if err != nil {
 		return goenv.TinyGo{}, err
 	}
@@ -95,6 +95,9 @@ func Probe(ctx context.Context, binary, target string) (goenv.TinyGo, error) {
 	if err != nil {
 		return goenv.TinyGo{}, fmt.Errorf("tinygo described the target %q incompletely: %w", target, err)
 	}
+	if goos, goarch, ok := strings.Cut(host, "/"); ok {
+		f = f.WithHost(goos, goarch)
+	}
 	store(key, f)
 	return f, nil
 }
@@ -112,16 +115,17 @@ func run(ctx context.Context, bin string, args ...string) ([]byte, error) {
 	return out, nil
 }
 
-var versionLine = regexp.MustCompile(`^tinygo version (\S+) .*using go version (go\S+)`)
+var versionLine = regexp.MustCompile(`^tinygo version (\S+) (?:(\S+/\S+) )?.*using go version (go\S+)`)
 
 // parseVersion reads `tinygo version 0.42.0 linux/amd64 (using go version
-// go1.27.2 and LLVM version 22.1.4)` for the TinyGo and Go versions.
-func parseVersion(out []byte) (version, goVersion string, err error) {
+// go1.27.2 and LLVM version 22.1.4)` for the TinyGo and Go versions and the
+// platform tinygo was built for, which may be absent.
+func parseVersion(out []byte) (version, goVersion, host string, err error) {
 	m := versionLine.FindStringSubmatch(strings.TrimSpace(string(out)))
 	if m == nil {
-		return "", "", fmt.Errorf("tinygo version printed %q, which names no TinyGo and Go version", strings.TrimSpace(string(out)))
+		return "", "", "", fmt.Errorf("tinygo version printed %q, which names no TinyGo and Go version", strings.TrimSpace(string(out)))
 	}
-	return m[1], m[2], nil
+	return m[1], m[3], m[2], nil
 }
 
 // parseGOROOT is the parent of the src directory that holds the runtime

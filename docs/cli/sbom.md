@@ -237,9 +237,24 @@ comma-separated) and, when a package holds files of both, `kanonarion:tinygo:mix
 (`pkg:file,file;pkg:file`, naming the files Go supplies). The `stdlib` component
 gains `kanonarion:stdlib:packages`: the standard packages Go supplies.
 
-The TinyGo component carries no hashes, licence or external references:
-kanonarion does not yet acquire TinyGo's source. It is therefore named in the
-licence-completeness statement like any component with no licence identity.
+When the walk checked TinyGo's source (see
+[the TinyGo walk](walk.md#declaring-a-tinygo-target---tinygo)), the component
+also carries the result, under `kanonarion:tinygo:custody:`:
+
+- `module`, `module_verification`, `verified_by_module`;
+- `release_asset`, `release_outcome`, `release_published_sha256`,
+  `release_observed_sha256` and `release_measured_at`, each only when the walk
+  reached it;
+- `verified_by_release`;
+- `differs_from_module` and `differs_from_release`: the differing files,
+  comma-separated, present only when a file differs;
+- `not_established`, once per reason: `<reason>: <file>,<file>`;
+- `anchor_limitation`: one sentence saying what the files were checked against
+  and with what result, written from what the walk reached.
+
+The TinyGo component carries no hashes, licence or external references. It is
+therefore named in the licence-completeness statement like any component with
+no licence identity.
 
 ### Modules read from disk
 
