@@ -27,7 +27,7 @@ func TestParse_StorageSection(t *testing.T) {
 		want domain.StorageConfig
 	}{
 		{"storage:\n", domain.StorageConfig{Backend: "sqlite"}},
-		{"storage:\n  backend: \"\"\n", domain.StorageConfig{Backend: "sqlite"}},
+		{"storage:\n  backend:\n", domain.StorageConfig{Backend: "sqlite"}},
 		{"storage:\n  backend: postgres\n  sumdb_cache: /cache\n", domain.StorageConfig{Backend: "postgres", SumDBCache: "/cache"}},
 	} {
 		cfg, err := yaml.Parse([]byte("version: \"3\"\n" + tc.in))
@@ -40,11 +40,21 @@ func TestParse_StorageSection(t *testing.T) {
 	}
 }
 
-// Every section the schema does not define reaches its owner as raw YAML; a
-// section with nothing under it is absent.
+// An explicit empty backend is refused as `config set` refuses it; a key with
+// no value keeps the default.
+func TestParse_StorageBackendEmptyIsRefused(t *testing.T) {
+	_, err := yaml.Parse([]byte("version: \"3\"\nstorage:\n  backend: \"\"\n"))
+	if err == nil || err.Error() != `storage.backend requires a string, got ""` {
+		t.Fatalf("err = %v, want the config set refusal", err)
+	}
+}
+
+// Every registered backend's section reaches its owner as raw YAML; a section
+// with nothing under it is absent.
 func TestParse_KeepsTheSectionsItDoesNotDefine(t *testing.T) {
-	cfg, err := yaml.Parse([]byte("version: \"3\"\nstorage:\n  backend: postgres\n" +
-		"postgres:\n  url: postgres://db\n  conns: 4\nsqlite:\n  # nothing set\nother: [a, b]\n"))
+	cfg, err := yaml.Parse([]byte("version: \"3\"\nstorage:\n  backend: postgres\n"+
+		"postgres:\n  url: postgres://db\n  conns: 4\nsqlite:\n  # nothing set\nother: [a, b]\n"),
+		"postgres", "sqlite", "other")
 	if err != nil {
 		t.Fatal(err)
 	}

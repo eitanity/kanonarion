@@ -4,7 +4,10 @@ import (
 	"strings"
 	"testing"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/eitanity/kanonarion/internal/walk/adapters/policy/localfile"
+	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 )
 
 // FuzzParse fuzzes the policy.yaml loader. Policy files are operator-supplied
@@ -19,7 +22,7 @@ import (
 //	go test -run=NONE -fuzz=FuzzParse./internal/walk/adapters/policy/localfile
 func FuzzParse(f *testing.F) {
 	// Valid policy.
-	f.Add([]byte("version: \"1\"\nstages:\n  walk:\n    max_depth: 3\n    follow_test: true\n"))
+	f.Add([]byte("version: \"1\"\nstages:\n  fetch:\n    max_depth: 3\n    follow_test: true\n"))
 	// Valid, minimal.
 	f.Add([]byte("version: \"1\"\n"))
 	// Missing version (defined error path).
@@ -48,10 +51,30 @@ stages:
 	// Many duplicate keys.
 	f.Add([]byte("version: \"1\"\nstages:\n" + strings.Repeat("  s:\n    max_depth: 1\n", 512)))
 
+	// Unknown keys: top level, a stage field, a stage name.
+	f.Add([]byte("version: \"1\"\nstage:\n  fetch:\n    allowed_vcs_hosts: [example.org]\n"))
+	f.Add([]byte("version: \"1\"\nstages:\n  fetch:\n    allowed_vcs_host: [example.org]\n"))
+	f.Add([]byte("version: \"1\"\nstages:\n  fecth:\n    max_depth: 1\n"))
+	f.Add([]byte("version: \"1\"\nstages:\n  fetch:\n    <<: {max_dept: 1}\n"))
+
 	f.Fuzz(func(t *testing.T, data []byte) {
 		p, err := localfile.Parse(data)
 		if err != nil {
 			return
+		}
+		// A key the schema does not define never loads, at the top or as a stage.
+		var doc map[string]any
+		if yaml.Unmarshal(data, &doc) == nil {
+			for key := range doc {
+				if key != "version" && key != "stages" {
+					t.Fatalf("Parse accepted unknown key %q in %q", key, data)
+				}
+			}
+		}
+		for name := range p.Stages {
+			if _, ok := walkdomain.DefaultDepthPolicy().Stages[name]; !ok {
+				t.Fatalf("Parse accepted unknown stage %q in %q", name, data)
+			}
 		}
 		// On success Version must be non-empty (Parse rejects empty version)
 		// and the Stages map must be non-nil so callers can range safely.

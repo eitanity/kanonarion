@@ -29,6 +29,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/adapters/goenv"
 	proxyadapter "github.com/eitanity/kanonarion/internal/adapters/proxy/direct"
 	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
+	"github.com/eitanity/kanonarion/internal/composition"
 	"github.com/eitanity/kanonarion/internal/composition/storage"
 	configstore "github.com/eitanity/kanonarion/internal/config/adapters/store/yaml"
 	"github.com/eitanity/kanonarion/internal/config/domain"
@@ -1655,7 +1656,7 @@ func goEnvGOMODCACHE(ctx context.Context) (string, error) {
 // DefaultConfig with no error, and that path is unchanged.
 func loadStoreConfig(root string) (domain.Config, error) {
 	configPath := configFilePath(root)
-	store := configstore.New(configPath)
+	store := configstore.New(configPath, composition.BackendSections()...)
 	cfg, err := store.LoadConfig(context.Background())
 	if err != nil {
 		return domain.DefaultConfig(), &rejectedConfigError{path: configPath, cause: err}

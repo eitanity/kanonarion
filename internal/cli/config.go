@@ -7,16 +7,14 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
 	"github.com/eitanity/kanonarion/internal/composition"
 	"github.com/eitanity/kanonarion/internal/config"
+	configstore "github.com/eitanity/kanonarion/internal/config/adapters/store/yaml"
 	"github.com/eitanity/kanonarion/internal/config/domain"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
-	"github.com/eitanity/kanonarion/internal/gotoolchain"
 )
 
 func newConfigCmd(stdout io.Writer) *cobra.Command {
@@ -354,47 +352,6 @@ func configGetPolicyValue(cfg domain.Config, key string) (string, error) {
 	}
 }
 
-// validateToolchainPreference refuses a callgraph.toolchain value no record
-// could hold.
-//
-// Validated on the way in by the domain that owns the rule, the way the VCS host
-// allowlist below is: the preference is compared against what records state and
-// against nothing else, so a value outside that form is a setting that silently
-// never fires — the operator writes it, the refusal it was written for carries
-// on, and nothing anywhere says why.
-func validateToolchainPreference(key, value string, node *yaml.Node) error {
-	if node.Kind != yaml.ScalarNode {
-		return &exitError{code: ExitConfig, msg: fmt.Sprintf(
-			"%s requires a Go toolchain version in `go env GOVERSION` form (e.g. go1.26.6), got %q", key, value)}
-	}
-	if _, err := gotoolchain.ParseVersion(node.Value); err != nil {
-		return &exitError{code: ExitConfig, msg: fmt.Sprintf("%s: %v", key, err)}
-	}
-	return nil
-}
-
-// validateVCSHostAllowlist refuses a fetch_policy.allowed_vcs_hosts value the
-// domain cannot build a list from.
-//
-// Validated on the way in, by the domain that owns the rule, so an unusable list
-// is refused while the operator is typing it rather than halfway through the
-// next walk. Setting it switches the host check from advisory to enforcing,
-// which is worth saying out loud in the error when the list cannot be used.
-func validateVCSHostAllowlist(key, value string, node *yaml.Node) error {
-	if node.Kind != yaml.SequenceNode {
-		return &exitError{code: ExitConfig, msg: fmt.Sprintf(
-			"%s requires a YAML sequence of bare hostnames (e.g. '[github.com, git.example.org]'), got %q", key, value)}
-	}
-	hosts := make([]string, 0, len(node.Content))
-	for _, n := range node.Content {
-		hosts = append(hosts, n.Value)
-	}
-	if _, err := fetchdomain.NewVCSHostAllowlist(hosts); err != nil {
-		return &exitError{code: ExitConfig, msg: fmt.Sprintf("%s: %v", key, err)}
-	}
-	return nil
-}
-
 func marshalConfigYAML(v any) (string, error) {
 	data, err := yaml.Marshal(v)
 	if err != nil {
@@ -644,97 +601,18 @@ func parseConfigValue(key, value string) (*yaml.Node, error) {
 	}
 	node := doc.Content[0]
 
-	if err := validatePreferenceNode(key, value, node); err != nil {
-		return nil, err
+	// The loader applies the same rules to the file, so a value refused here is
+	// refused there in the same words.
+	if err := configstore.ValidateSetting(key, node); err != nil {
+		return nil, &exitError{code: ExitConfig, msg: err.Error()}
 	}
-	if err := validateStalenessNode(key, value, node); err != nil {
-		return nil, err
-	}
-	if err := validateStorageNode(key, value, node); err != nil {
-		return nil, err
-	}
-	switch {
-	case strings.HasPrefix(key, "license_policy.categories."),
-		key == "callgraph.exclude":
-		if node.Kind != yaml.SequenceNode {
-			return nil, &exitError{code: ExitConfig, msg: fmt.Sprintf("%s requires a YAML sequence (e.g. '[MIT, Apache-2.0]'), got %q", key, value)}
-		}
-	case key == "callgraph.toolchain":
-		if err := validateToolchainPreference(key, value, node); err != nil {
-			return nil, err
-		}
-	case key == "fetch_policy.allowed_vcs_hosts":
-		if err := validateVCSHostAllowlist(key, value, node); err != nil {
-			return nil, err
-		}
-	case strings.HasPrefix(key, "license_overrides."):
-		if node.Kind != yaml.ScalarNode {
-			return nil, &exitError{code: ExitConfig, msg: fmt.Sprintf("license_overrides.<module> requires a string (SPDX expression), got %q", value)}
-		}
+	// Only the write is restricted to a scalar: the file also takes the
+	// attributed mapping, which `config set` cannot write.
+	if strings.HasPrefix(key, "license_overrides.") && node.Kind != yaml.ScalarNode {
+		return nil, &exitError{code: ExitConfig, msg: fmt.Sprintf("license_overrides.<module> requires a string (SPDX expression), got %q", value)}
 	}
 
 	return node, nil
-}
-
-// validatePreferenceNode checks the value given for a preferences key.
-func validatePreferenceNode(key, value string, node *yaml.Node) error {
-	switch key {
-	case "preferences.json":
-		if node.Kind != yaml.ScalarNode || node.Tag != "!!bool" {
-			return &exitError{code: ExitConfig, msg: fmt.Sprintf("preferences.json requires a boolean (true/false), got %q", value)}
-		}
-	case "preferences.progress":
-		if node.Kind != yaml.ScalarNode || node.Tag != "!!bool" {
-			return &exitError{code: ExitConfig, msg: fmt.Sprintf("preferences.progress requires a boolean (true/false), got %q", value)}
-		}
-	case "preferences.log_level":
-		if node.Kind != yaml.ScalarNode {
-			return &exitError{code: ExitConfig, msg: fmt.Sprintf("preferences.log_level requires a string, got %q", value)}
-		}
-		switch node.Value {
-		case "debug", "info", "warn", "error":
-		default:
-			return &exitError{code: ExitConfig, msg: fmt.Sprintf("preferences.log_level must be one of: debug, info, warn, error; got %q", value)}
-		}
-	}
-	return nil
-}
-
-// validateStorageNode checks the value given for a storage key: a string, and
-// for storage.backend a non-empty one.
-func validateStorageNode(key, value string, node *yaml.Node) error {
-	if key != "storage.backend" && key != "storage.sumdb_cache" {
-		return nil
-	}
-	if node.Kind != yaml.ScalarNode || (key == "storage.backend" && node.Value == "") {
-		return &exitError{code: ExitConfig, msg: fmt.Sprintf("%s requires a string, got %q", key, value)}
-	}
-	return nil
-}
-
-// validateStalenessNode checks the value given for a staleness key.
-func validateStalenessNode(key, value string, node *yaml.Node) error {
-	switch key {
-	case "staleness.ttl":
-		if node.Kind != yaml.ScalarNode {
-			return &exitError{code: ExitConfig, msg: fmt.Sprintf("staleness.ttl requires a duration string (e.g. 1h, 30m, 0), got %q", value)}
-		}
-		if _, err := time.ParseDuration(node.Value); err != nil {
-			return &exitError{code: ExitConfig, msg: fmt.Sprintf("staleness.ttl must be a duration (e.g. 1h, 30m, 0), got %q", value)}
-		}
-	case "staleness.probe_concurrency":
-		// A whole number; 0 is a serial probe.
-		if node.Kind != yaml.ScalarNode || node.Tag != "!!int" {
-			return &exitError{code: ExitConfig, msg: fmt.Sprintf(
-				"staleness.probe_concurrency requires a whole number (0 for a serial probe), got %q", value)}
-		}
-		n, err := strconv.Atoi(node.Value)
-		if err != nil || n < 0 {
-			return &exitError{code: ExitConfig, msg: fmt.Sprintf(
-				"staleness.probe_concurrency must not be negative (use 0 for a serial probe), got %q", value)}
-		}
-	}
-	return nil
 }
 
 // setYAMLNode navigates the document to yamlPath and replaces that node with valueNode.

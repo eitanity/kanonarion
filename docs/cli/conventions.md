@@ -104,7 +104,7 @@ stages:
     follow_indirect: true
 ```
 
-The `stages` map is keyed by stage name. Only `fetch` is used in Phase 1; additional stages (`licence`, `interface`) will be consumed in later phases and are preserved for forward compatibility.
+The `stages` map is keyed by stage name (`fetch`, `license`, `interface`, `callgraph`, `example`); any other key is refused.
 
 Example policies are available in `docs/examples/policies/`.
 

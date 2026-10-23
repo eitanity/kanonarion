@@ -134,9 +134,7 @@ kanonarion ships with":
 ```
 
 The claim is per value, not per section: a `preferences` block with one key set
-and two defaulted has no single source, and the file is kept parsed as an
-untyped document beside the typed config precisely so this can be asked key by
-key. Two entries are coarser and say so here: `license_overrides.*` and
+and two defaulted has no single source. Two entries are coarser and say so here: `license_overrides.*` and
 `copyright_declarations.*` exist only when the file names them, so `"file"`
 there is the presence of the entry rather than a comparison against a default -
 there is no default for them to differ from. A rejected file sets nothing, so
@@ -258,18 +256,17 @@ error: execute root command: backend "postgres" is not registered in this binary
 `storage.sumdb_cache` is the checksum-database tile cache directory. Empty
 means `<store-root>/sumdb`; a relative path is resolved against the store root.
 
-A backend with settings of its own reads them from a top-level section named
-after it. `config init` writes that section, commented out, for every backend
-the binary registered, after the sections above; the `sqlite` section has no
-settings. Backend sections are edited by hand, not with `config set`, and
-`config show --json` lists them under `sections` as written.
+A backend with settings reads them from a top-level section named after it;
+any other unknown section is refused. `config init` writes one, commented out,
+for every registered backend; `sqlite` has no settings. Edit them by hand, not
+with `config set`; `config show --json` lists them under `sections`.
 
 ## When the config file is rejected
 
-A `config.yaml` that exists and cannot be loaded — unreadable, unparseable
-YAML, or valid YAML carrying a value the schema does not accept — is a refusal,
-not a fallback. **Every command exits `20`** and names the file and the value
-the loader objected to:
+A `config.yaml` that exists and cannot be loaded — unreadable, unparseable YAML,
+a key the schema does not define, or a value `config set` would refuse — is a
+refusal, not a fallback. **Every command exits `20`** and names the file and the
+key or value, with the nearest known key for a misspelling:
 
 ```
 $ kanonarion audit --gomod ./go.mod

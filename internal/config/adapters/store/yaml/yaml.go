@@ -18,6 +18,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/eitanity/kanonarion/internal/adapters/yamlkeys"
 	"github.com/eitanity/kanonarion/internal/config/domain"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/gotoolchain"
@@ -25,12 +26,15 @@ import (
 
 // ConfigStore loads a Config from a YAML file at a fixed path.
 type ConfigStore struct {
-	path string
+	path     string
+	sections []string
 }
 
-// New returns a ConfigStore that loads from path.
-func New(path string) *ConfigStore {
-	return &ConfigStore{path: path}
+// New returns a ConfigStore that loads from path. sections are the top-level
+// sections of the backends the binary registered; any other unknown key is
+// refused.
+func New(path string, sections ...string) *ConfigStore {
+	return &ConfigStore{path: path, sections: sections}
 }
 
 // LoadConfig reads and parses the YAML file at the configured path.
@@ -43,7 +47,7 @@ func (s *ConfigStore) LoadConfig(_ context.Context) (domain.Config, error) {
 		}
 		return domain.Config{}, fmt.Errorf("reading config file %s: %w", s.path, err)
 	}
-	return Parse(data)
+	return Parse(data, s.sections...)
 }
 
 // configYAML is the YAML wire format for Config.
@@ -73,7 +77,7 @@ type configYAML struct {
 	Storage *storageYAML `yaml:"storage"`
 }
 
-// storageYAML selects the storage backend. Empty values keep the defaults.
+// storageYAML selects the storage backend. A key with no value keeps the default.
 type storageYAML struct {
 	Backend    string `yaml:"backend"`
 	SumDBCache string `yaml:"sumdb_cache"`
@@ -242,20 +246,17 @@ func parseUnknownLicense(s string) (domain.UnknownLicensePolicy, error) {
 	}
 }
 
-// parseStalenessTTL reads staleness.ttl as a Go duration ("1h", "30m", "0").
-// An empty value keeps the built-in default rather than silently disabling the
-// ledger: "staleness:" with nothing under it is an unfinished edit, not a
-// decision to re-pay every proxy sweep.
+// parseStalenessTTL reads staleness.ttl as a Go duration ("1h", "30m", "0"),
+// which ValidateSetting has already checked. An empty value keeps the built-in
+// default rather than silently disabling the ledger: "staleness:" with nothing
+// under it is an unfinished edit, not a decision to re-pay every proxy sweep.
 func parseStalenessTTL(s string) (time.Duration, error) {
 	if s == "" {
 		return domain.DefaultStalenessTTL, nil
 	}
 	d, err := time.ParseDuration(s)
 	if err != nil {
-		return 0, fmt.Errorf("staleness.ttl %q: not a duration (e.g. 1h, 30m, 0): %w", s, err)
-	}
-	if d < 0 {
-		return 0, fmt.Errorf("staleness.ttl %q: must not be negative (use 0 to disable the ledger)", s)
+		return 0, fmt.Errorf("staleness.ttl %q: %w", s, err)
 	}
 	return d, nil
 }
@@ -316,24 +317,21 @@ func parseCopyrightDeclarations(in map[string]copyrightDeclarationYAML) (map[str
 	return out, nil
 }
 
-// Parse parses YAML config bytes into a Config. Exported so callers can
-// validate config content without a filesystem path.
-func Parse(data []byte) (domain.Config, error) {
+// Parse parses YAML config bytes into a Config. sections are the registered
+// backends' top-level sections, the only keys outside the schema that load.
+// The version is read first, so a newer file is told to upgrade rather than
+// refused key by key; values are checked before the typed decode, so a refusal
+// uses the words `config set` uses.
+func Parse(data []byte, sections ...string) (domain.Config, error) {
 	defaults := domain.DefaultConfig()
+
+	if err := checkSchema(data, sections); err != nil {
+		return domain.Config{}, err
+	}
 
 	var y configYAML
 	if err := yaml.Unmarshal(data, &y); err != nil {
 		return domain.Config{}, fmt.Errorf("invalid YAML: %w", err)
-	}
-
-	if y.Version == "" {
-		return domain.Config{}, fmt.Errorf("missing required field: version")
-	}
-	if y.Version > domain.SupportedSchemaVersion {
-		return domain.Config{}, fmt.Errorf(
-			"config schema version %q is newer than supported %q; upgrade kanonarion",
-			y.Version, domain.SupportedSchemaVersion,
-		)
 	}
 
 	cfg := domain.Config{
@@ -380,12 +378,7 @@ func Parse(data []byte) (domain.Config, error) {
 			ProbeConcurrency: defaults.Staleness.ProbeConcurrency,
 		}
 		if y.Staleness.ProbeConcurrency != nil {
-			n := *y.Staleness.ProbeConcurrency
-			if n < 0 {
-				return domain.Config{}, fmt.Errorf(
-					"staleness.probe_concurrency %d: must not be negative (use 0 for a serial probe)", n)
-			}
-			cfg.Staleness.ProbeConcurrency = n
+			cfg.Staleness.ProbeConcurrency = *y.Staleness.ProbeConcurrency
 		}
 	}
 
@@ -396,6 +389,34 @@ func Parse(data []byte) (domain.Config, error) {
 	}
 
 	return cfg, nil
+}
+
+// checkSchema refuses a file from a newer schema, then any key the schema and
+// the registered backends do not define, then any value `config set` refuses.
+func checkSchema(data []byte, sections []string) error {
+	var head struct {
+		Version string `yaml:"version"`
+	}
+	if err := yaml.Unmarshal(data, &head); err != nil {
+		return fmt.Errorf("invalid YAML: %w", err)
+	}
+	if head.Version == "" {
+		return fmt.Errorf("missing required field: version")
+	}
+	if head.Version > domain.SupportedSchemaVersion {
+		return fmt.Errorf(
+			"config schema version %q is newer than supported %q; upgrade kanonarion",
+			head.Version, domain.SupportedSchemaVersion,
+		)
+	}
+	var root yaml.Node
+	if err := yaml.Unmarshal(data, &root); err != nil {
+		return fmt.Errorf("invalid YAML: %w", err)
+	}
+	if err := yamlkeys.Check(&root, reflect.TypeFor[configYAML](), sections...); err != nil {
+		return err //nolint:wrapcheck // the key and its path are the whole refusal
+	}
+	return validateSettings(&root)
 }
 
 // applySections maps the policy, governance and storage sections onto cfg.

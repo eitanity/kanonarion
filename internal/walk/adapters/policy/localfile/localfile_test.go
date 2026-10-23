@@ -94,15 +94,19 @@ func TestLoadPolicy_InvalidYAML(t *testing.T) {
 	}
 }
 
-func TestLoadPolicy_UnknownStagePreserved(t *testing.T) {
+// A stage the walk does not run would load and change nothing, so it is
+// refused, naming the file.
+func TestLoadPolicy_UnknownStageIsRefused(t *testing.T) {
 	yaml := "version: \"1\"\nstages:\n  future_stage:\n    max_depth: 5\n"
 	path := writeTempFile(t, yaml)
-	result, err := localfile.New(path).LoadPolicy(context.Background())
-	if err != nil {
-		t.Fatalf("LoadPolicy with unknown stage: %v", err)
+	_, err := localfile.New(path).LoadPolicy(context.Background())
+	if err == nil {
+		t.Fatal("LoadPolicy accepted an unknown stage")
 	}
-	if _, ok := result.Policy.Stages["future_stage"]; !ok {
-		t.Error("unknown stage was dropped; want it preserved for forward compat")
+	for _, want := range []string{path, `unknown key "stages.future_stage"`} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not contain %q", err, want)
+		}
 	}
 }
 
@@ -269,7 +273,7 @@ func TestParse_AllowedVCSHostsOnANonFetchStageIsALoadError(t *testing.T) {
 	// cleanly and change nothing — an operator would read their policy as
 	// narrowing trust while every forge stayed trusted. That silent weakening is
 	// the failure this field exists to prevent, so it is refused.
-	for _, stage := range []string{"license", "callgraph", "future_stage"} {
+	for _, stage := range []string{"license", "interface", "callgraph", "example"} {
 		t.Run(stage, func(t *testing.T) {
 			src := "version: \"1\"\nstages:\n  " + stage + ":\n    allowed_vcs_hosts:\n      - github.com\n"
 			_, err := localfile.Parse([]byte(src))
@@ -286,15 +290,18 @@ func TestParse_AllowedVCSHostsOnANonFetchStageIsALoadError(t *testing.T) {
 	}
 }
 
-// A misplaced trust list is refused, but an unknown stage NAME on its own stays
-// accepted for forward compatibility — the two rules must not be confused.
-func TestParse_UnknownStageWithoutVCSHostsStillLoads(t *testing.T) {
-	policy, err := localfile.Parse([]byte("version: \"1\"\nstages:\n  future_stage:\n    max_depth: 5\n"))
-	if err != nil {
-		t.Fatalf("an unknown stage without allowed_vcs_hosts must still load: %v", err)
-	}
-	if policy.Stages["future_stage"].MaxDepth != 5 {
-		t.Error("the unknown stage was not preserved")
+// A misspelt stage is refused before its fields are read, with the stage it
+// most likely meant.
+func TestParse_UnknownStageIsRefusedWithTheNearestStage(t *testing.T) {
+	for src, want := range map[string]string{
+		"stages:\n  fecth:\n    max_depth: 5\n":                     `unknown key "stages.fecth" (did you mean "fetch"?)`,
+		"stages:\n  fecth:\n    allowed_vcs_hosts: [example.org]\n": `unknown key "stages.fecth" (did you mean "fetch"?)`,
+		"stages:\n  future_stage:\n    max_depth: 5\n":              `unknown key "stages.future_stage"`,
+	} {
+		_, err := localfile.Parse([]byte("version: \"1\"\n" + src))
+		if err == nil || err.Error() != want {
+			t.Errorf("%q: err = %v, want %s", src, err, want)
+		}
 	}
 }
 
@@ -307,5 +314,46 @@ func TestParse_AllowedVCSHostsIsCopiedFromTheYAMLSlice(t *testing.T) {
 	hosts := *policy.Stages["fetch"].AllowedVCSHosts
 	if len(hosts) != 1 || hosts[0] != "github.com" {
 		t.Fatalf("unexpected parsed hosts: %v", hosts)
+	}
+}
+
+// A misspelt key at any level is refused with its full path, rather than
+// loading and leaving the built-in forges in force.
+func TestParse_UnknownKeyAtEveryLevelIsRefused(t *testing.T) {
+	for _, tc := range []struct{ body, want string }{
+		{"stage:\n  fetch:\n    allowed_vcs_hosts: [example.org]", `unknown key "stage" (did you mean "stages"?)`},
+		{"verison: \"1\"", `unknown key "verison" (did you mean "version"?)`},
+		{"stages:\n  fetch:\n    allowed_vcs_host: [example.org]", `unknown key "stages.fetch.allowed_vcs_host" (did you mean "allowed_vcs_hosts"?)`},
+		{"stages:\n  license:\n    max_dept: 1", `unknown key "stages.license.max_dept" (did you mean "max_depth"?)`},
+		{"stages:\n  callgraph:\n    follow_replce: true", `unknown key "stages.callgraph.follow_replce" (did you mean "follow_replace"?)`},
+		{"stages:\n  licence:\n    max_depth: 1", `unknown key "stages.licence" (did you mean "license"?)`},
+	} {
+		_, err := localfile.Parse([]byte("version: \"1\"\n" + tc.body + "\n"))
+		if err == nil || err.Error() != tc.want {
+			t.Errorf("%q:\n got  %v\n want %s", tc.body, err, tc.want)
+		}
+	}
+}
+
+// Every stage the walk runs is accepted.
+func TestParse_EveryKnownStageLoads(t *testing.T) {
+	src := "version: \"1\"\nstages:\n"
+	for name := range domain2.DefaultDepthPolicy().Stages {
+		src += "  " + name + ":\n    max_depth: 2\n"
+	}
+	p, err := localfile.Parse([]byte(src))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Stages) != len(domain2.DefaultDepthPolicy().Stages) {
+		t.Errorf("stages = %v", p.Stages)
+	}
+}
+
+// A newer policy is told to upgrade, not refused for the keys it added.
+func TestParse_NewerPolicyIsNotRefusedKeyByKey(t *testing.T) {
+	_, err := localfile.Parse([]byte("version: \"2\"\nnew_key: 1\n"))
+	if err == nil || !strings.Contains(err.Error(), "newer than supported") {
+		t.Fatalf("err = %v", err)
 	}
 }

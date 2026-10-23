@@ -23,6 +23,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
 	fetchsumdb "github.com/eitanity/kanonarion/internal/adapters/sumdb/gosum"
 	fetchvcs "github.com/eitanity/kanonarion/internal/adapters/vcs/gitexec"
+	"github.com/eitanity/kanonarion/internal/adapters/yamlkeys"
 	cgapp "github.com/eitanity/kanonarion/internal/callgraph/application"
 	"github.com/eitanity/kanonarion/internal/composition/storage"
 	sqlitestorage "github.com/eitanity/kanonarion/internal/composition/storage/sqlite"
@@ -100,12 +101,25 @@ func BackendConfigSpecs() []config.ConfigSpec {
 	return specs
 }
 
+// BackendSections names the config.yaml section of every backend in force,
+// the only top-level keys outside the schema a config file may carry.
+func BackendSections() []string {
+	var names []string
+	for _, spec := range BackendConfigSpecs() {
+		if spec.Section != "" {
+			names = append(names, spec.Section)
+		}
+	}
+	return names
+}
+
 // loadStoreConfig reads <storeRoot>/config.yaml; an absent file is the
 // built-in defaults.
 func loadStoreConfig(storeRoot string) (configdomain.Config, error) {
-	cfg, err := configyaml.New(filepath.Join(storeRoot, "config.yaml")).LoadConfig(context.Background())
+	path := filepath.Join(storeRoot, "config.yaml")
+	cfg, err := configyaml.New(path, BackendSections()...).LoadConfig(context.Background())
 	if err != nil {
-		return configdomain.Config{}, fmt.Errorf("loading store configuration: %w", err)
+		return configdomain.Config{}, fmt.Errorf("loading store configuration: %w", yamlkeys.InFile(err, path))
 	}
 	return cfg, nil
 }

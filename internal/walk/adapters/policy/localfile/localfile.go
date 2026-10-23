@@ -1,9 +1,8 @@
 // Package localfile implements PolicyStore by reading a YAML policy file from disk.
 //
 // The YAML schema is versioned. The current supported schema version is "1".
-// Unknown stage names are accepted and ignored for forward compatibility.
-// A schema version ahead of the supported version is a fatal error; behind is
-// accepted with a best-effort migration (unknown fields are zero-valued).
+// A schema version ahead of the supported version is a fatal error. Any key
+// the schema does not define, including a stage name, is refused.
 package localfile
 
 import (
@@ -11,8 +10,12 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"maps"
 	"os"
+	"reflect"
+	"slices"
 
+	"github.com/eitanity/kanonarion/internal/adapters/yamlkeys"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
@@ -97,10 +100,26 @@ func Parse(data []byte) (walkdomain.DepthPolicy, error) {
 			y.Version, SupportedSchemaVersion,
 		)
 	}
-	// y.Version < SupportedSchemaVersion: accept; unknown fields are zero-valued.
 
+	// Checked after the version, so a newer policy is told to upgrade rather
+	// than refused key by key.
+	var root yaml.Node
+	if err := yaml.Unmarshal(data, &root); err != nil {
+		return walkdomain.DepthPolicy{}, fmt.Errorf("invalid YAML: %w", err)
+	}
+	if err := yamlkeys.Check(&root, reflect.TypeFor[policyYAML]()); err != nil {
+		return walkdomain.DepthPolicy{}, err //nolint:wrapcheck // the key and its path are the whole refusal
+	}
+
+	known := slices.Sorted(maps.Keys(walkdomain.DefaultDepthPolicy().Stages))
 	stages := make(map[string]walkdomain.StageDepth, len(y.Stages))
-	for name, sd := range y.Stages {
+	for _, name := range slices.Sorted(maps.Keys(y.Stages)) {
+		// A stage name the walk does not run would load and change nothing.
+		if !slices.Contains(known, name) {
+			return walkdomain.DepthPolicy{}, &yamlkeys.UnknownKeyError{
+				Key: "stages." + name, Suggestion: yamlkeys.Nearest(name, known)}
+		}
+		sd := y.Stages[name]
 		hosts, err := parseAllowedVCSHosts(name, sd.AllowedVCSHosts)
 		if err != nil {
 			return walkdomain.DepthPolicy{}, err
@@ -136,9 +155,7 @@ const vcsVerifyingStage = "fetch"
 // authoring mistake that would otherwise load cleanly and do nothing — an
 // operator would read their policy as narrowing trust while every forge stayed
 // trusted. That is precisely the silent-weakening failure this field exists to
-// prevent, so a misplaced key is an error rather than a no-op. Unknown stage
-// NAMES remain accepted for forward compatibility; it is the misplaced trust
-// list, not the unknown stage, that is refused.
+// prevent, so a misplaced key is an error rather than a no-op.
 func parseAllowedVCSHosts(stage string, hosts *[]string) (*[]string, error) {
 	if hosts == nil {
 		return nil, nil
