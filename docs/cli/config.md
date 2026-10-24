@@ -68,40 +68,11 @@ A key absent from the file still resolves to its built-in default, so the
 block, not the file, is what is in force.
 
 **No `config.yaml` in the store is a normal state, not an error.** The command
-exits `0` and prints the effective configuration, with a line in place of the
-file saying which path was looked for:
+exits `0`, says which path was looked for, and marks every key `(default)`.
 
-```
-# no config file at /home/you/.kanonarion/config.yaml — nothing is set in this store, so every value below is a built-in default
-#   to write a commented template: kanonarion config init
-
-# effective configuration (resolved; (default) = not set in this file)
-...
-```
-
-Every key in that case carries `(default)`.
-
-**A file that exists but is rejected still prints** — this is the command that
-answers "what is in force" when the answer is "not what your file says". The
-file is echoed, followed by a notice naming the rejection, and then the
-effective block in which *every* key carries `(default)`, because a rejected
-file sets nothing:
-
-```
-version: "2"
-preferences:
-  log_level: debug
-...
-      default: block
-
-# ^ the file above (/home/you/.kanonarion/config.yaml) was REJECTED and is NOT in force: rule 0 (scope "production"): unknown policy outcome "block": must be allow, notify, or warn
-#   no key from it applies; every value below is a built-in default
-#   fix the named value, or rewrite one key: kanonarion config set <key> <value>
-
-# effective configuration (resolved; (default) = not set in this file)
-preferences.log_level                             warn  (default)
-...
-```
+**A file that exists but is rejected still prints**: the file, a notice naming
+the rejection, then the effective block with *every* key `(default)`, because a
+rejected file sets nothing.
 
 The same notice goes to stderr, so it is visible when stdout is redirected or
 `--json` is used. `config show` itself exits `0` — it answered.
@@ -168,10 +139,9 @@ rejected.
 
 ### `kanonarion config set <key> <value>`
 
-Write a value to the configuration file. Creates the file from the commented
-template if it does not yet exist, then writes the targeted key. Only that key
-is changed - existing content and comments are preserved, and keys you have not
-set stay absent so they continue to resolve to the live built-in default.
+Write a value to the configuration file, creating it from the commented
+template if absent. Only that key changes - other content and comments are
+kept, and keys you have not set stay absent, resolving to the built-in default.
 
 ```
 kanonarion config set <key> <value> [--json]
@@ -203,19 +173,15 @@ default**. The config file holds only the keys you explicitly write with
 `config set` (or by hand); every other key stays absent and resolves to the
 *live* built-in default at runtime.
 
-This matters when kanonarion is upgraded: because unset keys are never frozen
-to disk, a changed built-in default (for example a new default `log_level`)
-takes effect automatically for any key you never set. A value you did set
-keeps winning until you change it.
+Unset keys are never written to disk, so after an upgrade a changed built-in
+default reaches every key you never set; a value you set keeps winning.
 
 The template (`config init` writes it, `config set` creates it on demand)
 leaves every key commented out for exactly this reason - uncomment a line only
 when you want to pin a value and stop tracking the built-in default.
 
-Read-only commands (`config get`, `config show`, `walk-list`, and every other
-query) never create or modify `config.yaml`. The file is materialised only by
-`config init` or `config set`. An empty store with no `config.yaml` resolves
-entirely to built-in defaults.
+Only `config init` and `config set` create or modify `config.yaml`; with no
+file, every key is a built-in default.
 
 ## Which file is read
 
@@ -228,6 +194,22 @@ Every command reads one configuration file:
 `config init`, `config set`, `config get` and `config show` read and write the
 same file. The store root still decides where the store lives; `--config` only
 moves the configuration.
+
+## The config hash
+
+`config show` prints `config hash sha256:…` (JSON `config_hash`): the hash of
+the configuration in force, defaults applied, over every section but
+`preferences` and `storage`. Reordered keys, comments or a default written out
+keep the hash. `audit`, `directives`, `godebug`, `vendor`, `fips` and
+`inspect --json` name it on their answer and record it; an older record reads
+`no config hash recorded`.
+
+The ledger (`store ledger`) holds every hash in use. `config set` appends
+`config_changed` when the hash moves; if the store cannot record it, it says so
+on stderr and exits 0. The next gate-evaluating command appends
+`config_drift_observed` for a change not yet recorded - observed at first use.
+`vendor --vendor-only`, with `vendor_policy.vendor_only` unset, is named on the
+answer and appends `config_override`.
 
 ## Choosing the storage backend
 

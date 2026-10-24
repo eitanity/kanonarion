@@ -1992,7 +1992,7 @@ type FakeExtractFIPS struct {
 	Result fipsdomain.Record
 }
 
-func (f *FakeExtractFIPS) Extract(_ context.Context, _ string, _ configdomain.FIPSPolicy) (fipsdomain.Record, error) {
+func (f *FakeExtractFIPS) Extract(_ context.Context, _ string, _ configdomain.FIPSPolicy, _ string) (fipsdomain.Record, error) {
 	return f.Result, f.Err
 }
 

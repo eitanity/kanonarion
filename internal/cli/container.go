@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 
 	"github.com/eitanity/kanonarion/internal/config/domain"
+	configports "github.com/eitanity/kanonarion/internal/config/ports"
 
 	mcblobstore "github.com/eitanity/kanonarion/internal/adapters/blobstore/modcache"
 	"github.com/eitanity/kanonarion/internal/adapters/clock"
@@ -220,6 +221,11 @@ type Container struct {
 	// staleness. The ledger of latest-version lookups, read and written by
 	// every command that reports how far behind a dependency is.
 	StalenessLedger staleports.Ledger
+
+	// Audit is the backend's assurance log; ConfigHashes is its memory of the
+	// last config hash that log recorded, nil when it keeps none.
+	Audit        fetchports.AuditSink
+	ConfigHashes configports.ConfigHashLedger
 }
 
 // offlineStdlibAnchor reports whether this run anchors the standard library to
@@ -774,6 +780,9 @@ func NewContainerFrom(st *storage.Storage, storeRoot, goproxy, goBinary string, 
 		QueryNative:   queryNativeUC,
 
 		StalenessLedger: st.Staleness,
+
+		Audit:        auditSink,
+		ConfigHashes: st.ConfigHashes,
 	}
 
 	if fs, ok := cgStore.(cgports.CallGraphFrameSelector); ok {

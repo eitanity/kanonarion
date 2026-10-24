@@ -28,7 +28,7 @@ type catalogueFile struct {
 // catalogue is the parsed, validated catalogue. Built once at package init;
 // a malformed embedded file is a build-time asset error surfaced as an init
 // panic (a test guards against that).
-var catalogue = mustLoadCatalogue()
+var catalogue = mustLoadCatalogue(catalogueJSON)
 
 // CatalogueVersion is the revision string of the embedded catalogue.
 // Recorded on every Record and folded into the pipeline fingerprint so a
@@ -52,8 +52,8 @@ type toolchainEntry struct {
 	contains string
 }
 
-func mustLoadCatalogue() loadedCatalogue {
-	lc, err := loadCatalogue(catalogueJSON)
+func mustLoadCatalogue(raw []byte) loadedCatalogue {
+	lc, err := loadCatalogue(raw)
 	if err != nil {
 		panic(fmt.Sprintf("fips: embedded catalogue.json is invalid: %v", err))
 	}

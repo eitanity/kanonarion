@@ -38,6 +38,7 @@ type godebugSection struct {
 	TaxonomyVersion string          `json:"taxonomy_version"`
 	Project         string          `json:"project"`
 	ContentHash     string          `json:"content_hash"`
+	ConfigHash      string          `json:"config_hash,omitempty"`
 	Settings        []godebugResult `json:"settings"`
 }
 
@@ -51,6 +52,7 @@ func toGoDebugSection(rec gddomain.Record) godebugSection {
 		TaxonomyVersion: rec.TaxonomyVersion,
 		Project:         rec.ProjectModulePath,
 		ContentHash:     rec.ContentHash,
+		ConfigHash:      rec.ConfigHash,
 		Settings:        make([]godebugResult, 0, len(rec.Settings)),
 	}
 	for _, s := range rec.Settings {
@@ -119,7 +121,11 @@ func runGoDebug(ctx context.Context, gomodFlag string, stdout, stderr io.Writer)
 	}
 	defer releaseStore(cleanup)
 
-	rec, err := ctr.ExtractGoDebug.Extract(ctx, gomodPath, activeConfig.GoDebugPolicy)
+	configHash, err := observeGateConfig(ctr)
+	if err != nil {
+		return err
+	}
+	rec, err := ctr.ExtractGoDebug.Extract(ctx, gomodPath, activeConfig.GoDebugPolicy, configHash)
 	if err != nil {
 		return fmt.Errorf("scanning godebug settings: %w", err)
 	}
@@ -134,6 +140,9 @@ func runGoDebug(ctx context.Context, gomodFlag string, stdout, stderr io.Writer)
 		return godebugBlockingErr(section)
 	}
 	if err := printGoDebugTable(stdout, section); err != nil {
+		return err
+	}
+	if err := writeConfigHashLine(stdout, section.ConfigHash, nil); err != nil {
 		return err
 	}
 	return godebugBlockingErr(section)

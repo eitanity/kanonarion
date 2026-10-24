@@ -75,6 +75,10 @@ var (
 	_ fetchports.VCSClient    = (kanonarion.VCSClient)(nil)
 	_ kanonarion.SumDBClient  = (fetchports.SumDBClient)(nil)
 	_ fetchports.SumDBClient  = (kanonarion.SumDBClient)(nil)
+
+	_ kanonarion.ConfigHashLedger  = (configports.ConfigHashLedger)(nil)
+	_ configports.ConfigHashLedger = (kanonarion.ConfigHashLedger)(nil)
+
 	// Signer is aliased in signer.go; pin it here with the other ports.
 	_ kanonarion.Signer = (fetchports.Signer)(nil)
 	_ fetchports.Signer = (kanonarion.Signer)(nil)
@@ -121,7 +125,7 @@ var allowedPortAliases = map[string]bool{
 	"ExtractionStore": true, "VulnerabilityStore": true, "SBOMStore": true,
 	"BlobStore": true, "BlobPathOptimizer": true,
 	"BlobIdentity": true, "BlobKind": true,
-	"ConfigStore": true, "Clock": true, "ModuleProxy": true,
+	"ConfigStore": true, "ConfigHashLedger": true, "Clock": true, "ModuleProxy": true,
 	"VCSClient": true, "SumDBClient": true,
 	"Signer": true, "SubjectDigest": true, "Attestation": true,
 	// The partial-result error the VulnerabilityStore port returns beside an

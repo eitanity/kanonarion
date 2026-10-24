@@ -14,6 +14,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
 	callgraphports "github.com/eitanity/kanonarion/internal/callgraph/ports"
 	"github.com/eitanity/kanonarion/internal/config/domain"
+	configports "github.com/eitanity/kanonarion/internal/config/ports"
 	directiveports "github.com/eitanity/kanonarion/internal/directive/ports"
 	exampleports "github.com/eitanity/kanonarion/internal/example/ports"
 	extractports "github.com/eitanity/kanonarion/internal/extract/ports"
@@ -107,6 +108,9 @@ type Storage struct {
 	// TinyGoReleases nil means TinyGo release measurements are not kept, so
 	// every TinyGo walk that needs one measures it again.
 	TinyGoReleases tinygoports.Store
+	// ConfigHashes nil means the backend keeps no last recorded config hash,
+	// so every gate-evaluating command records drift with an empty old hash.
+	ConfigHashes configports.ConfigHashLedger
 
 	// Signer nil means the no-op signer.
 	Signer fetchports.Signer

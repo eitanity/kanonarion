@@ -88,6 +88,9 @@ const (
 const (
 	AuditEventAdvisorySnapshotRecorded = audit.EventAdvisorySnapshotRecorded
 	AuditEventCallGraphExtracted       = audit.EventCallGraphExtracted
+	AuditEventConfigChanged            = audit.EventConfigChanged
+	AuditEventConfigDriftObserved      = audit.EventConfigDriftObserved
+	AuditEventConfigOverride           = audit.EventConfigOverride
 	AuditEventExamplesExtracted        = audit.EventExamplesExtracted
 	AuditEventExcludeDirectiveObserved = audit.EventExcludeDirectiveObserved
 	AuditEventExtractionRunCompleted   = audit.EventExtractionRunCompleted

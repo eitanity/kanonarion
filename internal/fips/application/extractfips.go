@@ -51,7 +51,7 @@ func NewExtractFIPSUseCase(cfg Config) *ExtractFIPSUseCase {
 // and policy verdict; the headline ToolchainCapable / variant fields and a
 // stable compliance-assessment line are also populated.
 func (uc *ExtractFIPSUseCase) Extract(
-	ctx context.Context, goModPath string, policy configdomain.FIPSPolicy,
+	ctx context.Context, goModPath string, policy configdomain.FIPSPolicy, configHash string,
 ) (domain.Record, error) {
 	lap := uc.stopwatch.Start()
 
@@ -81,13 +81,14 @@ func (uc *ExtractFIPSUseCase) Extract(
 		SchemaVersion:        domain.FIPSSchemaVersion,
 		PipelineVersion:      domain.PipelineVersion,
 		ContentHash:          contentHash,
+		ConfigHash:           configHash,
 	}
 
 	if err := uc.store.PutFIPSRecord(ctx, rec); err != nil {
 		return domain.Record{}, fmt.Errorf("persisting fips record: %w", err)
 	}
 	for _, f := range findings {
-		if err := uc.audit.RecordEvent(auditEvent(res.ProjectModulePath, capable, variant, f)); err != nil {
+		if err := uc.audit.RecordEvent(auditEvent(res.ProjectModulePath, capable, variant, f, configHash)); err != nil {
 			return domain.Record{}, fmt.Errorf("recording fips audit event: %w", err)
 		}
 	}
@@ -107,7 +108,7 @@ func (uc *ExtractFIPSUseCase) Extract(
 // auditEvent builds the audit envelope for a classified finding.
 // One event per finding makes add/remove/modify between scans observable
 // from the append-only log without a bespoke diff schema (mirroring).
-func auditEvent(project string, toolchainCapable bool, toolchainVariant string, f domain.Finding) audit.Event {
+func auditEvent(project string, toolchainCapable bool, toolchainVariant string, f domain.Finding, configHash string) audit.Event {
 	return audit.Event{
 		Type: audit.EventFIPSAssessment,
 		Payload: map[string]any{
@@ -123,6 +124,7 @@ func auditEvent(project string, toolchainCapable bool, toolchainVariant string, 
 			"category":          string(f.Category),
 			"policy_outcome":    f.PolicyOutcome,
 			"policy_blocking":   f.PolicyBlocking,
+			"config_hash":       configHash,
 		},
 	}
 }

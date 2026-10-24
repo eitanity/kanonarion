@@ -21,6 +21,7 @@ Scanning walk $ULID...
 derivation:
   walk $ULID: derived by this run
   vulnerability scan: derived by this run
+  config: sha256:a37af31e289032660d55309642f99f5ed7112a1715b72fdda9716a29cc7eb7cd
 toolchain:
   $GOVERSION was not judged against the advisory database's toolchain key: the snapshot's module index carries no toolchain key
 verification coverage over 3 module(s):

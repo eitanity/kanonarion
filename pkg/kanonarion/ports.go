@@ -392,6 +392,15 @@ const (
 // Grows only by a new optional interface, never by adding a method (§4).
 type ConfigStore = configports.ConfigStore
 
+// ConfigHashLedger answers which configuration hash a backend's audit sink
+// last recorded, and is told before and after each append that sets it, so a
+// crash between the two leaves it unsure rather than wrong. Storage.ConfigHashes
+// holds it; nil means the backend keeps no last hash.
+//
+// Stability: substitution port (implemented by consumers); unstable pre-v1.
+// Grows only by a new optional interface, never by adding a method (§4).
+type ConfigHashLedger = configports.ConfigHashLedger
+
 // Clock supplies wall-clock time. It is injected wherever a domain-relevant
 // timestamp is recorded so tests (and alternative deployments) can pin the
 // instant; it is the time seam the enterprise build may replace.

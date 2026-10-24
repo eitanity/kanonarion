@@ -18,7 +18,7 @@ func TestFipsWith_CleanExitsZero(t *testing.T) {
 		Result: fipsdomain.Record{ProjectModulePath: "example.com/proj", ComplianceAssessment: "eligible"},
 	}}
 	var out bytes.Buffer
-	if err := fipsWith(context.Background(), ctr, "go.mod", &out); err != nil {
+	if err := fipsWith(context.Background(), ctr, "go.mod", "", &out); err != nil {
 		t.Fatalf("clean assessment should exit 0, got: %v", err)
 	}
 	if out.Len() == 0 {
@@ -45,7 +45,7 @@ func TestFipsWith_BlockingExitsInBothModes(t *testing.T) {
 			defer func(prev bool) { jsonOut = prev }(jsonOut)
 			jsonOut = json
 			var out bytes.Buffer
-			err := fipsWith(context.Background(), ctr, "go.mod", &out)
+			err := fipsWith(context.Background(), ctr, "go.mod", "", &out)
 			// A fired governance gate is ExitPolicy, not ExitConfig: the scan
 			// succeeded and the finding is real.
 			requireExit(t, err, ExitPolicy)

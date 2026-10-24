@@ -159,7 +159,7 @@ func newRootCmd(stdout, stderr io.Writer) *cobra.Command {
 		newSBOMCmd(stdout, stderr),
 		newSBOMShowCmd(stdout, stderr),
 		newSBOMListCmd(stdout, stderr),
-		newConfigCmd(stdout),
+		newConfigCmd(stdout, stderr),
 		newStoreCmd(stdout, stderr),
 		newContextCmd(stdout, stderr),
 		newReachabilityCmd(stdout, stderr),

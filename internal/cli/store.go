@@ -254,6 +254,9 @@ type configShowResult struct {
 	// file, every value in the document is a built-in default, and a consumer
 	// reading only the values cannot tell that from an operator who wrote them.
 	ConfigFile configFileResult `json:"config_file"`
+	// ConfigHash is the hash every gated answer names; it covers every
+	// section but preferences and storage.
+	ConfigHash string `json:"config_hash"`
 
 	Version       string             `json:"version"`
 	Preferences   configPrefsResult  `json:"preferences"`
@@ -557,7 +560,12 @@ func runStoreConfigShow(root string, asJSON bool, stdout io.Writer) error {
 				UnknownLicenseIsDefault: !explicit,
 			})
 		}
+		hash, err := cfg.Hash()
+		if err != nil {
+			return err //nolint:wrapcheck // the domain error names the hashing
+		}
 		result := configShowResult{
+			ConfigHash: hash,
 			ConfigFile: configFileResult{
 				Path:            path,
 				Present:         present,

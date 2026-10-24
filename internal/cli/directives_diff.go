@@ -354,7 +354,10 @@ func directivesShowWith(ctx context.Context, ctr *Container, scanID string, stdo
 	_, _ = fmt.Fprintf(stdout, "Project:    %s\n", rec.ProjectModulePath)
 	_, _ = fmt.Fprintf(stdout, "Completed:  %s\n", rec.CompletedAt.UTC().Format(time.RFC3339))
 	_, _ = fmt.Fprintf(stdout, "Directives: %d\n\n", len(rec.Directives))
-	return printDirectivesTable(stdout, section)
+	if err := printDirectivesTable(stdout, section); err != nil {
+		return err
+	}
+	return writeConfigHashLine(stdout, section.ConfigHash, nil)
 }
 
 func newDirectivesDiffCmd(stdout, stderr io.Writer) *cobra.Command {

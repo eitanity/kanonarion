@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -237,7 +238,7 @@ license_overrides:
 		t.Fatalf("WriteFile: %v", err)
 	}
 	var buf bytes.Buffer
-	err := runConfigSet(root, "license_overrides.example.com/ungranted", "MIT", false, &buf)
+	err := runConfigSet(root, "license_overrides.example.com/ungranted", "MIT", false, &buf, io.Discard)
 	if err == nil {
 		t.Fatal("the attributed determination was overwritten with a bare identifier")
 	}
@@ -268,7 +269,7 @@ func TestRunConfigSet_BareDeterminationStaysSettable(t *testing.T) {
 		t.Fatalf("WriteFile: %v", err)
 	}
 	var buf bytes.Buffer
-	if err := runConfigSet(root, "license_overrides.example.com/mod", "Apache-2.0", false, &buf); err != nil {
+	if err := runConfigSet(root, "license_overrides.example.com/mod", "Apache-2.0", false, &buf, io.Discard); err != nil {
 		t.Fatalf("runConfigSet: %v", err)
 	}
 	after, rerr := os.ReadFile(filepath.Join(root, "config.yaml")) // #nosec G304 -- test-controlled t.TempDir() path

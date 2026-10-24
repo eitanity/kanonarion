@@ -515,8 +515,8 @@ The vulnerability scan records what was *found*, using the same envelope:
 The governance contexts record what was *classified*, one event per detected
 signal so that an add, a removal or a change between two scans is readable off
 the log without a bespoke diff schema. Each of those payloads names the project,
-where the signal was found, its classification, and the policy outcome it
-evaluated to:
+where the signal was found, its classification, the policy outcome it
+evaluated to, and the `config_hash` it was evaluated under:
 
 - `replace_directive_observed` and `exclude_directive_observed` - one per
   `replace` or `exclude` directive, with the old and new path/version, whether
@@ -531,6 +531,13 @@ evaluated to:
   vendor-only, module and finding counts, overall status, content hash);
   finding-level detail is in the persisted record, and it is the sequence of
   scans that makes a tree's drift history first-class.
+
+The configuration's hash is recorded when it moves. `config_changed` (key, old
+and new hash) is appended by `config set`. `config_drift_observed` (old and new
+hash, `observed_at: first_use`) is appended by the first gate-evaluating command
+after an edit kanonarion did not make, so it dates the observation, not the
+edit. `config_override` names a flag that changed a gate for one run, its value
+and the hash it overrode.
 
 Licence extraction records what was *classified* (`license_extracted`: module,
 version, resolved primary SPDX, overall status, identity source), and the walk

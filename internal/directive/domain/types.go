@@ -156,4 +156,8 @@ type Record struct {
 	// Identical inputs produce identical hashes across scans — useful for
 	// "no change since last scan" assertions in diff.
 	ContentHash string
+	// ConfigHash is the config hash the policy outcomes were evaluated under.
+	// Provenance only: no read selects by it. Empty on records written before
+	// it was recorded.
+	ConfigHash string `json:",omitempty"`
 }

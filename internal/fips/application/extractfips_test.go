@@ -62,7 +62,7 @@ func TestExtract_StockGoNoCryptoNotCapable(t *testing.T) {
 		ProjectModulePath: "example.com/proj",
 		ToolchainRaw:      "go1.22.0",
 	})
-	rec, err := uc.Extract(context.Background(), "go.mod", fipsRequired())
+	rec, err := uc.Extract(context.Background(), "go.mod", fipsRequired(), testConfigHash)
 	if err != nil {
 		t.Fatalf("Extract: %v", err)
 	}
@@ -78,6 +78,7 @@ func TestExtract_StockGoNoCryptoNotCapable(t *testing.T) {
 	if len(sink.events) != 1 || sink.events[0].Type != audit.EventFIPSAssessment {
 		t.Fatalf("want 1 fips audit event, got %+v", sink.events)
 	}
+	assertConfigHashed(t, rec.ConfigHash, sink.events)
 	if err := sink.events[0].Validate(); err != nil {
 		t.Errorf("invalid audit event: %v", err)
 	}
@@ -96,7 +97,7 @@ func TestExtract_BoringCryptoCleanEligible(t *testing.T) {
 		ProjectModulePath: "example.com/proj",
 		ToolchainRaw:      "go1.22.0 X:boringcrypto",
 	})
-	rec, err := uc.Extract(context.Background(), "go.mod", fipsRequired())
+	rec, err := uc.Extract(context.Background(), "go.mod", fipsRequired(), testConfigHash)
 	if err != nil {
 		t.Fatalf("Extract: %v", err)
 	}
@@ -125,7 +126,7 @@ func TestExtract_BoringCryptoWithMD5DepFlagged(t *testing.T) {
 				Module: "example.com/dep", Source: "vendor/example.com/dep/hash.go", Line: 7},
 		},
 	})
-	rec, err := uc.Extract(context.Background(), "go.mod", fipsRequired())
+	rec, err := uc.Extract(context.Background(), "go.mod", fipsRequired(), testConfigHash)
 	if err != nil {
 		t.Fatalf("Extract: %v", err)
 	}
@@ -166,7 +167,7 @@ func TestExtract_CgoCryptoLimitsAssessment(t *testing.T) {
 				Source: "vendor/github.com/openssl/openssl-go/lib.go", Line: 1},
 		},
 	})
-	rec, err := uc.Extract(context.Background(), "go.mod", fipsRequired())
+	rec, err := uc.Extract(context.Background(), "go.mod", fipsRequired(), testConfigHash)
 	if err != nil {
 		t.Fatalf("Extract: %v", err)
 	}
@@ -194,13 +195,30 @@ func TestExtract_OptInOptional(t *testing.T) {
 			{Kind: domain.FindingAlgorithm, Package: "crypto/md5", Module: "example.com/proj", Source: "a.go", Line: 1},
 		},
 	})
-	rec, err := uc.Extract(context.Background(), "go.mod", configdomain.DefaultConfig().FIPSPolicy)
+	rec, err := uc.Extract(context.Background(), "go.mod", configdomain.DefaultConfig().FIPSPolicy, testConfigHash)
 	if err != nil {
 		t.Fatalf("Extract: %v", err)
 	}
 	for _, f := range rec.Findings {
 		if f.PolicyBlocking {
 			t.Errorf("Required=false: %+v must not block", f)
+		}
+	}
+}
+
+// testConfigHash stands for the config hash the caller evaluated under.
+const testConfigHash = "sha256:test-config"
+
+// assertConfigHashed checks the record and every event name the config hash
+// they were evaluated under.
+func assertConfigHashed(t *testing.T, recorded string, events []audit.Event) {
+	t.Helper()
+	if recorded != testConfigHash {
+		t.Errorf("record ConfigHash = %q, want %q", recorded, testConfigHash)
+	}
+	for _, e := range events {
+		if e.Payload["config_hash"] != testConfigHash {
+			t.Errorf("%s payload config_hash = %v, want %q", e.Type, e.Payload["config_hash"], testConfigHash)
 		}
 	}
 }

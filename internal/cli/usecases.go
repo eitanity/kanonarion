@@ -331,7 +331,7 @@ type QuerySBOMUseCase interface {
 
 // ExtractFIPSUseCase is the interface for running a FIPS assessment.
 type ExtractFIPSUseCase interface {
-	Extract(ctx context.Context, goModPath string, policy configdomain.FIPSPolicy) (fipsdomain.Record, error)
+	Extract(ctx context.Context, goModPath string, policy configdomain.FIPSPolicy, configHash string) (fipsdomain.Record, error)
 }
 
 // QueryFIPSUseCase is the interface for querying stored FIPS records.

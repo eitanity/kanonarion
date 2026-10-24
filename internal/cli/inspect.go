@@ -819,22 +819,27 @@ func printInspectText(stdout io.Writer, f inspectFlags, scope depScope, overallS
 // inspectPolicySections runs the directive, godebug and vendor scans for the
 // JSON summary; a scan that cannot run is reported and its section omitted.
 func inspectPolicySections(ctx context.Context, ctr *Container, gomodPath string, stderr io.Writer) (*directivesSection, *godebugSection, *vendorSection) {
+	configHash, herr := observeGateConfig(ctr)
+	if herr != nil {
+		_, _ = fmt.Fprintf(stderr, "==> inspect: directive, godebug and vendor scans skipped: %v\n", herr)
+		return nil, nil, nil
+	}
 	var directives *directivesSection
-	if rec, derr := ctr.ExtractDirectives.Extract(ctx, gomodPath, activeConfig.DirectivePolicy); derr == nil {
+	if rec, derr := ctr.ExtractDirectives.Extract(ctx, gomodPath, activeConfig.DirectivePolicy, configHash); derr == nil {
 		s := toDirectivesSection(rec)
 		directives = &s
 	} else {
 		_, _ = fmt.Fprintf(stderr, "==> inspect: directive scan skipped: %v\n", derr)
 	}
 	var godebug *godebugSection
-	if rec, derr := ctr.ExtractGoDebug.Extract(ctx, gomodPath, activeConfig.GoDebugPolicy); derr == nil {
+	if rec, derr := ctr.ExtractGoDebug.Extract(ctx, gomodPath, activeConfig.GoDebugPolicy, configHash); derr == nil {
 		s := toGoDebugSection(rec)
 		godebug = &s
 	} else {
 		_, _ = fmt.Fprintf(stderr, "==> inspect: godebug scan skipped: %v\n", derr)
 	}
 	var vendor *vendorSection
-	if rec, derr := ctr.ExtractVendor.Extract(ctx, gomodPath, activeConfig.VendorPolicy.VendorOnly, activeConfig.VendorPolicy); derr == nil {
+	if rec, derr := ctr.ExtractVendor.Extract(ctx, gomodPath, activeConfig.VendorPolicy.VendorOnly, activeConfig.VendorPolicy, configHash); derr == nil {
 		s := toVendorSection(rec)
 		vendor = &s
 	} else if !errors.Is(derr, vendports.ErrNotVendored) {

@@ -271,7 +271,12 @@ func writeEffectiveConfig(w io.Writer, cfg domain.Config, raw rawConfigDoc) erro
 			width = len(s.Key)
 		}
 	}
-	if _, err := fmt.Fprintf(w, "\n# effective configuration (resolved; (default) = not set in this file)\n"); err != nil {
+	hash, err := cfg.Hash()
+	if err != nil {
+		return err //nolint:wrapcheck // the domain error names the hashing
+	}
+	if _, err := fmt.Fprintf(w, "\n# effective configuration (resolved; (default) = not set in this file)\n"+
+		"# config hash %s (every section but preferences and storage)\n", hash); err != nil {
 		return fmt.Errorf("writing effective config: %w", err)
 	}
 	for _, s := range settings {

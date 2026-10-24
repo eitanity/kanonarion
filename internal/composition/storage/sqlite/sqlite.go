@@ -199,6 +199,7 @@ func open(req storage.Request, inspect bool) (*storage.Storage, error) {
 		Staleness:         stalesqlite.New(db),
 		Native:            nativesqlite.New(db).WithSupersededArtefacts(superseded),
 		TinyGoReleases:    tinygosqlite.New(db),
+		ConfigHashes:      fetchsqlite.NewConfigHashMarker(req.StoreRoot),
 		Signer:            noopsigner.New(),
 		Schema:            schema,
 		Writable: func(ctx context.Context) error {

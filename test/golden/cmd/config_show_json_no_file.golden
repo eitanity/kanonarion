@@ -8,6 +8,7 @@ exit 0
     "present": false,
     "rejected": false
   },
+  "config_hash": "sha256:a37af31e289032660d55309642f99f5ed7112a1715b72fdda9716a29cc7eb7cd",
   "version": "3",
   "preferences": {
     "json": false,

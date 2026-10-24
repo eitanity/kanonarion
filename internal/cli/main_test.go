@@ -8,6 +8,7 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/composition/storage"
 	sqlitestorage "github.com/eitanity/kanonarion/internal/composition/storage/sqlite"
+	"github.com/eitanity/kanonarion/pkg/kanonarion"
 )
 
 // TestMain isolates the entire package-cli test binary from the
@@ -30,6 +31,11 @@ func TestMain(m *testing.M) {
 			fmt.Fprintf(os.Stderr, "registering storage backend: %v\n", err)
 			os.Exit(1)
 		}
+	}
+	// Registered as a consumer's main registers its own backend.
+	if err := kanonarion.RegisterBackend(testSinkBackend()); err != nil {
+		fmt.Fprintf(os.Stderr, "registering storage backend: %v\n", err)
+		os.Exit(1)
 	}
 	// Answered before anything else: this process may be a child the extract or
 	// callgraph stage spawned from os.Executable() while a test above it drove

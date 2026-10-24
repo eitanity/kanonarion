@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -276,7 +277,7 @@ func TestToolchainPreference_ResolvesWhereTheFlagIsRead(t *testing.T) {
 func TestStoredToolchainPreference_RoundTripsThroughConfig(t *testing.T) {
 	root := t.TempDir()
 	var buf bytes.Buffer
-	if err := runConfigSet(root, "callgraph.toolchain", "go1.26.6", false, &buf); err != nil {
+	if err := runConfigSet(root, "callgraph.toolchain", "go1.26.6", false, &buf, io.Discard); err != nil {
 		t.Fatalf("runConfigSet: %v", err)
 	}
 

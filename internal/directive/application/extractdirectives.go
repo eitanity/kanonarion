@@ -52,7 +52,7 @@ func NewExtractDirectivesUseCase(cfg Config) *ExtractDirectivesUseCase {
 // directive. The returned record's directives carry their classification and
 // policy verdict.
 func (uc *ExtractDirectivesUseCase) Extract(
-	ctx context.Context, goModPath string, policy configdomain.DirectivePolicy,
+	ctx context.Context, goModPath string, policy configdomain.DirectivePolicy, configHash string,
 ) (domain.Record, error) {
 	lap := uc.stopwatch.Start()
 	startedAt := uc.clock.Now().UTC()
@@ -85,6 +85,7 @@ func (uc *ExtractDirectivesUseCase) Extract(
 		ExtractedAt:       completedAt,
 		SchemaVersion:     domain.DirectiveSchemaVersion,
 		PipelineVersion:   domain.PipelineVersion,
+		ConfigHash:        configHash,
 	}
 	rec.ContentHash = domain.Hash(ds)
 
@@ -92,7 +93,7 @@ func (uc *ExtractDirectivesUseCase) Extract(
 		return domain.Record{}, fmt.Errorf("persisting directive record: %w", err)
 	}
 	for _, d := range ds {
-		if err := uc.audit.RecordEvent(auditEvent(res.ProjectModulePath, d)); err != nil {
+		if err := uc.audit.RecordEvent(auditEvent(res.ProjectModulePath, d, configHash)); err != nil {
 			return domain.Record{}, fmt.Errorf("recording directive audit event: %w", err)
 		}
 	}
@@ -131,7 +132,7 @@ func policyCategory(d domain.Directive) string {
 }
 
 // auditEvent builds the audit envelope for a classified directive.
-func auditEvent(project string, d domain.Directive) audit.Event {
+func auditEvent(project string, d domain.Directive, configHash string) audit.Event {
 	t := audit.EventReplaceDirectiveObserved
 	if d.Kind == domain.KindExclude {
 		t = audit.EventExcludeDirectiveObserved
@@ -152,6 +153,7 @@ func auditEvent(project string, d domain.Directive) audit.Event {
 			"reachability_target": d.ReachabilityTarget,
 			"policy_outcome":      d.PolicyOutcome,
 			"policy_blocking":     d.PolicyBlocking,
+			"config_hash":         configHash,
 		},
 	}
 }

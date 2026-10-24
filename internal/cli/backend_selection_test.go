@@ -201,7 +201,7 @@ func TestStorageBackend_AnUnregisteredBackendIsAConfigRefusal(t *testing.T) {
 	for _, args := range [][]string{{"walk-list"}, {"store", "info"}} {
 		var stdout, stderr bytes.Buffer
 		err := Run(append(args, "--store-root", root), &stdout, &stderr)
-		const want = `backend "postgres" is not registered in this binary (registered: sqlite, testfiles)`
+		const want = `backend "postgres" is not registered in this binary (registered: sqlite, testfiles, testsink)`
 		if err == nil || !strings.Contains(err.Error(), want) || ExitCodeForError(err) != ExitConfig {
 			t.Errorf("%v: err = %v (exit %d), want %q with ExitConfig", args, err, ExitCodeForError(err), want)
 		}

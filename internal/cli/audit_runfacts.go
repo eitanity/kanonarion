@@ -29,8 +29,11 @@ import "time"
 // auditRunJSON is the run-level half of `audit --json`, embedded in the envelope
 // so every key sits at the top level beside the dependency scope.
 type auditRunJSON struct {
-	Walk auditWalkJSON `json:"walk"`
-	Scan auditScanJSON `json:"scan"`
+	// ConfigHash is the configuration the licence gate was evaluated under;
+	// absent when no row was built, so no gate ran.
+	ConfigHash string        `json:"config_hash,omitempty"`
+	Walk       auditWalkJSON `json:"walk"`
+	Scan       auditScanJSON `json:"scan"`
 	// VulnerabilityScan is the derivation's scan line as data.
 	VulnerabilityScan auditVulnScanJSON `json:"vulnerability_scan"`
 	// Reachability is `vuln-scan --json`'s own object under its own key: how many
@@ -173,6 +176,7 @@ func newAuditRunJSON(d auditDerivation, results []auditModuleResult, ttl time.Du
 	native *nativeWalkRollup,
 ) auditRunJSON {
 	return auditRunJSON{
+		ConfigHash:        d.configHash,
 		Walk:              auditWalkOf(d),
 		Scan:              auditScanOf(d),
 		VulnerabilityScan: auditVulnScanOf(d),

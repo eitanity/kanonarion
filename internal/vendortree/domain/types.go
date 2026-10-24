@@ -333,4 +333,8 @@ type Record struct {
 	SchemaVersion   string
 	PipelineVersion string
 	ContentHash     string
+	// ConfigHash is the config hash the policy outcomes were evaluated under.
+	// Provenance only: no read selects by it. Empty on records written before
+	// it was recorded.
+	ConfigHash string `json:",omitempty"`
 }

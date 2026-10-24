@@ -60,7 +60,7 @@ func TestExtract_ClassifiesPolicyAndAudits(t *testing.T) {
 		},
 	})
 
-	rec, err := uc.Extract(context.Background(), "go.mod", configdomain.DefaultConfig().GoDebugPolicy)
+	rec, err := uc.Extract(context.Background(), "go.mod", configdomain.DefaultConfig().GoDebugPolicy, testConfigHash)
 	if err != nil {
 		t.Fatalf("Extract: %v", err)
 	}
@@ -83,6 +83,7 @@ func TestExtract_ClassifiesPolicyAndAudits(t *testing.T) {
 	if len(sink.events) != 1 || sink.events[0].Type != audit.EventGoDebugSettingObserved {
 		t.Fatalf("want 1 godebug audit event, got %+v", sink.events)
 	}
+	assertConfigHashed(t, rec.ConfigHash, sink.events)
 	if err := sink.events[0].Validate(); err != nil {
 		t.Errorf("invalid audit event: %v", err)
 	}
@@ -101,7 +102,7 @@ func TestExtract_DependencySettingRecordedNotApplied(t *testing.T) {
 		},
 	})
 
-	rec, err := uc.Extract(context.Background(), "go.mod", configdomain.DefaultConfig().GoDebugPolicy)
+	rec, err := uc.Extract(context.Background(), "go.mod", configdomain.DefaultConfig().GoDebugPolicy, testConfigHash)
 	if err != nil {
 		t.Fatalf("Extract: %v", err)
 	}
@@ -124,7 +125,7 @@ func TestExtract_DependencySettingRecordedNotApplied(t *testing.T) {
 // deterministic record and no audit events (clean case).
 func TestExtract_CleanProject(t *testing.T) {
 	uc, store, sink := newUC(domain.ParseResult{ProjectModulePath: "example.com/proj"})
-	rec, err := uc.Extract(context.Background(), "go.mod", configdomain.DefaultConfig().GoDebugPolicy)
+	rec, err := uc.Extract(context.Background(), "go.mod", configdomain.DefaultConfig().GoDebugPolicy, testConfigHash)
 	if err != nil {
 		t.Fatalf("Extract: %v", err)
 	}
@@ -136,5 +137,22 @@ func TestExtract_CleanProject(t *testing.T) {
 	}
 	if len(sink.events) != 0 {
 		t.Errorf("clean scan must emit no audit events, got %d", len(sink.events))
+	}
+}
+
+// testConfigHash stands for the config hash the caller evaluated under.
+const testConfigHash = "sha256:test-config"
+
+// assertConfigHashed checks the record and every event name the config hash
+// they were evaluated under.
+func assertConfigHashed(t *testing.T, recorded string, events []audit.Event) {
+	t.Helper()
+	if recorded != testConfigHash {
+		t.Errorf("record ConfigHash = %q, want %q", recorded, testConfigHash)
+	}
+	for _, e := range events {
+		if e.Payload["config_hash"] != testConfigHash {
+			t.Errorf("%s payload config_hash = %v, want %q", e.Type, e.Payload["config_hash"], testConfigHash)
+		}
 	}
 }

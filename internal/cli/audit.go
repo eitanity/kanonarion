@@ -451,7 +451,7 @@ func runAudit(ctx context.Context, f auditFlags, stdout, stderr io.Writer) error
 		return serr
 	}
 
-	results, derivation, err := auditScope(ctx, coords, scope, f, staleness, ctr, stderr)
+	results, derivation, err := auditGatedScope(ctx, coords, scope, f, staleness, ctr, stderr)
 	if err != nil {
 		return err
 	}
@@ -483,6 +483,20 @@ func runAudit(ctx context.Context, f auditFlags, stdout, stderr io.Writer) error
 	}
 
 	return writeAuditResults(stdout, envelope, derivation, results, native)
+}
+
+// auditGatedScope builds the rows, whose licence gate is evaluated under the
+// configuration hash it observes first.
+func auditGatedScope(ctx context.Context, coords []string, scope depScope, f auditFlags,
+	staleness stalenessLookup, ctr *Container, stderr io.Writer,
+) ([]auditModuleResult, auditDerivation, error) {
+	configHash, err := observeGateConfig(ctr)
+	if err != nil {
+		return nil, auditDerivation{}, err
+	}
+	results, derivation, err := auditScope(ctx, coords, scope, f, staleness, ctr, stderr)
+	derivation.configHash = configHash
+	return results, derivation, err
 }
 
 // writeNoAuditDependencies reports a scope with no dependencies to audit.
@@ -624,6 +638,8 @@ func oneLine(s string) string {
 // different weight in exactly the cases (release evidence, incident response)
 // where the distinction decides what the answer is worth.
 type auditDerivation struct {
+	// configHash is the configuration the licence gate was evaluated under.
+	configHash string
 	walkReused bool
 	walkRecord walkdomain.WalkRecord
 	scanReused bool
@@ -696,6 +712,9 @@ func writeAuditDerivation(w io.Writer, d auditDerivation) error {
 		lines = append(lines, advisoryRefreshLine(d.refresh, d.refreshErr))
 	}
 	lines = append(lines, scanLine)
+	if d.configHash != "" {
+		lines = append(lines, configHashLine(d.configHash, nil))
+	}
 
 	return writeDerivation(w, lines...)
 }

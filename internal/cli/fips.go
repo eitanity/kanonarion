@@ -47,6 +47,7 @@ type fipsSection struct {
 	ComplianceAssessment      string              `json:"compliance_assessment"`
 	Caveat                    string              `json:"caveat"`
 	ContentHash               string              `json:"content_hash"`
+	ConfigHash                string              `json:"config_hash,omitempty"`
 	NonFIPSAlgorithmUsage     []fipsFindingResult `json:"non_fips_algorithm_usage"`
 	CgoCryptoDependencies     []fipsFindingResult `json:"cgo_crypto_dependencies"`
 	DirectCryptoRandUsage     []fipsFindingResult `json:"direct_crypto_rand_usage"`
@@ -72,6 +73,7 @@ func toFIPSSection(rec fipsdomain.Record) fipsSection {
 		ComplianceAssessment:      rec.ComplianceAssessment,
 		Caveat:                    rec.Caveat,
 		ContentHash:               rec.ContentHash,
+		ConfigHash:                rec.ConfigHash,
 		// Empty (non-nil) slices serialise as [] not null
 		// consumers can iterate uniformly regardless of fixture state.
 		NonFIPSAlgorithmUsage: []fipsFindingResult{},
@@ -160,15 +162,19 @@ func runFIPS(ctx context.Context, gomodFlag string, stdout, stderr io.Writer) er
 	}
 	defer releaseStore(cleanup)
 
-	return fipsWith(ctx, ctr, gomodPath, stdout)
+	configHash, err := observeGateConfig(ctr)
+	if err != nil {
+		return err
+	}
+	return fipsWith(ctx, ctr, gomodPath, configHash, stdout)
 }
 
 // fipsWith holds the fips logic over an injected Container: it runs the
 // assessment, renders JSON or text, and returns fipsBlockingErr in *both*
 // modes so a policy violation gates the build regardless of output format.
 // Split from runFIPS so that exit contract is testable without a live store.
-func fipsWith(ctx context.Context, ctr *Container, gomodPath string, stdout io.Writer) error {
-	rec, err := ctr.ExtractFIPS.Extract(ctx, gomodPath, activeConfig.FIPSPolicy)
+func fipsWith(ctx context.Context, ctr *Container, gomodPath, configHash string, stdout io.Writer) error {
+	rec, err := ctr.ExtractFIPS.Extract(ctx, gomodPath, activeConfig.FIPSPolicy, configHash)
 	if err != nil {
 		return fmt.Errorf("scanning fips facts: %w", err)
 	}
@@ -183,6 +189,9 @@ func fipsWith(ctx context.Context, ctr *Container, gomodPath string, stdout io.W
 		return fipsBlockingErr(section)
 	}
 	if err := printFIPSTable(stdout, section); err != nil {
+		return err
+	}
+	if err := writeConfigHashLine(stdout, section.ConfigHash, nil); err != nil {
 		return err
 	}
 	return fipsBlockingErr(section)

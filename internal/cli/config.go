@@ -17,7 +17,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/config/domain"
 )
 
-func newConfigCmd(stdout io.Writer) *cobra.Command {
+func newConfigCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:         "config",
 		Annotations: map[string]string{annotationNetworkUse: NetworkNever},
@@ -27,7 +27,7 @@ func newConfigCmd(stdout io.Writer) *cobra.Command {
 		newConfigInitCmd(stdout),
 		newConfigShowCmd(stdout),
 		newConfigGetCmd(stdout),
-		newConfigSetCmd(stdout),
+		newConfigSetCmd(stdout, stderr),
 	)
 	return cmd
 }
@@ -364,7 +364,7 @@ func marshalConfigYAML(v any) (string, error) {
 
 // ---- config set ----
 
-func newConfigSetCmd(stdout io.Writer) *cobra.Command {
+func newConfigSetCmd(stdout, stderr io.Writer) *cobra.Command {
 	return &cobra.Command{
 		Use:   "set <key> <value>",
 		Short: "Write a value to the configuration file",
@@ -388,7 +388,7 @@ func newConfigSetCmd(stdout io.Writer) *cobra.Command {
 		},
 		Args: cobra.ExactArgs(2),
 		RunE: func(_ *cobra.Command, args []string) error {
-			return runConfigSet(storeRoot, args[0], args[1], jsonOut, stdout)
+			return runConfigSet(storeRoot, args[0], args[1], jsonOut, stdout, stderr)
 		},
 	}
 }
@@ -409,7 +409,7 @@ type configSetResult struct {
 	ConfigFile     string `json:"config_file"`
 }
 
-func runConfigSet(root, key, value string, asJSON bool, stdout io.Writer) error {
+func runConfigSet(root, key, value string, asJSON bool, stdout, stderr io.Writer) error {
 	yamlPath, err := configSetPath(key)
 	if err != nil {
 		return err
@@ -458,8 +458,12 @@ func runConfigSet(root, key, value string, asJSON bool, stdout io.Writer) error 
 	if cerr := enc.Close(); cerr != nil {
 		return fmt.Errorf("finalising config: %w", cerr)
 	}
+	before, beforeErr := loadStoreConfig(root)
 	if werr := os.WriteFile(configPath, buf.Bytes(), 0o600); werr != nil { // #nosec G304 G703 -- operator-supplied path
 		return fmt.Errorf("writing config %s: %w", configPath, werr)
+	}
+	if cerr := recordConfigChange(root, key, before, beforeErr, stderr); cerr != nil {
+		return cerr
 	}
 
 	if asJSON {
