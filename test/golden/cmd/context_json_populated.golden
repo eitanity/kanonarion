@@ -80,6 +80,19 @@ exit 0
           "example.com/mod": 2
         }
       },
+      "capability": {
+        "status": "Extracted",
+        "test_roots": "excluded",
+        "partial": false,
+        "capabilities": [],
+        "rows_by_capability": {},
+        "row_count": 0,
+        "sensitive_calls_count": 0,
+        "collects_and_egresses_count": 0,
+        "init_reaches_both_count": 0,
+        "unanalyzed_callees": 0,
+        "command": "kanonarion capability example.com/mod@v1.2.0"
+      },
       "examples": {
         "status": "not_run",
         "count": 0

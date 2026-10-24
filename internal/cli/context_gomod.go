@@ -195,6 +195,7 @@ func contextGoModDocument(ctx context.Context, ctr *Container, mod scopeModule, 
 		}
 	}
 
+	callGraph, capability := buildCallGraph(ctx, coord, ctr.QueryCallGraph, f.entryPointsFull, f.packageFilter)
 	out := contextOutput{
 		Module: contextModuleInfo{
 			Path:    coord.Path(),
@@ -210,7 +211,8 @@ func contextGoModDocument(ctx context.Context, ctr *Container, mod scopeModule, 
 		Dependencies:    buildDependencies(ctx, coord, ctr.QueryWalks, basis),
 		License:         buildLicense(ctx, coord, ctr.QueryLicense, ctr.StdlibCustody),
 		Interface:       buildInterface(ctx, coord, ctr.QueryInterface, compact, f.packageFilter),
-		CallGraph:       buildCallGraph(ctx, coord, ctr.QueryCallGraph, f.entryPointsFull, f.packageFilter),
+		CallGraph:       callGraph,
+		Capability:      capability,
 		Examples:        buildExamples(ctx, coord, ctr.QueryExamples, compact, f.packageFilter),
 		Vulnerabilities: vulns,
 		Native:          deriveNativeCoverage(ctx, ctr.QueryNative, coord),

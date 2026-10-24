@@ -241,26 +241,33 @@ func joinWithAnd(names []string) string {
 // off there would make the statement's presence the signal, and a reader would
 // have to know the tool's conventions to read an absent line as an answer.
 func printNativeCoverage(stdout io.Writer, cov *nativeCoverage) {
+	printNativeCoverageAs(stdout, cov, "  Native code:     ", "                   ")
+}
+
+// printNativeCoverageAs is printNativeCoverage under a caller's label and
+// continuation indent, so context --full states the same lines under its own
+// heading.
+func printNativeCoverageAs(stdout io.Writer, cov *nativeCoverage, label, indent string) {
 	if cov == nil {
 		return
 	}
-	_, _ = fmt.Fprintf(stdout, "  Native code:     %s\n", cov.State)
-	_, _ = fmt.Fprintf(stdout, "                   %s\n", cov.Statement)
+	_, _ = fmt.Fprintf(stdout, "%s%s\n", label, cov.State)
+	_, _ = fmt.Fprintf(stdout, "%s%s\n", indent, cov.Statement)
 	for _, c := range cov.Components {
-		_, _ = fmt.Fprintf(stdout, "                   %s %s (%s, %s) — advisories not searched\n",
-			c.Name, c.Version, c.Confidence, c.PURL)
+		_, _ = fmt.Fprintf(stdout, "%s%s %s (%s, %s) — advisories not searched\n",
+			indent, c.Name, c.Version, c.Confidence, c.PURL)
 	}
 	// The linked libraries are already named in the linked_not_shipped
 	// statement, so naming them again there would say it twice. Everywhere else
 	// they are unsaid, and a module that ships its own sources AND links
 	// something the host provides must state both.
 	if cov.State != nativeStateLinkedNotShipped && len(cov.LinkedLibraries) > 0 {
-		_, _ = fmt.Fprintf(stdout, "                   also links, from outside this module: %s\n",
-			strings.Join(cov.LinkedLibraries, ", "))
+		_, _ = fmt.Fprintf(stdout, "%salso links, from outside this module: %s\n",
+			indent, strings.Join(cov.LinkedLibraries, ", "))
 	}
 	if cov.Generation != "" {
-		_, _ = fmt.Fprintf(stdout, "                   measured at native generation %s from %s\n",
-			cov.Generation, cov.ArtefactIdentity)
+		_, _ = fmt.Fprintf(stdout, "%smeasured at native generation %s from %s\n",
+			indent, cov.Generation, cov.ArtefactIdentity)
 	}
 }
 

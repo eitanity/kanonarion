@@ -97,6 +97,7 @@ type QueryLicenseUseCase interface {
 	GetLicenseRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (licensedomain.LicenseRecord, bool, error)
 	ListLicenseRecords(ctx context.Context, filter licenseports.LicenseFilter) ([]licenseports.LicenseSummary, error)
 	LicenseHistory(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) ([]licensedomain.LicenseRecord, error)
+	PipelinesHeld(ctx context.Context, coord coordinate.ModuleCoordinate) ([]string, error)
 	ResolveForWalk(ctx context.Context, walkID string, target coordinate.ModuleCoordinate, extractFn func(context.Context, coordinate.ModuleCoordinate) (licensedomain.LicenseRecord, error)) ([]licapp.DepLicenseResult, error)
 }
 
@@ -218,6 +219,7 @@ type ExtractExampleUseCase interface {
 type QueryExamplesUseCase interface {
 	GetExampleRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (exampledomain.ExampleRecord, bool, error)
 	ExampleHistory(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) ([]exampledomain.ExampleRecord, error)
+	PipelinesHeld(ctx context.Context, coord coordinate.ModuleCoordinate) ([]string, error)
 	ListExampleRecords(ctx context.Context, filter exampleports.ExampleFilter) ([]exampleports.ExampleSummary, error)
 	FindBySymbol(ctx context.Context, symbol, pipelineVersion string, scope coordinate.ModuleSet) ([]exampleports.ExampleRef, error)
 	FindBySymbolInModule(ctx context.Context, coord coordinate.ModuleCoordinate, symbol, pipelineVersion string) ([]exampleports.ExampleRef, error)

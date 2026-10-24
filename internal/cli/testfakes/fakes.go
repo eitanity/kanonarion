@@ -6,6 +6,7 @@ package testfakes
 import (
 	"context"
 	"fmt"
+	"maps"
 	"slices"
 	"sort"
 	"strings"
@@ -35,6 +36,7 @@ import (
 	licenseports "github.com/eitanity/kanonarion/internal/license/ports"
 	sbomapp "github.com/eitanity/kanonarion/internal/sbom/application"
 	sbomdomain "github.com/eitanity/kanonarion/internal/sbom/domain"
+	"github.com/eitanity/kanonarion/internal/versionorder"
 	vulnapp "github.com/eitanity/kanonarion/internal/vuln/application"
 	vulndomain "github.com/eitanity/kanonarion/internal/vuln/domain"
 	vulnports "github.com/eitanity/kanonarion/internal/vuln/ports"
@@ -408,6 +410,34 @@ func (f *FakeQueryLicense) LicenseHistory(_ context.Context, coord coordinate.Mo
 	return f.history[coord.String()+"|"+pipelineVersion], nil
 }
 
+// PipelinesHeld derives the pipelines held from the keys AddRecord and
+// SetHistory filed, so a record added at a superseded pipeline is visible to
+// the superseded diagnostic exactly as the store's own index makes it.
+func (f *FakeQueryLicense) PipelinesHeld(_ context.Context, coord coordinate.ModuleCoordinate) ([]string, error) {
+	if f.Err != nil {
+		return nil, f.Err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return pipelinesKeyed(coord, f.records, f.history), nil
+}
+
+// pipelinesKeyed lists, sorted, the pipelines under which maps keyed
+// "coordinate|pipelineVersion" hold coord.
+func pipelinesKeyed[A, B any](coord coordinate.ModuleCoordinate, a map[string]A, b map[string]B) []string {
+	seen := map[string]bool{}
+	for _, keys := range [][]string{slices.Collect(maps.Keys(a)), slices.Collect(maps.Keys(b))} {
+		for _, k := range keys {
+			if c, p, ok := strings.Cut(k, "|"); ok && c == coord.String() {
+				seen[p] = true
+			}
+		}
+	}
+	out := slices.Collect(maps.Keys(seen))
+	slices.SortFunc(out, versionorder.ComparePipelineVersions)
+	return out
+}
+
 // ListLicenseRecords applies the filter the SQLite adapter applies: exact
 // equality on the primary SPDX identifier, the pipeline version and the
 // copyright status, then the offset, then the limit.
@@ -770,6 +800,8 @@ type FakeQueryCallGraph struct {
 	// the composing listing decodes every generation of every multi-generation
 	// coordinate in the store to read fields no part of the answer looks at.
 	CoordinateListCalls int
+	// Unserved is what UnservedCoordinates answers, for the coordinates asked.
+	Unserved []cgports.UnservedCoordinate
 	// HistoryCalls counts the composing history read — the one that reconstructs
 	// and verifies every generation's edge set. It is counted separately from
 	// RecordReads because a caller that needs one COLUMN per generation must not
@@ -1285,8 +1317,14 @@ func (f *FakeQueryCallGraph) NotSearchedByCallees(context.Context, []string, str
 }
 
 // UnservedCoordinates names nothing, as NotSearchedByCallers.
-func (f *FakeQueryCallGraph) UnservedCoordinates(context.Context, []coordinate.ModuleCoordinate, string) ([]cgports.UnservedCoordinate, error) {
-	return nil, nil
+func (f *FakeQueryCallGraph) UnservedCoordinates(_ context.Context, coords []coordinate.ModuleCoordinate, _ string) ([]cgports.UnservedCoordinate, error) {
+	var out []cgports.UnservedCoordinate
+	for _, u := range f.Unserved {
+		if slices.Contains(coords, u.Coordinate) {
+			out = append(out, u)
+		}
+	}
+	return out, nil
 }
 
 // ---- example context ----
@@ -1339,6 +1377,17 @@ func (f *FakeQueryExamples) ExampleHistory(_ context.Context, coord coordinate.M
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.history[coord.String()+"|"+pipelineVersion], nil
+}
+
+// PipelinesHeld derives the pipelines held from the keys AddRecord and
+// SetHistory filed.
+func (f *FakeQueryExamples) PipelinesHeld(_ context.Context, coord coordinate.ModuleCoordinate) ([]string, error) {
+	if f.Err != nil {
+		return nil, f.Err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return pipelinesKeyed(coord, f.records, f.history), nil
 }
 
 func (f *FakeQueryExamples) AddRecord(coord coordinate.ModuleCoordinate, pipelineVersion string, rec exdomain.ExampleRecord) {

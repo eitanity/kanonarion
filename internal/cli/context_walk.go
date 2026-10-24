@@ -106,6 +106,7 @@ func printContextWalkText(ctx context.Context, ctr *Container, nodes []walkdomai
 		if vulns.Status == sectionStatusNotRun {
 			cmdWalkID = f.walkID
 		}
+		callGraph, capability := buildCallGraph(ctx, coord, ctr.QueryCallGraph, f.entryPointsFull, f.packageFilter)
 		out := contextOutput{
 			Module:          contextModuleInfo{Path: coord.Path(), Version: coord.Version()},
 			Verification:    buildVerification(ctx, coord, ctr.QueryFetch),
@@ -113,7 +114,8 @@ func printContextWalkText(ctx context.Context, ctr *Container, nodes []walkdomai
 			Dependencies:    buildDependencies(ctx, coord, ctr.QueryWalks, basis),
 			License:         buildLicense(ctx, coord, ctr.QueryLicense, ctr.StdlibCustody),
 			Interface:       buildInterface(ctx, coord, ctr.QueryInterface, compact, f.packageFilter),
-			CallGraph:       buildCallGraph(ctx, coord, ctr.QueryCallGraph, f.entryPointsFull, f.packageFilter),
+			CallGraph:       callGraph,
+			Capability:      capability,
 			Examples:        buildExamples(ctx, coord, ctr.QueryExamples, compact, f.packageFilter),
 			Vulnerabilities: vulns,
 			Native:          deriveNativeCoverage(ctx, ctr.QueryNative, coord),
@@ -157,13 +159,16 @@ func writeContextWalkJSON(ctx context.Context, ctr *Container, rec walkdomain.Wa
 		if vulns.Status == sectionStatusNotRun {
 			cmdWalkID = f.walkID
 		}
+		callGraph, capability := buildCallGraph(ctx, coord, ctr.QueryCallGraph, f.entryPointsFull, f.packageFilter)
 		out := contextOutput{
 			Module:          contextModuleInfo{Path: coord.Path(), Version: coord.Version()},
 			Verification:    buildVerification(ctx, coord, ctr.QueryFetch),
+			Provenance:      buildProvenance(coord),
 			Dependencies:    buildDependencies(ctx, coord, ctr.QueryWalks, basis),
 			License:         buildLicense(ctx, coord, ctr.QueryLicense, ctr.StdlibCustody),
 			Interface:       buildInterface(ctx, coord, ctr.QueryInterface, compact, f.packageFilter),
-			CallGraph:       buildCallGraph(ctx, coord, ctr.QueryCallGraph, f.entryPointsFull, f.packageFilter),
+			CallGraph:       callGraph,
+			Capability:      capability,
 			Examples:        buildExamples(ctx, coord, ctr.QueryExamples, compact, f.packageFilter),
 			Vulnerabilities: vulns,
 			Native:          deriveNativeCoverage(ctx, ctr.QueryNative, coord),
@@ -360,6 +365,7 @@ func runContextWalkSizeOnly(
 		if vulns.Status == sectionStatusNotRun {
 			cmdWalkID = f.walkID
 		}
+		callGraph, capability := buildCallGraph(ctx, coord, cgUC, f.entryPointsFull, f.packageFilter)
 		out := contextOutput{
 			Module:          contextModuleInfo{Path: coord.Path(), Version: coord.Version()},
 			Verification:    buildVerification(ctx, coord, fetchUC),
@@ -367,7 +373,8 @@ func runContextWalkSizeOnly(
 			Dependencies:    buildDependencies(ctx, coord, walkUC, basis),
 			License:         buildLicense(ctx, coord, licUC, stdlibCustody),
 			Interface:       buildInterface(ctx, coord, ifaceUC, compact, f.packageFilter),
-			CallGraph:       buildCallGraph(ctx, coord, cgUC, f.entryPointsFull, f.packageFilter),
+			CallGraph:       callGraph,
+			Capability:      capability,
 			Examples:        buildExamples(ctx, coord, exUC, compact, f.packageFilter),
 			Vulnerabilities: vulns,
 			Native:          deriveNativeCoverage(ctx, nativeUC, coord),

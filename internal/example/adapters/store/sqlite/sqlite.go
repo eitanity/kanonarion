@@ -8,11 +8,13 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/versionorder"
 
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
@@ -375,6 +377,31 @@ func (s *Store) GetExampleRecord(ctx context.Context, coord coordinate.ModuleCoo
 		return domain2.ExampleRecord{}, false, fmt.Errorf("%w: %w", ports.ErrExampleConflict, err)
 	}
 	return composed, true, nil
+}
+
+// PipelinesHeld lists the pipeline versions coord holds example records at,
+// oldest first, from the generation index alone: no blob is decoded.
+func (s *Store) PipelinesHeld(ctx context.Context, coord coordinate.ModuleCoordinate) ([]string, error) {
+	rows, err := s.db.DB().QueryContext(ctx,
+		`SELECT DISTINCT pipeline_version FROM example_records WHERE module_path = ? AND module_version = ?`,
+		coord.Path(), coord.Version())
+	if err != nil {
+		return nil, fmt.Errorf("querying the pipelines held for %s: %w", coord, err)
+	}
+	defer rows.Close() //nolint:errcheck // read-only; Err is checked below
+	var out []string
+	for rows.Next() {
+		var p string
+		if serr := rows.Scan(&p); serr != nil {
+			return nil, fmt.Errorf("scanning the pipelines held for %s: %w", coord, serr)
+		}
+		out = append(out, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating the pipelines held for %s: %w", coord, err)
+	}
+	slices.SortFunc(out, versionorder.ComparePipelineVersions)
+	return out, nil
 }
 
 // ListExampleRecordsFor returns every generation the ledger holds for one

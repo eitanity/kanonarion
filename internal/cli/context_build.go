@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -240,6 +241,9 @@ func buildLicense(
 		return contextLicense{Status: sectionStatusReadError, Error: err.Error()}
 	}
 	if !found {
+		if line := supersededLicenceLine(ctx, uc, coord); line != "" {
+			return contextLicense{Status: sectionStatusSuperseded, Error: line}
+		}
 		return contextLicense{Status: sectionStatusNotRun}
 	}
 	// The section names the licence covering the module's code, read through
@@ -470,23 +474,36 @@ func contextPackageOf(pkg ifacedomain.PackageInterface, compact bool) contextPac
 }
 
 // contextCallGraphMiss is the section for a coordinate no graph is served
-// for: held under other frames, from the listing's frame columns, or not run.
+// for: held under other frames, held only at superseded pipelines, or not run.
+// Both reads are the coordinate's own key columns.
 func contextCallGraphMiss(ctx context.Context, coord coordinate.ModuleCoordinate, uc QueryCallGraphUseCase) contextCallGraph {
 	unserved, err := uc.UnservedCoordinates(ctx, []coordinate.ModuleCoordinate{coord}, cgapp.PipelineVersion)
-	if err != nil || len(unserved) == 0 || len(unserved[0].Frames) == 0 {
+	if err != nil || len(unserved) == 0 {
 		return contextCallGraph{Status: sectionStatusNotRun}
 	}
-	frames, flags := cgdomain.HeldFrames(frameRecords(unserved[0].Frames), cgdomain.BuildFrame{})
-	return contextCallGraph{Status: sectionStatusOtherFrame, HeldFrames: frames, ReadWith: flags}
+	u := unserved[0]
+	if len(u.Frames) > 0 {
+		frames, flags := cgdomain.HeldFrames(frameRecords(u.Frames), cgdomain.BuildFrame{})
+		return contextCallGraph{Status: sectionStatusOtherFrame, HeldFrames: frames, ReadWith: flags}
+	}
+	if len(u.Pipelines) > 0 && !slices.Contains(u.Pipelines, cgapp.PipelineVersion) {
+		return contextCallGraph{Status: sectionStatusSuperseded, Error: supersededRecordLine("call graph", coord,
+			cgapp.PipelineVersion, u.Pipelines, "Re-analyse", frameReanalysis(coord, u.AnalysisRoot))}
+	}
+	return contextCallGraph{Status: sectionStatusNotRun}
 }
 
-func buildCallGraph(ctx context.Context, coord coordinate.ModuleCoordinate, uc QueryCallGraphUseCase, entryPointsFull bool, pkgFilter string) contextCallGraph {
+// buildCallGraph answers the call-graph section and the capability section
+// derived from the same record, so the graph is loaded once per coordinate.
+func buildCallGraph(ctx context.Context, coord coordinate.ModuleCoordinate, uc QueryCallGraphUseCase, entryPointsFull bool, pkgFilter string) (contextCallGraph, contextCapability) {
 	rec, found, err := uc.GetCallGraphRecord(ctx, coord, cgapp.PipelineVersion)
 	if err != nil {
-		return contextCallGraph{Status: sectionStatusReadError, Error: err.Error()}
+		cg := contextCallGraph{Status: sectionStatusReadError, Error: err.Error()}
+		return cg, capabilityFollowing(cg)
 	}
 	if !found {
-		return contextCallGraphMiss(ctx, coord, uc)
+		cg := contextCallGraphMiss(ctx, coord, uc)
+		return cg, capabilityFollowing(cg)
 	}
 	out := contextCallGraph{
 		ExtractedAt: ledgerStamp(rec.ExtractedAt),
@@ -517,7 +534,7 @@ func buildCallGraph(ctx context.Context, coord coordinate.ModuleCoordinate, uc Q
 	} else if len(byPkg) > 0 {
 		out.EntryPointsByPackage = byPkg
 	}
-	return out
+	return out, buildCapability(coord, rec)
 }
 
 // packageGraphCounts is the number of nodes in pkgFilter and of edges leaving
@@ -552,6 +569,9 @@ func buildExamples(ctx context.Context, coord coordinate.ModuleCoordinate, uc Qu
 		return contextExamples{Status: sectionStatusReadError, Error: err.Error()}
 	}
 	if !found {
+		if line := supersededExamplesLine(ctx, uc, coord); line != "" {
+			return contextExamples{Status: sectionStatusSuperseded, Error: line}
+		}
 		return contextExamples{Status: sectionStatusNotRun}
 	}
 	out := contextExamples{

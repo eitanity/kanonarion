@@ -70,6 +70,7 @@ type contextOutput struct {
 	License         contextLicense         `json:"license"`
 	Interface       contextInterface       `json:"interface"`
 	CallGraph       contextCallGraph       `json:"call_graph"`
+	Capability      contextCapability      `json:"capability"`
 	Examples        contextExamples        `json:"examples"`
 	Vulnerabilities contextVulnerabilities `json:"vulnerabilities"`
 	// Native is what this module's own artefact compiles into the binary from
@@ -736,6 +737,7 @@ func runContext(ctx context.Context, arg string, f contextFlags, stdout, stderr 
 	// its own. A document that selected twice could name one walk and count in
 	// another.
 	basis := resolveBasisWalk(ctx, ctr.QueryWalks, vulns.WalkBasisID)
+	callGraph, capability := buildCallGraph(ctx, coord, ctr.QueryCallGraph, f.entryPointsFull, f.packageFilter)
 	out := contextOutput{
 		Module:          contextModuleInfo{Path: coord.Path(), Version: coord.Version()},
 		Verification:    buildVerification(ctx, coord, ctr.QueryFetch),
@@ -743,7 +745,8 @@ func runContext(ctx context.Context, arg string, f contextFlags, stdout, stderr 
 		Dependencies:    buildDependencies(ctx, coord, ctr.QueryWalks, basis),
 		License:         buildLicense(ctx, coord, ctr.QueryLicense, ctr.StdlibCustody),
 		Interface:       buildInterface(ctx, coord, ctr.QueryInterface, compact, f.packageFilter),
-		CallGraph:       buildCallGraph(ctx, coord, ctr.QueryCallGraph, f.entryPointsFull, f.packageFilter),
+		CallGraph:       callGraph,
+		Capability:      capability,
 		Examples:        buildExamples(ctx, coord, ctr.QueryExamples, compact, f.packageFilter),
 		Vulnerabilities: vulns,
 		Native:          deriveNativeCoverage(ctx, ctr.QueryNative, coord),
