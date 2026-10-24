@@ -291,6 +291,9 @@ type QueryVulnUseCase interface {
 	// empty result from them cannot tell "never scanned" from "scanned under
 	// logic this build has superseded". Nothing is answered from it.
 	ListRecordGenerationsForModule(ctx context.Context, coord coordinate.ModuleCoordinate) ([]vulnports.VulnerabilityRecordGeneration, error)
+	// FindingTimelines is vuln-by-id --timeline's answer, unreadable rows
+	// returned beside it as the listings above return theirs.
+	FindingTimelines(ctx context.Context, findingID, walkID string) ([]vulndomain.FindingTimeline, error)
 }
 
 // QueryScanRunsUseCase is the interface for querying scan runs and snapshots.

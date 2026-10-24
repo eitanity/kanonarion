@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/adapters/goenv"
+	"github.com/eitanity/kanonarion/internal/adapters/vulndbindex"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
 
@@ -211,10 +212,9 @@ func (d *Database) LatestVersion(ctx context.Context) (string, error) {
 	return version, nil
 }
 
-// maxModulesIndexBytes caps the index/modules.json read out of a stored
-// snapshot zip. The published index is ~3 MB uncompressed; the bound leaves
-// generous headroom while defending against a decompression bomb.
-const maxModulesIndexBytes = 256 << 20
+// maxModulesIndexBytes is the shared index cap, also the largest entry this
+// adapter reads.
+const maxModulesIndexBytes = vulndbindex.MaxBytes
 
 // PublishedAdvisoryIndex fetches the standalone module index the database
 // publishes — the same index/modules.json the bulk zip carries, served
@@ -225,35 +225,46 @@ func (d *Database) PublishedAdvisoryIndex(ctx context.Context) (ports.AdvisoryIn
 	if err != nil {
 		return nil, fmt.Errorf("fetch published modules index: %w", err)
 	}
-	return decodeAdvisoryIndex(data)
+	index, err := vulndbindex.Decode(data)
+	if err != nil {
+		return nil, fmt.Errorf("decode published modules index: %w", err)
+	}
+	return index, nil
 }
 
 // SnapshotAdvisoryIndex reads index/modules.json out of an already-stored
 // snapshot. The bytes are the store's, so this costs a local read and no
 // network: it is the "before" half of a generation comparison.
 func (d *Database) SnapshotAdvisoryIndex(ctx context.Context, identity domain.DatabaseSnapshot) (ports.AdvisoryIndex, error) {
-	zr, err := d.openStoredSnapshot(ctx, identity)
+	zipData, err := d.storedSnapshotBytes(ctx, identity)
 	if err != nil {
 		return nil, err
 	}
-	for _, f := range zr.File {
-		if f.Name != "index/modules.json" {
-			continue
-		}
-		data, rerr := readZipFile(f, maxModulesIndexBytes)
-		if rerr != nil {
-			return nil, rerr
-		}
-		return decodeAdvisoryIndex(data)
+	index, err := vulndbindex.FromZip(zipData)
+	if err != nil {
+		return nil, fmt.Errorf("stored snapshot %s@%s: %w", identity.Source(), identity.Version(), err)
 	}
-	return nil, fmt.Errorf("stored snapshot %s@%s has no index/modules.json", identity.Source(), identity.Version())
+	return index, nil
 }
 
-// openStoredSnapshot reads a stored snapshot's bytes out of the store and opens
-// them as a zip. Every read of a stored snapshot goes through here so that
-// "already stored" means the same thing to each of them — a local read, and no
-// network under any circumstance.
+// openStoredSnapshot opens a stored snapshot's bytes as a zip.
 func (d *Database) openStoredSnapshot(ctx context.Context, identity domain.DatabaseSnapshot) (*zip.Reader, error) {
+	zipData, err := d.storedSnapshotBytes(ctx, identity)
+	if err != nil {
+		return nil, err
+	}
+	zr, err := zip.NewReader(bytes.NewReader(zipData), int64(len(zipData)))
+	if err != nil {
+		return nil, fmt.Errorf("open stored snapshot %s@%s: %w", identity.Source(), identity.Version(), err)
+	}
+	return zr, nil
+}
+
+// storedSnapshotBytes reads a stored snapshot's bytes out of the store. Every
+// read of a stored snapshot goes through here so that "already stored" means the
+// same thing to each of them — a local read, and no network under any
+// circumstance.
+func (d *Database) storedSnapshotBytes(ctx context.Context, identity domain.DatabaseSnapshot) ([]byte, error) {
 	rc, err := d.vulnStore.GetDatabaseSnapshot(ctx, identity)
 	if err != nil {
 		return nil, fmt.Errorf("get stored snapshot %s@%s: %w", identity.Source(), identity.Version(), err)
@@ -264,47 +275,7 @@ func (d *Database) openStoredSnapshot(ctx context.Context, identity domain.Datab
 	if err != nil {
 		return nil, fmt.Errorf("read stored snapshot %s@%s: %w", identity.Source(), identity.Version(), err)
 	}
-	zr, err := zip.NewReader(bytes.NewReader(zipData), int64(len(zipData)))
-	if err != nil {
-		return nil, fmt.Errorf("open stored snapshot %s@%s: %w", identity.Source(), identity.Version(), err)
-	}
-	return zr, nil
-}
-
-// decodeAdvisoryIndex parses index/modules.json into the comparison shape,
-// sorting each module's entries so two readings of one generation compare equal
-// regardless of the order the file happened to list them in.
-func decodeAdvisoryIndex(data []byte) (ports.AdvisoryIndex, error) {
-	var index []struct {
-		Path  string `json:"path"`
-		Vulns []struct {
-			ID       string `json:"id"`
-			Modified string `json:"modified"`
-			Fixed    string `json:"fixed"`
-		} `json:"vulns"`
-	}
-	if err := json.Unmarshal(data, &index); err != nil {
-		return nil, fmt.Errorf("unmarshal modules index: %w", err)
-	}
-	out := make(ports.AdvisoryIndex, len(index))
-	for _, m := range index {
-		entries := make([]ports.AdvisoryIndexEntry, 0, len(m.Vulns))
-		for _, v := range m.Vulns {
-			entries = append(entries, ports.AdvisoryIndexEntry{ID: v.ID, Modified: v.Modified, Fixed: v.Fixed})
-		}
-		sort.Slice(entries, func(i, j int) bool {
-			a, b := entries[i], entries[j]
-			if a.ID != b.ID {
-				return a.ID < b.ID
-			}
-			if a.Modified != b.Modified {
-				return a.Modified < b.Modified
-			}
-			return a.Fixed < b.Fixed
-		})
-		out[m.Path] = entries
-	}
-	return out, nil
+	return zipData, nil
 }
 
 // fetchVulnDBZip downloads the bulk /vulndb.zip body in one request, logging
@@ -471,17 +442,20 @@ func checkZipEntry(f *zip.File) error {
 	return nil
 }
 
-// readZipFile opens a single zip entry and reads up to limit bytes. The limit
-// bounds memory against a decompression bomb in an adversarial entry.
+// readZipFile opens a single zip entry and reads at most limit bytes. An entry
+// over the limit is refused, not truncated: a decoded prefix is not the entry.
 func readZipFile(f *zip.File, limit int64) ([]byte, error) {
 	rc, err := f.Open()
 	if err != nil {
 		return nil, fmt.Errorf("open %s: %w", f.Name, err)
 	}
 	defer func() { _ = rc.Close() }()
-	data, err := io.ReadAll(io.LimitReader(rc, limit))
+	data, err := io.ReadAll(io.LimitReader(rc, limit+1))
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", f.Name, err)
+	}
+	if int64(len(data)) > limit {
+		return nil, fmt.Errorf("%s is larger than %d bytes", f.Name, limit)
 	}
 	return data, nil
 }

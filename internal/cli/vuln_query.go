@@ -674,6 +674,7 @@ func historyWalks(records []vuldomain.VulnerabilityRecord) []string {
 
 func newVulnByIDCmd(stdout, stderr io.Writer) *cobra.Command {
 	var walkID string
+	var timeline bool
 
 	cmd := &cobra.Command{
 		Use: "vuln-by-id <finding-id>",
@@ -688,10 +689,14 @@ With no --walk-id, the answer spans the entire store: every module version,
 pipeline version and database snapshot generation ever scanned — including a
 module version that was patched out of your build several scans ago. Pass
 --walk-id to restrict the answer to the modules one walk's scans covered,
-which is what "which of my modules is hit by this CVE" usually means.`,
+which is what "which of my modules is hit by this CVE" usually means.
+
+--timeline lists, per module version and analysis frame, when the advisory's
+state changed across the stored records, and why.`,
 		Example: `  kanonarion vuln-by-id GO-2023-1234
   kanonarion vuln-by-id CVE-2023-12345 --json
-  kanonarion vuln-by-id GO-2023-1234 --walk-id 01KQDBVW092ER1HNXZ60X27CMD`,
+  kanonarion vuln-by-id GO-2023-1234 --walk-id 01KQDBVW092ER1HNXZ60X27CMD
+  kanonarion vuln-by-id GO-2023-1234 --timeline`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			logger := buildLogger(logLevel, stderr)
@@ -704,11 +709,15 @@ which is what "which of my modules is hit by this CVE" usually means.`,
 			if aerr := adoptNamedWalkFrame(cmd.Context(), ctr.QueryWalks, walkID); aerr != nil {
 				return aerr
 			}
+			if timeline {
+				return runVulnTimeline(cmd.Context(), args[0], walkID, jsonOut, ctr.QueryVuln, stdout)
+			}
 			return runVulnByID(cmd.Context(), args[0], walkID, jsonOut, ctr.QueryVuln, ctr.QueryCallGraph, stdout)
 		},
 	}
 
 	cmd.Flags().StringVar(&walkID, "walk-id", "", "restrict results to modules scanned under this walk (optional; defaults to every stored scan)")
+	cmd.Flags().BoolVar(&timeline, "timeline", false, "list when the advisory's state changed per module version and frame, and why")
 
 	return cmd
 }

@@ -694,6 +694,40 @@ const (
 	TestScopeUnknown  = callgraphdomain.TestScopeUnknown
 )
 
+// The values of TimelineEntryKind, as the internal package defines them.
+//
+// Stability: supporting constants of the TimelineEntryKind type; unstable pre-v1.
+// Values may be added within a major version; treat an unrecognised value
+// conservatively (§4).
+const (
+	TimelineChange                 = vulndomain.TimelineChange
+	TimelineGenerationDisagreement = vulndomain.TimelineGenerationDisagreement
+)
+
+// The values of TimelineReason, as the internal package defines them.
+//
+// Stability: supporting constants of the TimelineReason type; unstable pre-v1.
+// Values may be added within a major version; treat an unrecognised value
+// conservatively (§4).
+const (
+	TimelineReasonAdvisoryAdded         = vulndomain.ReasonAdvisoryAdded
+	TimelineReasonCoverageLost          = vulndomain.ReasonCoverageLost
+	TimelineReasonReachabilityCorrected = vulndomain.ReasonReachabilityCorrected
+	TimelineReasonUnattributed          = vulndomain.ReasonUnattributed
+	TimelineReasonWithdrawn             = vulndomain.ReasonWithdrawn
+)
+
+// The values of TimelineStateKind, as the internal package defines them.
+//
+// Stability: supporting constants of the TimelineStateKind type; unstable pre-v1.
+// Values may be added within a major version; treat an unrecognised value
+// conservatively (§4).
+const (
+	TimelineNotReported = vulndomain.TimelineNotReported
+	TimelineReported    = vulndomain.TimelineReported
+	TimelineWithdrawn   = vulndomain.TimelineWithdrawn
+)
+
 // The values of ToolchainVersion, as the internal package defines them.
 //
 // Stability: supporting constants of the ToolchainVersion type; unstable pre-v1.

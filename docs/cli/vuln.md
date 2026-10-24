@@ -1833,16 +1833,14 @@ kanonarion vuln-by-id <finding-id> [flags]
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--walk-id` | *(none)* | Restrict results to the modules scanned under this walk; its build frame is the frame each route root is classified in |
+| `--timeline` | `false` | List when the advisory's state changed, and why |
 | `--store-root` | `~/.kanonarion` | Path to fact store root |
 | `--json` | `false` | Emit records as JSON |
 
-Without `--walk-id` the answer spans the whole store: every module version,
-every pipeline version and every database snapshot generation ever scanned.
-That includes a module version a later build patched out, which will still be
-listed as `Affected`. Pass `--walk-id` when the question is "which of the
-modules in *this* build is hit by this advisory"; text output then prints a
-`notice:` line naming the walk it filtered against, so a shorter list is never
-mistaken for an unrestricted one.
+Without `--walk-id` the answer spans every module version, pipeline version
+and snapshot ever scanned, including a module version a later build patched
+out. `--walk-id` answers for one build; text output then prints a `notice:`
+naming the walk.
 
 A `--walk-id` with no stored vulnerability scan run is an error, not an empty
 result — an all-clear for a walk that was never scanned would be a claim the
@@ -1850,23 +1848,23 @@ store cannot support. The walk constraint resolves through scan-run membership,
 not the `walk_id` provenance column on the record, so a scan two walks share is
 reported for both.
 
-**One row per module version.** A module accumulates a scan record for every
-(pipeline version, database snapshot) it has been scanned under, and those
-records disagree. `vuln-by-id` reports one row per module version, choosing the
-record that reports the advisory as affecting the module; only among records
-that agree does the most recent scan win. A later all-clear does not retire an
-earlier finding: `Clean` is the right label for a module where the advisory was
-never found, not a state a finding may decay into without a stated reason. Each
-row carries the snapshot and scan time it came from, so a stale answer is
-visible as one. Use `vuln-show --history` to see every generation.
+**One row per module version.** A module's records disagree across pipeline
+versions and snapshots. The row is a record reporting the advisory; among
+records that agree the newest scan wins, so a later all-clear never retires a
+finding. Each row carries its snapshot and scan time; `vuln-show --history`
+lists every record.
 
-**Every row names the pipeline version that produced it**, marked
-`[superseded]` when it is not the version this build serves. Those rows are
-served — they are the newest evidence the store holds for those coordinates —
-but `vuln-show` and `reachability` will not answer from them, so a row marked
-this way is not what a current scan would say. A `notice:` under the listing
-counts them. `--json` needs no marking: it emits the record, `pipeline_version`
-and all.
+**Every row names its pipeline version**, marked `[superseded]` when this build
+does not serve it: `vuln-show` and `reachability` will not answer from such a
+row. A `notice:` counts them.
+
+**`--timeline`** lists, per module version and analysis frame, each change of
+the advisory's state across the stored records, with one reason: `withdrawn`,
+`coverage-lost` (nothing was analysed; not a fix), `reachability-corrected`,
+`advisory-added` (the earlier record's stored snapshot lacks it) or
+`unattributed`. Two records from different pipeline versions are a
+`generation-disagreement`, not a change. `first reported: at or before` means no
+earlier analysed record of the same pipeline bounds it.
 
 **Example:**
 

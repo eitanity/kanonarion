@@ -64,6 +64,16 @@ var (
 	_ vendordomain.Record             = kanonarion.VendorRecord{}
 	_ kanonarion.FIPSRecord           = fipsdomain.Record{}
 	_ fipsdomain.Record               = kanonarion.FIPSRecord{}
+	_ kanonarion.FindingTimeline      = vulndomain.FindingTimeline{}
+	_ vulndomain.FindingTimeline      = kanonarion.FindingTimeline{}
+	_ kanonarion.TimelineEntry        = vulndomain.TimelineEntry{}
+	_ vulndomain.TimelineEntry        = kanonarion.TimelineEntry{}
+	_ kanonarion.TimelineState        = vulndomain.TimelineState{}
+	_ vulndomain.TimelineState        = kanonarion.TimelineState{}
+	_ kanonarion.TimelineBoundary     = vulndomain.TimelineBoundary{}
+	_ vulndomain.TimelineBoundary     = kanonarion.TimelineBoundary{}
+	_ kanonarion.TimelinePoint        = vulndomain.TimelinePoint{}
+	_ vulndomain.TimelinePoint        = kanonarion.TimelinePoint{}
 )
 
 // resultAlias pairs a graduated result alias's FAÇADE name with a zero value
@@ -98,6 +108,11 @@ func resultTypes() []resultAlias {
 		{"GoDebugRecord", kanonarion.GoDebugRecord{}},
 		{"VendorRecord", kanonarion.VendorRecord{}},
 		{"FIPSRecord", kanonarion.FIPSRecord{}},
+		{"FindingTimeline", kanonarion.FindingTimeline{}},
+		{"TimelineEntry", kanonarion.TimelineEntry{}},
+		{"TimelineState", kanonarion.TimelineState{}},
+		{"TimelineBoundary", kanonarion.TimelineBoundary{}},
+		{"TimelinePoint", kanonarion.TimelinePoint{}},
 	}
 }
 
@@ -170,6 +185,11 @@ var allowedResultMethods = map[string][]string{
 	"GoDebugRecord":       {},
 	"VendorRecord":        {},
 	"FIPSRecord":          {},
+	"FindingTimeline":     {},
+	"TimelineEntry":       {},
+	"TimelineState":       {"String"},
+	"TimelineBoundary":    {},
+	"TimelinePoint":       {},
 }
 
 // behaviourMethodMarkers are substrings whose presence in a method name betrays
@@ -213,6 +233,13 @@ var allowedResultFields = map[string][]string{
 	"GoDebugRecord":   {"ContentHash", "Ecosystem", "ExtractedAt", "PipelineVersion", "ProjectModulePath", "SchemaVersion", "Settings", "TaxonomyVersion"},
 	"VendorRecord":    {"ContentHash", "Ecosystem", "ExtractedAt", "Findings", "Modules", "OverallStatus", "PipelineVersion", "ProjectModulePath", "SchemaVersion", "VendorDir", "VendorOnly"},
 	"FIPSRecord":      {"CatalogueVersion", "Caveat", "ComplianceAssessment", "ContentHash", "Ecosystem", "ExtractedAt", "FIPSModeStaticallyEnabled", "Findings", "PipelineVersion", "ProjectModulePath", "SchemaVersion", "ToolchainCapable", "ToolchainRaw", "ToolchainVariant"},
+
+	// The timeline types are query results rather than stored records.
+	"FindingTimeline":  {"Coordinate", "Entries", "FirstReported", "NoLongerReported", "RecordCount", "Rooting", "State"},
+	"TimelineEntry":    {"FromRecord", "From", "Kind", "Reason", "ToRecord", "To", "WithdrawnAt"},
+	"TimelineState":    {"Kind", "Reachability"},
+	"TimelineBoundary": {"AtOrBefore", "Established", "EntryKind", "Previous", "Reason", "Record"},
+	"TimelinePoint":    {"ContentHash", "Coverage", "PipelineVersion", "ScannedAt", "Snapshot"},
 }
 
 // resultMethodViolations is the pure checker behind

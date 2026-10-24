@@ -208,6 +208,63 @@ func ParseDatabaseSnapshot(s string) (DatabaseSnapshot, error) {
 // (§4).
 type WalkScanRun = vulndomain.WalkScanRun
 
+// FindingTimeline is one advisory's changes of state on one coordinate within
+// one analysis frame, as QueryVulnUseCase.FindingTimelines returns it.
+//
+// Stability: result type (received by consumers); unstable pre-v1. Fields may
+// be added within a major; consumers must not assume field exhaustiveness
+// (§4).
+type FindingTimeline = vulndomain.FindingTimeline
+
+// TimelineEntry is one change of state, or one generation disagreement,
+// between two consecutive records of a FindingTimeline.
+//
+// Stability: result type (received by consumers); unstable pre-v1. Fields may
+// be added within a major; consumers must not assume field exhaustiveness
+// (§4).
+type TimelineEntry = vulndomain.TimelineEntry
+
+// TimelineState is what one record says about the advisory: its kind and,
+// when reported, the record's own reachability word.
+//
+// Stability: result type (received by consumers); unstable pre-v1. Fields may
+// be added within a major; consumers must not assume field exhaustiveness
+// (§4).
+type TimelineState = vulndomain.TimelineState
+
+// TimelineBoundary is a first-reported or no-longer-reported claim and the
+// record it rests on.
+//
+// Stability: result type (received by consumers); unstable pre-v1. Fields may
+// be added within a major; consumers must not assume field exhaustiveness
+// (§4).
+type TimelineBoundary = vulndomain.TimelineBoundary
+
+// TimelinePoint names the record a TimelineEntry or TimelineBoundary rests on.
+//
+// Stability: result type (received by consumers); unstable pre-v1. Fields may
+// be added within a major; consumers must not assume field exhaustiveness
+// (§4).
+type TimelinePoint = vulndomain.TimelinePoint
+
+// TimelineStateKind is whether a record reports, withdraws or does not report
+// the advisory.
+//
+// Stability: supporting type of the timeline result types; unstable pre-v1.
+type TimelineStateKind = vulndomain.TimelineStateKind
+
+// TimelineReason is why a state changed between two records of one pipeline
+// version, drawn from the two records alone.
+//
+// Stability: supporting type of the timeline result types; unstable pre-v1.
+type TimelineReason = vulndomain.TimelineReason
+
+// TimelineEntryKind separates a change of state from a generation
+// disagreement.
+//
+// Stability: supporting type of the timeline result types; unstable pre-v1.
+type TimelineEntryKind = vulndomain.TimelineEntryKind
+
 // SBOMRecord is the persisted SBOM document for a walk: the canonical document
 // bytes, their format, and the content digest that identifies them.
 //

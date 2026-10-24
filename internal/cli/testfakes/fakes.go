@@ -1615,6 +1615,8 @@ type FakeQueryVuln struct {
 	// of the records maps because the condition it exists to reproduce is
 	// exactly a coordinate whose records no read returns.
 	generations map[string][]vulnports.VulnerabilityRecordGeneration
+	// timelines is the answer FindingTimelines gives.
+	timelines []vulndomain.FindingTimeline
 }
 
 // SetRecordGenerations seeds the store census for a coordinate.
@@ -1789,6 +1791,24 @@ func (f *FakeQueryVuln) ListRecordsByFindingID(_ context.Context, _, walkID stri
 		return nil, fmt.Errorf("no vulnerability scan run for walk %s", walkID)
 	}
 	return recs, nil
+}
+
+// SetTimelines seeds the answer FindingTimelines gives.
+func (f *FakeQueryVuln) SetTimelines(tls []vulndomain.FindingTimeline) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.timelines = tls
+}
+
+// FindingTimelines returns the seeded timelines beside PartialErr, or Err.
+func (f *FakeQueryVuln) FindingTimelines(_ context.Context, _, walkID string) ([]vulndomain.FindingTimeline, error) {
+	if f.Err != nil {
+		return nil, f.Err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.byIDWalkSeen = walkID
+	return f.timelines, f.PartialErr
 }
 
 // FakeQueryScanRuns implements cli.QueryScanRunsUseCase.
