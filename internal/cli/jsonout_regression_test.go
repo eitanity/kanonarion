@@ -92,11 +92,11 @@ func TestQueryCommands_EmptyIsArrayNotNull(t *testing.T) {
 		// empty-result branch before reaching the JSON encoder, so --json
 		// emitted unparseable prose on the data channel.
 		{"vuln-snapshot-list"},
-		{"vuln-scan-history", "absent-walk-id"},
+		{"vuln-scan-history", nsWalkID},
 	} {
 		t.Run(args[0], func(t *testing.T) {
 			var stdout, stderr bytes.Buffer
-			full := append(append([]string{}, args...), "--json", "--store-root", t.TempDir())
+			full := append(append([]string{}, args...), "--json", "--store-root", seedOneWalkStore(t))
 			if err := Run(full, &stdout, &stderr); err != nil {
 				t.Fatalf("%v: unexpected error: %v", args, err)
 			}

@@ -52,7 +52,7 @@ func (c ToolchainConflict) Error() string {
 			"A scan's reachable set is the toolchain's, so neither answer supersedes the other, and no "+
 			"re-scan settles it: a re-scan appends a record and the other toolchain's stays. Name the build you mean — "+
 			"the walk of the newest record, or the newest project walk for your go.mod, run from the "+
-			"project — and --history lists every record with the walk it was measured in:\n  %s",
+			"project — and the last line lists every record with the walk it was measured in:\n  %s",
 		c.Coordinate, c.Values, c.ContentHashes, strings.Join(lines, "\n  "))
 }
 

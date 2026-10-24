@@ -887,8 +887,7 @@ modules, at which versions, from which project root. Under `--json` the entry
 gains an `inputs_unresolvable` field naming the missing walk; the field is absent
 on a run whose walk resolves, so an existing consumer sees no change. The same
 statement appears on `vuln-scan-show` (on the `Walk ID:` line),
-`vuln-scan-history` (once, above the table, and also for a walk with no runs
-left) and `vuln-scan-diff` (on the `Walk:` line).
+`vuln-scan-history` (once, above the table) and `vuln-scan-diff` (on the `Walk:` line).
 
 The check is a live lookup against the walks table on every read, so it
 classifies any run stranded in future as well as the ones already in the store,

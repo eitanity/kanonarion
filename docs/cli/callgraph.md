@@ -584,7 +584,7 @@ golang.org/x/mod@v0.30.0  [CHA]  Extracted
   frame: linux/amd64
   analyser: golang.org/x/tools v0.49.0
   test scope: analysed — 290 of 1039 nodes are test declarations
-  interfaces: 11 declared, 29 implementations recorded (query with 'kanonarion implementers')
+  interfaces: 11 declared, 29 implementations recorded (query with 'kanonarion implementers <interface-id>')
 Legend: [api] exported symbol  [external] outside this module  [test] declared in a _test.go file  (no tag) unexported
 
 Nodes (1039 total, showing 2):
@@ -993,7 +993,7 @@ was told to re-measure regardless.
 
 ```
     derived:  ledger reuse gate consulted, held nothing restating this analysis
-    derived:  worktree reuse gate bypassed (--force)
+    derived:  worktree reuse gate bypassed (forced)
 ```
 
 The `worktree` gate is the one `kanonarion local` consults before analysing: the

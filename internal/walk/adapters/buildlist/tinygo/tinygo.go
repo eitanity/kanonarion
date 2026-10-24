@@ -23,7 +23,7 @@ import (
 )
 
 // ErrNotOnPath is the refusal for a declaration with no tinygo to ask.
-var ErrNotOnPath = errors.New("declaring --tinygo needs the tinygo command on PATH")
+var ErrNotOnPath = errors.New("a TinyGo build target needs the tinygo command on PATH")
 
 // UnknownTargetError is the refusal for a target the tinygo command has no
 // definition of.

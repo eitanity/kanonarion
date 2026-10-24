@@ -935,14 +935,8 @@ func sbomCases(t *testing.T) []cmdCase {
 			name:      "sbom_unknown_walk",
 			args:      []string{"sbom", "01ARZ3NDEKTSV4RRFFQ69G5FZZ"},
 			storeRoot: buildDocumentStore(t),
-			why: "error-shaped: no walk with this identifier, so there is no graph to inventory. The exit " +
-				"code is 20, and it was the HELP TEXT that was wrong about it — `sbom --help` stated `4  " +
-				"the walk or package scope named does not exist` while the command returned 20, and the " +
-				"help was corrected in the same change as this case. docs/cli/conventions.md holds the " +
-				"authoritative table and lists neither sbom nor notice in its exit-4 row: a walk id is " +
-				"minted by a run, so a refusal naming one can print no command to produce it and the " +
-				"invocation is what has to change. Pinned here and in the exit-code contract test, " +
-				"because the temptation on reading that mismatch is to correct the other side.",
+			why: "error-shaped: no walk with this identifier, so there is no graph to inventory. Exit 4, " +
+				"with the statement every command gives a walk id the store does not hold.",
 		},
 		{
 			name:      "sbom_no_scope",
@@ -987,12 +981,13 @@ func sbomCases(t *testing.T) []cmdCase {
 		},
 		{
 			name:      "sbom_list_json_unknown_walk",
-			args:      []string{"sbom-list", "--json", "--walk", "01ARZ3NDEKTSV4RRFFQ69G5FZZ"},
+			args:      []string{"sbom-list", "--json", "--walk", docWalkGapID},
 			prime:     [][]string{{"sbom", docWalkID}},
 			storeRoot: buildDocumentStore(t),
 			why: "the FILTERED zero, and the control for sbom_list_json_empty: records exist and none " +
-				"matches this walk. The two zeros must not read alike — one says nothing was generated, the " +
-				"other says nothing matched — and the filtered one names the field it filtered on.",
+				"matches this walk, one the store holds that no SBOM was generated from. The two zeros must " +
+				"not read alike — one says nothing was generated, the other says nothing matched — and the " +
+				"filtered one names the field it filtered on.",
 		},
 	}
 }

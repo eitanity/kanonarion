@@ -77,7 +77,7 @@ func (d GenerationDerivation) String() string {
 	}
 	switch d.Outcome {
 	case GateOutcomeBypassed:
-		return gate + " reuse gate bypassed (--force)"
+		return gate + " reuse gate bypassed (forced)"
 	case GateOutcomeConsulted:
 		return gate + " reuse gate consulted, held nothing restating this analysis"
 	case GateOutcomeUnrecorded:

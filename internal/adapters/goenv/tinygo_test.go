@@ -161,8 +161,8 @@ func TestTinyGo_ResolutionClause(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewTinyGo: %v", err)
 	}
-	if got := f.ResolutionClause(); !strings.Contains(got, "--tinygo pico") {
-		t.Errorf("ResolutionClause() = %q, want it to name --tinygo pico", got)
+	if got := f.ResolutionClause(); !strings.Contains(got, "TinyGo build target pico") || strings.Contains(got, "--") {
+		t.Errorf("ResolutionClause() = %q, want it to name the target pico and no flag", got)
 	}
 	if got := (goenv.TinyGo{}).ResolutionClause(); got != "" {
 		t.Errorf("an undeclared frame's clause = %q, want empty", got)

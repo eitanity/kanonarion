@@ -1381,7 +1381,7 @@ func printCallGraphRecord(r domain.CallGraphRecord, limitNodes, limitEdges int, 
 		return err
 	}
 	if len(r.Interfaces) > 0 {
-		if _, err := fmt.Fprintf(stdout, "  interfaces: %d declared, %d implementations recorded (query with 'kanonarion implementers')\n",
+		if _, err := fmt.Fprintf(stdout, "  interfaces: %d declared, %d implementations recorded (query with 'kanonarion implementers <interface-id>')\n",
 			len(r.Interfaces), len(r.Implementations)); err != nil {
 			return fmt.Errorf("writing interface summary: %w", err)
 		}

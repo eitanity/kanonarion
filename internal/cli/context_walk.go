@@ -107,9 +107,10 @@ func printContextWalkText(ctx context.Context, ctr *Container, nodes []walkdomai
 			cmdWalkID = f.walkID
 		}
 		callGraph, capability := buildCallGraph(ctx, coord, ctr.QueryCallGraph, f.entryPointsFull, f.packageFilter)
+		verification := buildVerification(ctx, coord, ctr.QueryFetch)
 		out := contextOutput{
 			Module:          contextModuleInfo{Path: coord.Path(), Version: coord.Version()},
-			Verification:    buildVerification(ctx, coord, ctr.QueryFetch),
+			Verification:    verification,
 			Provenance:      buildProvenance(coord),
 			Dependencies:    buildDependencies(ctx, coord, ctr.QueryWalks, basis),
 			License:         buildLicense(ctx, coord, ctr.QueryLicense, ctr.StdlibCustody),
@@ -119,7 +120,7 @@ func printContextWalkText(ctx context.Context, ctr *Container, nodes []walkdomai
 			Examples:        buildExamples(ctx, coord, ctr.QueryExamples, compact, f.packageFilter),
 			Vulnerabilities: vulns,
 			Native:          deriveNativeCoverage(ctx, ctr.QueryNative, coord),
-			Commands:        buildCommandsWithWalk(coord, cmdWalkID),
+			Commands:        buildCommandsWithWalk(coord, cmdWalkID, verification, basis),
 		}
 		if err := printContextText(out, compact, stdout); err != nil {
 			return err
@@ -160,9 +161,10 @@ func writeContextWalkJSON(ctx context.Context, ctr *Container, rec walkdomain.Wa
 			cmdWalkID = f.walkID
 		}
 		callGraph, capability := buildCallGraph(ctx, coord, ctr.QueryCallGraph, f.entryPointsFull, f.packageFilter)
+		verification := buildVerification(ctx, coord, ctr.QueryFetch)
 		out := contextOutput{
 			Module:          contextModuleInfo{Path: coord.Path(), Version: coord.Version()},
-			Verification:    buildVerification(ctx, coord, ctr.QueryFetch),
+			Verification:    verification,
 			Provenance:      buildProvenance(coord),
 			Dependencies:    buildDependencies(ctx, coord, ctr.QueryWalks, basis),
 			License:         buildLicense(ctx, coord, ctr.QueryLicense, ctr.StdlibCustody),
@@ -172,7 +174,7 @@ func writeContextWalkJSON(ctx context.Context, ctr *Container, rec walkdomain.Wa
 			Examples:        buildExamples(ctx, coord, ctr.QueryExamples, compact, f.packageFilter),
 			Vulnerabilities: vulns,
 			Native:          deriveNativeCoverage(ctx, ctr.QueryNative, coord),
-			Commands:        buildCommandsWithWalk(coord, cmdWalkID),
+			Commands:        buildCommandsWithWalk(coord, cmdWalkID, verification, basis),
 		}
 		if f.stream {
 			if err := enc.Encode(out); err != nil {
@@ -366,9 +368,10 @@ func runContextWalkSizeOnly(
 			cmdWalkID = f.walkID
 		}
 		callGraph, capability := buildCallGraph(ctx, coord, cgUC, f.entryPointsFull, f.packageFilter)
+		verification := buildVerification(ctx, coord, fetchUC)
 		out := contextOutput{
 			Module:          contextModuleInfo{Path: coord.Path(), Version: coord.Version()},
-			Verification:    buildVerification(ctx, coord, fetchUC),
+			Verification:    verification,
 			Provenance:      buildProvenance(coord),
 			Dependencies:    buildDependencies(ctx, coord, walkUC, basis),
 			License:         buildLicense(ctx, coord, licUC, stdlibCustody),
@@ -378,7 +381,7 @@ func runContextWalkSizeOnly(
 			Examples:        buildExamples(ctx, coord, exUC, compact, f.packageFilter),
 			Vulnerabilities: vulns,
 			Native:          deriveNativeCoverage(ctx, nativeUC, coord),
-			Commands:        buildCommandsWithWalk(coord, cmdWalkID),
+			Commands:        buildCommandsWithWalk(coord, cmdWalkID, verification, basis),
 		}
 		if err := report.add(coord.String(), out); err != nil {
 			return err

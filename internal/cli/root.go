@@ -73,7 +73,7 @@ func newRootCmd(stdout, stderr io.Writer) *cobra.Command {
 			// one typo would make the file unfixable by the tool that wrote it.
 			activeConfig, activeConfigErr = loadStoreConfig(storeRoot)
 			if activeConfigErr != nil && !usableWithRejectedConfig(cmd) {
-				return &exitError{code: ExitConfig, msg: activeConfigErr.Error()}
+				return &exitError{code: ExitConfig, msg: withFlagRemedy(activeConfigErr).Error()}
 			}
 
 			// 4. Apply config defaults for flags not explicitly set (flag > config > default).
@@ -101,6 +101,7 @@ func newRootCmd(stdout, stderr io.Writer) *cobra.Command {
 					return fmt.Errorf("writing config rejection notice: %w", err)
 				}
 			}
+			walkIDLookup.arm(cmd, args, stderr)
 			return nil
 		},
 	}
@@ -265,6 +266,10 @@ func Run(args []string, stdout, stderr io.Writer) error {
 	installDefaultSubcommands(root)
 	root.SetArgs(args)
 	err := surfaceBlobRefusal(root.ExecuteContext(ctx))
+	if refusal, ok := errors.AsType[*walkIDRefusal](err); ok {
+		err = refusal
+	}
+	err = withFlagRemedy(err)
 	storeSetAside.flush(stderr, err)
 	storeNotSearched.flush(stderr)
 	frameExcludes.flush(stderr)

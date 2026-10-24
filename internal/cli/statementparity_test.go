@@ -580,15 +580,6 @@ type parityGapEntry struct {
 // description of it.
 var knownParityGaps = []parityGapEntry{
 	{
-		command:   "vuln-scan-rescan",
-		statement: "a re-scan re-evaluates that recorded build against fresh advisories",
-		reason: "the build pre-flight states which build the re-scan answers for, and that the run does not re-resolve the " +
-			"toolchain. It holds no identifier a field could carry, so only the sentence itself would close it — and putting " +
-			"a paragraph in a string is the prose relocation this guard exists to refuse. Closing it properly means the build " +
-			"a scan answers in becomes a field across the scan commands, which is a decision about vuln-scan and " +
-			"vuln-scan-rescan together, not about the rescan's own document.",
-	},
-	{
 		command:   "local",
 		statement: "derivation: call graph: derived by this run",
 		reason: "nothing can close it, and the fact it names is not the reason. The fact IS fielded: each derivation now carries " +

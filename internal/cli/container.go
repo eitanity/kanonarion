@@ -256,10 +256,19 @@ var openStorage = openConfiguredStorage
 // through. A configuration naming a backend this binary did not register is a
 // precondition failure.
 func openConfiguredStorage(req storage.Request) (*storage.Storage, error) {
+	ctx := context.Background()
+	if err := walkIDLookup.beforeOpen(ctx, req.StoreRoot); err != nil {
+		return nil, err
+	}
 	req.Command, req.OnBlobRefused = invokedCommand, blobRefusals.observe
-	st, err := composition.OpenStorage(context.Background(), req)
+	st, err := composition.OpenStorage(ctx, req)
 	if errors.Is(err, storage.ErrBackendNotRegistered) {
 		return nil, &exitError{code: ExitConfig, msg: err.Error()}
+	}
+	if err == nil {
+		if rerr := walkIDLookup.afterOpen(ctx, st); rerr != nil {
+			return nil, errors.Join(rerr, storageCloser(st)())
+		}
 	}
 	return st, err //nolint:wrapcheck // the backend's text is the refusal
 }

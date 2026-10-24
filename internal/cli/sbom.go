@@ -48,6 +48,7 @@ func newSBOMCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use: "sbom [<walk-id>]",
 		Annotations: map[string]string{
+			annotationWalkIDArgs:   "0",
 			annotationStoreIntent:  StoreIntentCreate,
 			annotationNetworkUse:   NetworkAvoidable,
 			annotationOfflineFlags: "--from-modcache",
@@ -57,7 +58,7 @@ func newSBOMCmd(stdout, stderr io.Writer) *cobra.Command {
 
 The document is an inventory: components, their identity, hashes, licences and
 dependency graph. It carries no vulnerability list. Vulnerability and
-reachability answers come from 'kanonarion vuln-show' and
+reachability answers come from 'kanonarion vuln-show <module>@<version>' and
 'kanonarion reachability', which state the frame and the advisory snapshot the
 answer was measured against.
 
@@ -69,13 +70,10 @@ Exit codes:
      that supplies each missing record; a licence-less SBOM must never pass
      as complete
   3  interrupted (SIGINT, SIGTERM or SIGHUP) before it completed
-  20 the command never got as far as a document: a walk id or --package
-     scope that names nothing, a missing walk id and no --package, an
-     unparseable coordinate, an unparseable --generated-at. A walk id is
-     minted by a run and cannot be produced on request, so there is no
-     command to print for it and the invocation is what has to change —
-     which is why it is a 20 here and a 4 on the commands that resolve a
-     record from a coordinate you can name`,
+  4  the walk id names no walk the store holds
+  20 the command never got as far as a document: a --package scope that
+     names nothing, a missing walk id and no --package, an unparseable
+     coordinate, an unparseable --generated-at`,
 		Example: `  kanonarion sbom 01KQDBVW092ER1HNXZ60X27CMD
   kanonarion sbom 01KQDBVW092ER1HNXZ60X27CMD --output sbom.json
   kanonarion sbom 01KQDBVW092ER1HNXZ60X27CMD --package ./cmd/kanonarion

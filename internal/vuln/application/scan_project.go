@@ -471,7 +471,7 @@ func (uc *ScanWalkUseCase) resolveVendoredClosure(ctx context.Context, params Sc
 		return ports.VendoredClosure{}
 	}
 	if params.NoVendor {
-		uc.logger.Info("vuln-scan: --no-vendor set, analysing the fetched artefacts even if the project is vendored",
+		uc.logger.Info("vuln-scan: vendor directory set aside by request, analysing the fetched artefacts",
 			"project_dir", params.ProjectDir)
 		return ports.VendoredClosure{}
 	}

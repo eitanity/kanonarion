@@ -34,6 +34,7 @@ func newVerificationCoverageCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use: "verification-coverage [<walk-id>]",
 		Annotations: map[string]string{
+			annotationWalkIDArgs:  "0",
 			annotationStoreIntent: StoreIntentRead,
 			annotationNetworkUse:  NetworkNever,
 		},

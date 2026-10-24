@@ -167,24 +167,12 @@ func TestExitCodeContract_WalkByIDAgreesAcrossCommands(t *testing.T) {
 	}
 }
 
-// The OTHER half of the walk-by-ID rule, and the reason this test exists beside
-// the one above: a walk id a run MINTED cannot be produced on request, so a
-// refusal naming it can print no command to run and the invocation is what has
-// to change. docs/cli/conventions.md draws the 4/20 line there and lists neither
-// sbom nor notice in its exit-4 row.
-//
-// It is pinned because the help text disagreed with it. `sbom --help` stated
-// "4  the walk or package scope named does not exist" while the command returned
-// 20; the help was corrected to match the code and the table. The temptation on
-// reading that sentence is to correct the other side, and this test is what says
-// which side was wrong.
-func TestExitCodeContract_DocumentCommandsAbsentWalkStaysConfig(t *testing.T) {
+// The document commands answer a walk the store does not hold as every other
+// command does, including when the miss surfaces inside the use case rather than
+// at the up-front lookup: the sentinel maps to 4, not to the catch-all.
+func TestExitCodeContract_DocumentCommandsAbsentWalkIsNotFound(t *testing.T) {
 	const missingWalk = "01JWALKMISSING0000000001"
 
-	// Asserted through ExitCodeForError rather than through runExitCases: the 20
-	// arrives by FALL-THROUGH, not on an *exitError carrier, and that is part of
-	// what is being pinned. A carrier would be a decision these two commands have
-	// not taken; the catch-all is what they rely on today.
 	for name, err := range map[string]error{
 		"sbom": func() error {
 			ctr := &Container{GenerateSBOM: &testfakes.FakeGenerateSBOM{Err: walkports.ErrWalkNotFound}}
@@ -199,9 +187,8 @@ func TestExitCodeContract_DocumentCommandsAbsentWalkStaysConfig(t *testing.T) {
 			t.Errorf("%s answered a missing walk with no error at all", name)
 			continue
 		}
-		if code := ExitCodeForError(err); code != ExitConfig {
-			t.Errorf("%s answers a missing walk with exit %d; the help text and the table both say %d",
-				name, code, ExitConfig)
+		if code := ExitCodeForError(err); code != ExitNotFound {
+			t.Errorf("%s answers a missing walk with exit %d, want %d", name, code, ExitNotFound)
 		}
 	}
 }

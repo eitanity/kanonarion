@@ -279,7 +279,7 @@ func withDeclinedSynthesis(r domain.CallGraphRecord, declined string) domain.Cal
 		return r
 	}
 	detail := "no go.mod was synthesised: " + declined +
-		" — name a walk that resolved them with --from-walk"
+		" — name a walk that resolved them: kanonarion callgraph " + r.Coordinate.String() + " --from-walk <walk-id>"
 	if r.FailureDetail != "" {
 		detail += "; the load then reported: " + r.FailureDetail
 	}

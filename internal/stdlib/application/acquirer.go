@@ -382,7 +382,7 @@ func verifyChecksum(version, computedSHA, publishedSHA string, lookupErr error) 
 func vcsDetail(skipVCS bool, commit string) string {
 	switch {
 	case skipVCS:
-		return "; googlesource commit anchor skipped (--skip-vcs-verify)"
+		return "; googlesource commit anchor skipped (VCS verification skipped)"
 	case commit == "":
 		return "; googlesource commit anchor unresolved"
 	default:

@@ -215,8 +215,8 @@ func (c CallGraphConflict) Remedy() Remedy {
 		lines := []string{"kanonarion callgraph-show " + coord + " --history"}
 		lead := "Two Go toolchains built this coordinate and produced different graphs, and a graph carries " +
 			"the toolchain's own stdlib and vendored trees, so neither answer supersedes the other, and " +
-			"no re-analysis settles it. Name the toolchain you mean — callers, callees, implementers and " +
-			"interface-diff take --toolchain too"
+			"no re-analysis settles it. Name the toolchain you mean, here or on callers, callees, " +
+			"implementers and interface-diff"
 		if sel := selectableToolchain(c.Values); sel != "" {
 			lines = append(lines, "kanonarion callgraph-show "+coord+" --toolchain "+sel)
 			// The prose names the SAME selector the line above does, so the two cannot
@@ -239,7 +239,7 @@ func (c CallGraphConflict) Remedy() Remedy {
 		}
 		return Remedy{
 			Lead: "This coordinate holds call graphs extracted under more than one build frame, and a graph of one " +
-				"platform is no answer about another. Name the frame you mean — --target or --tinygo, on this read " +
+				"platform is no answer about another. Name the frame you mean, on this read " +
 				"or on callers, callees and implementers",
 			Lines: lines,
 		}

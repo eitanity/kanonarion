@@ -133,7 +133,11 @@ func (uc *GenerateNoticeUseCase) processModule(
 				Reason:     StdlibMissingRecordReason(coord),
 			}, nil
 		}
-		reason := "no license record: run 'kanonarion license' first"
+		reason := "no license record: run: kanonarion license " + coord.String()
+		if coord.IsLocal() {
+			// The working tree reaches the store only through a root-ingesting walk.
+			reason = "no license record: from the project's tree, run: kanonarion walk --gomod ./go.mod --analyse-root && kanonarion license " + coord.String()
+		}
 		if n, serr := uc.supersededOnly(ctx, coord); serr != nil {
 			return nil, nil, serr
 		} else if n > 0 {

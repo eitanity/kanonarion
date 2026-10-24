@@ -55,6 +55,7 @@ func newVulnScanCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use: "vuln-scan [walk-id]",
 		Annotations: map[string]string{
+			annotationWalkIDArgs:  "0",
 			annotationStoreIntent: StoreIntentCreate,
 			annotationNetworkUse:  NetworkAlways,
 		},
@@ -87,15 +88,15 @@ it. It is reported on its own and counted in no roll-up.`,
 				if len(args) > 0 {
 					return fmt.Errorf("a go.mod scope scan (--gomod/--tool/--project) and a positional walk-id are mutually exclusive")
 				}
-				return runVulnScanScope(cmd.Context(), f, stdout, stderr)
+				return withAdvisoryRemedy(cmd.Context(), runVulnScanScope(cmd.Context(), f, stdout, stderr), scanOffline(f.fresh))
 			}
 			if f.moduleCoord != "" && len(args) > 0 {
 				return fmt.Errorf("--module and a positional walk-id are mutually exclusive")
 			}
 			if f.moduleCoord != "" {
-				return runVulnScanByModule(cmd.Context(), f, stdout, stderr)
+				return withAdvisoryRemedy(cmd.Context(), runVulnScanByModule(cmd.Context(), f, stdout, stderr), scanOffline(f.fresh))
 			}
-			return runVulnScanByWalkID(cmd.Context(), args[0], f, stdout, stderr)
+			return withAdvisoryRemedy(cmd.Context(), runVulnScanByWalkID(cmd.Context(), args[0], f, stdout, stderr), scanOffline(f.fresh))
 		},
 	}
 
@@ -1351,6 +1352,7 @@ func newVulnScanRescanCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use: "vuln-scan-rescan <walk-id>",
 		Annotations: map[string]string{
+			annotationWalkIDArgs:   "0",
 			annotationStoreIntent:  StoreIntentCreate,
 			annotationNetworkUse:   NetworkAvoidable,
 			annotationOfflineFlags: "--snapshot-source,--snapshot-version",
@@ -1463,7 +1465,11 @@ func runScanRescan(ctx context.Context, walkID string, f vulnScanRescanFlags, st
 	// walk recorded. The pre-flight says so before the most expensive run the CLI
 	// offers, on the narration channel, so the answer is not read as being about
 	// the toolchain standing here now.
-	if berr := writeRescanBuildPreflight(ctx, stderr, ctr.QueryWalks, walkID); berr != nil {
+	pin := ""
+	if f.snapshotSource != "" {
+		pin = f.snapshotSource + "@" + f.snapshotVersion
+	}
+	if berr := writeRescanBuildPreflight(ctx, stderr, ctr.QueryWalks, walkID, pin); berr != nil {
 		return berr
 	}
 
@@ -1485,7 +1491,8 @@ func runScanRescan(ctx context.Context, walkID string, f vulnScanRescanFlags, st
 	}
 
 	ctr.SetAside.to(stderr)
-	return rescanWith(ctx, ctr.RescanWalk, req, f.policyPath, f.noProgress, stdout, stderr)
+	return withAdvisoryRemedy(ctx, rescanWith(ctx, ctr.RescanWalk, req, f.policyPath, f.noProgress, stdout, stderr),
+		rescanOffline(walkID))
 }
 
 // rescanWith drives an already-resolved re-scan and owns the command's output

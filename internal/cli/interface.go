@@ -544,7 +544,7 @@ func newInterfaceListCmd(stdout, stderr io.Writer) *cobra.Command {
 			annotationNetworkUse:  NetworkNever,
 		},
 		Short: "List interface records, or packages within a specific module",
-		Long: `interface-list reads back the records 'kanonarion interface' writes, one row
+		Long: `interface-list reads back the records the interface command writes, one row
 per module coordinate. Given a module coordinate it lists that module's
 packages instead.
 

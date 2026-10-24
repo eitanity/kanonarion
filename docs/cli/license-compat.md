@@ -54,8 +54,8 @@ licence position across scopes or platforms — a `code` walk and a `complete`
 walk of one tree carry different module sets and therefore different positions
 — and the way to re-read an older answer without re-walking.
 
-A walk id the store does not hold, or one rooted at a different project, is
-refused with exit 20 and the refusal names `walk-list --module <coord>`. The
+A walk id rooted at a different project is refused with exit 20 and the
+refusal names `walk-list --module <coord>`. The
 positional slot takes a coordinate, so a walk id typed there is refused with the
 `--walk-id` invocation spelled out.
 

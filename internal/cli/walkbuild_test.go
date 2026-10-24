@@ -303,7 +303,7 @@ func TestRescanPreflight_SaysItIsReEvaluatingARecordedBuild(t *testing.T) {
 	uc.AddWalk(rec)
 
 	var buf bytes.Buffer
-	if err := writeRescanBuildPreflight(context.Background(), &buf, uc, rec.ID); err != nil {
+	if err := writeRescanBuildPreflight(context.Background(), &buf, uc, rec.ID, ""); err != nil {
 		t.Fatalf("writeRescanBuildPreflight: %v", err)
 	}
 	out := buf.String()
@@ -314,10 +314,24 @@ func TestRescanPreflight_SaysItIsReEvaluatingARecordedBuild(t *testing.T) {
 		t.Errorf("the pre-flight does not say the build is the recorded one; got:\n%s", out)
 	}
 
+	if !strings.Contains(out, "against fresh advisories") {
+		t.Errorf("an unpinned re-scan does not say it fetches fresh advisories; got:\n%s", out)
+	}
+
+	// Pinned, it downloads nothing, so it names the snapshot instead.
+	var pinned bytes.Buffer
+	if err := writeRescanBuildPreflight(context.Background(), &pinned, uc, rec.ID, "vuln.go.dev@2026-10-21T00:27:29Z"); err != nil {
+		t.Fatalf("writeRescanBuildPreflight pinned: %v", err)
+	}
+	if got := pinned.String(); strings.Contains(got, "fresh advisories") ||
+		!strings.Contains(got, "against the pinned advisory snapshot vuln.go.dev@2026-10-21T00:27:29Z") {
+		t.Errorf("a pinned re-scan does not name its snapshot; got:\n%s", got)
+	}
+
 	// A walk the store cannot produce costs the command nothing: the re-scan is
 	// about to report that failure itself, in its own words.
 	var empty bytes.Buffer
-	if err := writeRescanBuildPreflight(context.Background(), &empty, uc, "01NOSUCHWALK000000000000"); err != nil {
+	if err := writeRescanBuildPreflight(context.Background(), &empty, uc, "01NOSUCHWALK000000000000", ""); err != nil {
 		t.Fatalf("writeRescanBuildPreflight on a missing walk: %v", err)
 	}
 	if empty.Len() != 0 {

@@ -112,12 +112,11 @@ func NewVCSHostAllowlist(hosts []string) (VCSHostAllowlist, error) {
 }
 
 // ErrEmptyVCSHostAllowlist is returned when an allowlist is configured with no
-// entries. It names the supported way to turn VCS verification off so the
-// operator is not left guessing.
+// entries. The flag that turns the git leg off belongs to the commands that
+// define it, so the domain names none.
 var ErrEmptyVCSHostAllowlist = fmt.Errorf(
 	"VCS host allowlist must not be empty: it selects WHICH forges are trusted, not WHETHER " +
-		"cross-verification runs; to skip the git leg entirely use --skip-vcs-verify " +
-		"(checksum-database verification still runs)")
+		"cross-verification runs")
 
 // ValidateVCSHost checks that host is a bare, lowercased hostname: no scheme,
 // no port, no path, no user info, no wildcard. Exact matching is the whole

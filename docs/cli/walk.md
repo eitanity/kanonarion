@@ -561,7 +561,7 @@ Two refusals, both exit 20:
 
 ```console
 $ kanonarion walk --gomod ./go.mod --tinygo pico
-error: execute root command: declaring --tinygo needs the tinygo command on PATH
+error: execute root command: a TinyGo build target needs the tinygo command on PATH
 $ kanonarion walk --gomod ./go.mod --tinygo nosuchboard
 error: execute root command: tinygo does not know the target "nosuchboard": run `tinygo targets` for the names it offers
 ```

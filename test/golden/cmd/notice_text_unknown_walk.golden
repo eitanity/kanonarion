@@ -1,8 +1,8 @@
 # error-shaped: no walk with this identifier, so there is no module set to attribute.
 $ kanonarion notice 01ARZ3NDEKTSV4RRFFQ69G5FZZ
-exit 20
+exit 4
 --- error ---
-execute root command: loading walk 01ARZ3NDEKTSV4RRFFQ69G5FZZ: getting walk 01ARZ3NDEKTSV4RRFFQ69G5FZZ: walk record not found
+execute root command: no walk record matched walk id "01ARZ3NDEKTSV4RRFFQ69G5FZZ" — the value is compared for exact equality against the walk id of all 3 walk record(s) in the store (e.g. 01ARZ3NDEKTSV4RRFFQ69G5FB3); to list every walk record: kanonarion walk-list --limit 0
 --- stdout ---
 (empty)
 --- stderr ---

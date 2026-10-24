@@ -489,7 +489,8 @@ func buildSubprocessErrorDetail(execErr error, stderr []byte, walkID string) (st
 		// while the kernel choosing a victim is neither. Both are the host rather
 		// than the module, so neither may be cached as a property of the bytes.
 		return "the analysis reached the memory ceiling this host allows one analysis and stopped " +
-				"itself; give it more with --callgraph-memory-ceiling, or analyse this module on its own" + suffix,
+				"itself; " + memoryCeilingRemedy(walkID) +
+				"analyse this module on its own" + suffix,
 			failurecause.Environment, cgdomain.CallGraphStatusOutOfMemory
 	case killedBySignal(execErr):
 		// Neither deadline fired, so something outside this process ended the
@@ -505,7 +506,8 @@ func buildSubprocessErrorDetail(execErr error, stderr []byte, walkID string) (st
 		// anything, so the only account of it that can exist is the one its
 		// parent writes afterwards.
 		return "the analysis was ended by the operating system before it finished, which is " +
-				"usually memory: lower --callgraph-workers, or analyse this module on its own" + suffix,
+				"usually memory: " + fewerWorkersRemedy(walkID) +
+				"analyse this module on its own" + suffix,
 			failurecause.Environment, cgdomain.CallGraphStatusOutOfMemory
 	}
 
@@ -530,9 +532,26 @@ func killedBySignal(err error) bool {
 // not have to go and find the id of the run they are already inside.
 func raiseCeilingRemedy(walkID string) string {
 	if walkID == "" {
-		return "give it longer with --callgraph-timeout"
+		return "give it longer"
 	}
 	return fmt.Sprintf("give it longer with: kanonarion extract %s --stages callgraph --callgraph-timeout 4h", walkID)
+}
+
+// memoryCeilingRemedy and fewerWorkersRemedy re-run this walk's callgraph stage,
+// or say nothing when no walk is in hand: an adapter cannot know which command
+// is running, so it names a flag only inside a full invocation.
+func memoryCeilingRemedy(walkID string) string {
+	if walkID == "" {
+		return ""
+	}
+	return fmt.Sprintf("give it more with: kanonarion extract %s --stages callgraph --callgraph-memory-ceiling <bytes>; or ", walkID)
+}
+
+func fewerWorkersRemedy(walkID string) string {
+	if walkID == "" {
+		return ""
+	}
+	return fmt.Sprintf("run fewer at once with: kanonarion extract %s --stages callgraph --callgraph-workers 1; or ", walkID)
 }
 
 // limitedStage fails a stage whose record met an analyser limit binding this

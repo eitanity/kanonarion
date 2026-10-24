@@ -95,7 +95,7 @@ The count is a count of exported signatures. It is not a claim about behaviour:
 a release that changes no signature at all can still change what the code does,
 and a zero-breaking result over a non-empty delta says so where it is printed.
 
-Both records must already be extracted — run 'kanonarion interface' first.`,
+Both records must already be extracted: kanonarion interface <module>@<version>.`,
 		Example: `  kanonarion interface-diff github.com/spf13/cast@v1.4.1 github.com/spf13/cast@v1.10.0
   kanonarion interface-diff github.com/spf13/cast@v1.4.1 github.com/spf13/cast@v1.10.0 --json
   kanonarion interface-diff github.com/spf13/cast@v1.4.1 github.com/spf13/cast@v1.10.0 --used-by ./go.mod

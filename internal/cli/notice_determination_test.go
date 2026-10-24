@@ -207,7 +207,7 @@ func TestNoticeWith_MissingRecordRefusalOmitsTheLicenceRemedy(t *testing.T) {
 		GenerateNotice: &testfakes.FakeGenerateNotice{Result: licapp.NoticeResult{
 			ReviewItems: []licdomain.ReviewItem{{
 				Coordinate: coord,
-				Reason:     "no license record: run 'kanonarion license' first",
+				Reason:     "no license record: run: kanonarion license " + coord.String(),
 			}},
 		}},
 	}

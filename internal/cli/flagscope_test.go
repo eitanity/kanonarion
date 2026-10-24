@@ -234,7 +234,7 @@ func TestWalkHonoursOperatorOnBothPaths(t *testing.T) {
 // holds it closed.
 func TestSBOMWalkIDRefusesStdlibFromGoMod(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	err := Run([]string{"sbom", "01KQDBVW092ER1HNXZ60X27CMD", "--stdlib-from-gomod", "--store-root", t.TempDir()}, &stdout, &stderr)
+	err := Run([]string{"sbom", nsWalkID, "--stdlib-from-gomod", "--store-root", seedOneWalkStore(t)}, &stdout, &stderr)
 	if err == nil {
 		t.Fatal("sbom <walk-id> --stdlib-from-gomod must be refused, got exit 0")
 	}

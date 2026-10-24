@@ -557,7 +557,7 @@ func (w *Walker) perWalkFetcher(
 			fetcher = ff.WithForce(true)
 		} else {
 			log.WarnContext(ctx, "walker.force.unsupported",
-				slog.String("reason", "underlying fetcher does not implement WithForce; --force has no effect"),
+				slog.String("reason", "underlying fetcher does not implement WithForce; the forced re-fetch has no effect"),
 			)
 		}
 	}

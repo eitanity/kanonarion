@@ -847,11 +847,11 @@ func TestBuildSubprocessErrorDetail(t *testing.T) {
 		}
 	})
 
-	t.Run("ceiling without a walk names the flag alone", func(t *testing.T) {
+	t.Run("ceiling without a walk names no flag", func(t *testing.T) {
 		err := fmt.Errorf("%w of 2h0m0s: %w", childproc.ErrCeiling, baseErr)
 		detail, _, _ := buildSubprocessErrorDetail(err, nil, "")
-		if !strings.Contains(detail, "--callgraph-timeout") {
-			t.Errorf("expected the remedy flag, got %q", detail)
+		if !strings.Contains(detail, "give it longer") {
+			t.Errorf("expected the remedy, got %q", detail)
 		}
 		if strings.Contains(detail, "kanonarion extract ") {
 			t.Errorf("named an invocation with no walk to put in it: %q", detail)
@@ -1080,4 +1080,21 @@ func TestAdapterExtractor_CallGraph_NamesWhatAGapIsAStatementAbout(t *testing.T)
 				"rather than reaching a second answer", res.Cause)
 		}
 	})
+}
+
+// With a walk in hand the memory remedies are full re-runs of its callgraph
+// stage; without one they name no flag.
+func TestMemoryRemedies_NameAFlagOnlyInsideAnInvocation(t *testing.T) {
+	if got := raiseCeilingRemedy(""); strings.Contains(got, "--") {
+		t.Errorf("raiseCeilingRemedy(\"\") = %q names a flag outside an invocation", got)
+	}
+	for _, remedy := range []func(string) string{memoryCeilingRemedy, fewerWorkersRemedy} {
+		if got := remedy(""); got != "" {
+			t.Errorf("remedy(\"\") = %q, want nothing", got)
+		}
+		got := remedy("01KQDBVW092ER1HNXZ60X27CMD")
+		if !strings.Contains(got, "kanonarion extract 01KQDBVW092ER1HNXZ60X27CMD --stages callgraph --callgraph-") {
+			t.Errorf("remedy(walk) = %q, want the stage re-run", got)
+		}
+	}
 }

@@ -146,8 +146,9 @@ func testIntegrityFailureFatal(t *testing.T, newScanner func(error) *Scanner, sn
 	if arg != "" {
 		t.Errorf("no database argument may be returned after an abort, got %q", arg)
 	}
-	if !strings.Contains(err.Error(), "--fresh") {
-		t.Errorf("the operator must be pointed at the remedy, got: %v", err)
+	// The remedy is re-fetching; the flag that does it is the command's to name.
+	if !strings.Contains(err.Error(), "re-fetching overwrites") || strings.Contains(err.Error(), "--") {
+		t.Errorf("the operator must be pointed at the remedy without a flag, got: %v", err)
 	}
 }
 

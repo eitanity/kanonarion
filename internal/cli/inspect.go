@@ -119,9 +119,9 @@ that is tight on memory.`,
 					return rerr
 				}
 				f.gomodPath = resolved
-				return runInspectGoMod(cmd.Context(), f, scope, stdout, stderr)
+				return withAdvisoryRemedy(cmd.Context(), runInspectGoMod(cmd.Context(), f, scope, stdout, stderr), scanOffline(f.fresh))
 			}
-			return runInspect(cmd.Context(), args[0], f, stdout, stderr)
+			return withAdvisoryRemedy(cmd.Context(), runInspect(cmd.Context(), args[0], f, stdout, stderr), scanOffline(f.fresh))
 		},
 	}
 
@@ -1048,6 +1048,7 @@ func runInspectGoModStages(ctx context.Context, f inspectFlags, walkID, frame st
 	if ierr := stopIfInterrupted(ctx, "vuln-scan", verr); ierr != nil {
 		return st, ierr
 	}
+	verr = withAdvisoryRemedy(ctx, verr, scanOffline(f.fresh))
 	st.scanFacts, st.scanState = scanFacts, inspectScanState(scanFacts, verr)
 	if verr != nil {
 		_, _ = fmt.Fprintf(stderr, "vuln-scan: %v\n", verr)

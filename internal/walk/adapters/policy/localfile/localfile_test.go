@@ -14,6 +14,8 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/walk/adapters/policy/localfile"
 	domain2 "github.com/eitanity/kanonarion/internal/walk/domain"
+
+	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 )
 
 const validPolicy = `
@@ -239,14 +241,14 @@ func TestParse_AllowedVCSHostsPresentOverridesWholesale(t *testing.T) {
 	}
 }
 
-func TestParse_AllowedVCSHostsEmptyIsALoadErrorNamingSkipFlag(t *testing.T) {
+func TestParse_AllowedVCSHostsEmptyIsALoadErrorNamingNoFlag(t *testing.T) {
 	src := "version: \"1\"\nstages:\n  fetch:\n    allowed_vcs_hosts: []\n"
 	_, err := localfile.Parse([]byte(src))
 	if err == nil {
 		t.Fatal("expected an explicitly empty allowed_vcs_hosts to fail policy load")
 	}
-	if !strings.Contains(err.Error(), "--skip-vcs-verify") {
-		t.Errorf("the error must point at --skip-vcs-verify, got %q", err)
+	if !errors.Is(err, fetchdomain.ErrEmptyVCSHostAllowlist) || strings.Contains(err.Error(), "--") {
+		t.Errorf("the error must carry the empty-allowlist refusal and name no flag, got %q", err)
 	}
 }
 

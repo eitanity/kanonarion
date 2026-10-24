@@ -78,7 +78,7 @@ func TestTinyGoFlag_Refusals(t *testing.T) {
 		{"on a positional walk", nil, []string{"walk", "example.com/mod@v1.0.0", "--tinygo", "pico"},
 			"does not act on --tinygo (applies to walk --gomod"},
 		{"no tinygo on PATH", pathWithoutTinyGo, []string{"walk", "--gomod", gomod, "--tinygo", "pico"},
-			"declaring --tinygo needs the tinygo command on PATH"},
+			"a TinyGo build target needs the tinygo command on PATH"},
 		{"unknown target", nil, []string{"walk", "--gomod", gomod, "--tinygo", "nosuchboard"},
 			"tinygo does not know the target \"nosuchboard\": run `tinygo targets` for the names it offers"},
 		{"walk-list with --goos", nil, []string{"walk-list", "--tinygo", "pico", "--goos", "linux", "--goarch", "arm"},
@@ -342,7 +342,7 @@ func TestTinyGo_RemediesAndClausesNameTheDeclaration(t *testing.T) {
 	if got := targetFlagHint(); got != " --tinygo pico" {
 		t.Errorf("targetFlagHint() = %q", got)
 	}
-	if got := targetClause(); !strings.Contains(got, "--tinygo pico") {
+	if got := targetClause(); !strings.Contains(got, "TinyGo build target pico") {
 		t.Errorf("targetClause() = %q", got)
 	}
 

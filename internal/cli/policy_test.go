@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -287,8 +288,8 @@ func TestRunPolicyShow_UnusableVCSHostsIsAnError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected an empty allowed_vcs_hosts to fail policy show")
 	}
-	if !strings.Contains(err.Error(), "--skip-vcs-verify") {
-		t.Errorf("error should point at --skip-vcs-verify, got %q", err)
+	if !errors.Is(err, fetchdomain.ErrEmptyVCSHostAllowlist) {
+		t.Errorf("error should carry the empty-allowlist refusal, which the CLI gives its flag remedy, got %q", err)
 	}
 }
 

@@ -886,6 +886,7 @@ func resetInvocationState() {
 	offlineRemedy = ""
 	invokedCommand = ""
 	invokedCmd, invokedArgs = nil, nil
+	walkIDLookup = walkIDCheck{}
 	frameExcludes.reset()
 	blobRefusals.reset()
 	if restoreGoproxy != nil {
@@ -1239,7 +1240,7 @@ func declareGoproxyFlag(cmd *cobra.Command) error {
 	}
 	restore, err := goenv.Declare(fl.Value.String())
 	if err != nil {
-		return &exitError{code: ExitConfig, msg: err.Error()}
+		return &exitError{code: ExitConfig, msg: "--goproxy: " + err.Error()}
 	}
 	restoreGoproxy = restore
 	return nil
@@ -1906,6 +1907,11 @@ func ExitCodeForError(err error) int {
 		if errors.Is(err, sentinel) {
 			return ExitNotFound
 		}
+	}
+	// A walk id that reached a use case without the up-front lookup is still an
+	// absent record, not a malformed invocation.
+	if isWalkNotFound(err) {
+		return ExitNotFound
 	}
 	// Every stored generation was set aside, or a refusal was decided without
 	// one: nothing this build can serve to answer, which is an absence. A

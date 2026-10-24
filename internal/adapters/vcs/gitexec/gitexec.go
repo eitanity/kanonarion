@@ -54,11 +54,9 @@ const (
 // ErrGitNotInstalled is returned when the git binary cannot be found in PATH.
 // It wraps ports.ErrVCSToolMissing so the application layer can recognise the
 // "tool absent" case with errors.Is without importing this adapter, while the
-// message stays actionable: it names the --skip-vcs-verify escape hatch so a
-// missing tool reads as actionable rather than as a verification failure.
+// message stays actionable; a command that can skip the git leg adds its flag.
 var ErrGitNotInstalled = fmt.Errorf(
-	"%w: git not found in PATH — install git or pass --skip-vcs-verify "+
-		"(checksum verification still runs)", ports.ErrVCSToolMissing)
+	"%w: git not found in PATH — install git (checksum verification still runs)", ports.ErrVCSToolMissing)
 
 // ErrNetworkForbidden is returned instead of starting a git subprocess when the
 // environment declares no network access.
@@ -75,8 +73,7 @@ var ErrGitNotInstalled = fmt.Errorf(
 // passed still lands on VerifiedBySumDBOnly rather than failing. An air gap
 // withdraws a leg of verification; it does not invalidate the legs that remain.
 var ErrNetworkForbidden = fmt.Errorf(
-	"%w: %w — git cross-verification reaches the forge over the network; "+
-		"pass --skip-vcs-verify to record the run as checksum-verified only",
+	"%w: %w — git cross-verification reaches the forge over the network",
 	ports.ErrVCSToolMissing, goenv.ErrNetworkForbidden)
 
 // checkEgressAllowed refuses a remote git operation under a declared air gap.

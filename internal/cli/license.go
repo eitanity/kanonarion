@@ -1059,7 +1059,7 @@ func newLicenseListCmd(stdout, stderr io.Writer) *cobra.Command {
 		},
 		Aliases: []string{"licence-list"},
 		Short:   "List extracted license records",
-		Long: `license-list reads back the records 'kanonarion license' writes, so a question
+		Long: `license-list reads back the records the license command writes, so a question
 about a whole build can be asked once instead of once per module.
 
 Every row carries the licence identity, the recorded copyright status, the

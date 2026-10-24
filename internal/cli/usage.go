@@ -112,7 +112,7 @@ the module was enumerated and the answer is UNRESOLVED rather than a zero.
 
 A module the named build does not contain is answered, not refused: asking what
 your code already does with a module you have not adopted is what a migration
-needs. 'kanonarion callers' refuses that coordinate, being scoped to the walk.
+needs. 'kanonarion callers <symbol-id>' refuses that coordinate, being scoped to the walk.
 
 It reads the project's stored call graph; run 'kanonarion local .' first, and
 'kanonarion fetch <module>@<version> && kanonarion callgraph <module>@<version>'
@@ -981,7 +981,7 @@ func printUsageBuildCaveat(stdout io.Writer, r *usageReport) error {
 				"outside the named build is deliberate here — asking what this project's own code "+
 				"already does with a module it has not adopted is the migration question this command "+
 				"exists for — so this is an answer, not a fallback. A symbol query scoped to the same "+
-				"build (kanonarion callers) refuses that coordinate for the same reason.\n",
+				"build (kanonarion callers <symbol-id>) refuses that coordinate for the same reason.\n",
 			r.Module.Path()); err != nil {
 			return fmt.Errorf("writing build-scope caveat: %w", err)
 		}

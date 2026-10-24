@@ -86,7 +86,7 @@ func Declare(value string) (func() error, error) {
 	exported := value != ""
 	if exported {
 		if err := os.Setenv("GOPROXY", value); err != nil {
-			return nil, fmt.Errorf("--goproxy %q: %w", value, err)
+			return nil, fmt.Errorf("declaring GOPROXY %q: %w", value, err)
 		}
 	}
 	declaredMu.Lock()

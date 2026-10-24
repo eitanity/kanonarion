@@ -356,7 +356,15 @@ func writeWalkBuild(w io.Writer, rec walkdomain.WalkRecord, readerToolchain stri
 // reaches for when they want a DATED statement, and nothing in the output said
 // which standard library the dated statement was about.
 const rescanRecordedBuildNote = "a re-scan re-evaluates that recorded build against fresh advisories; " +
-	"it does not re-resolve the toolchain, so this run answers for the build above and not for the one a walk taken now would record"
+	rescanToolchainClause
+
+// rescanPinnedBuildNote is the same statement for a re-scan pinned to a stored
+// snapshot, which downloads nothing and so is not against fresh advisories.
+const rescanPinnedBuildNote = "a re-scan re-evaluates that recorded build against the pinned advisory snapshot %s; " +
+	rescanToolchainClause
+
+const rescanToolchainClause = "it does not re-resolve the toolchain, so this run answers for the build above " +
+	"and not for the one a walk taken now would record"
 
 // writeRescanBuildPreflight states the build a re-scan is about to re-evaluate,
 // before the most expensive run the CLI offers starts.
@@ -364,10 +372,14 @@ const rescanRecordedBuildNote = "a re-scan re-evaluates that recorded build agai
 // A walk the store cannot produce writes nothing: the re-scan is about to fail
 // on the same id and say so in its own words, and a second complaint ahead of it
 // buys the reader nothing.
-func writeRescanBuildPreflight(ctx context.Context, w io.Writer, walks QueryWalksUseCase, walkID string) error {
+func writeRescanBuildPreflight(ctx context.Context, w io.Writer, walks QueryWalksUseCase, walkID, pin string) error {
 	rec, ok := storedWalkFor(ctx, walks, walkID, true)
 	if !ok {
 		return nil
 	}
-	return writeWalkBuild(w, rec, readerWalkToolchain(ctx, rec), rescanRecordedBuildNote)
+	note := rescanRecordedBuildNote
+	if pin != "" {
+		note = fmt.Sprintf(rescanPinnedBuildNote, pin)
+	}
+	return writeWalkBuild(w, rec, readerWalkToolchain(ctx, rec), note)
 }

@@ -17,6 +17,7 @@ func newWalkDiffCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use: "walk-diff <id-a> <id-b>",
 		Annotations: map[string]string{
+			annotationWalkIDArgs:  "0,1",
 			annotationStoreIntent: StoreIntentRead,
 			annotationNetworkUse:  NetworkNever,
 		},

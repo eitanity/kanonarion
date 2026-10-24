@@ -42,8 +42,8 @@ preferences:
   # Log level: debug | info | warn | error
   # log_level: warn
   # Throttled fetch-phase progress heartbeat on long walk/inspect runs, written
-  # to stderr (never stdout, so --json is unaffected). Set false (or pass
-  # --no-progress) for fully silent runs.
+  # to stderr (never stdout, so --json is unaffected). Set false for fully
+  # silent runs.
   # progress: true
 `,
 	"license_policy": `
@@ -112,8 +112,8 @@ callgraph:
   # The Go toolchain a read prefers when one coordinate holds graphs built by
   # two of them. A graph carries its toolchain's own stdlib, so two toolchains
   # are two answers with no ladder between them and the read refuses rather than
-  # picking; this names which one you mean, once, instead of passing --toolchain
-  # on every command. It only ever breaks that tie — a coordinate naming one
+  # picking; this names which one you mean, once, instead of on every
+  # command. It only ever breaks that tie — a coordinate naming one
   # toolchain, or none, is served exactly as it is with this unset.
   # toolchain: go1.26.6
 `,
@@ -123,7 +123,7 @@ staleness:
   # proxy is asked again. Commands that report staleness (latest, audit) write
   # every successful lookup to the store and read it back inside this window,
   # and always state the lookup time they used, so a served answer is never
-  # mistaken for a live one. Pass --fresh to bypass the ledger for one run.
+  # mistaken for a live one. Either command can bypass the ledger for one run.
   #
   # Set to 0 to disable serving entirely (every command re-pays the sweep).
   # ttl: 1h
@@ -200,7 +200,7 @@ fetch_policy:
   #
   # Naming the key switches to ENFORCING mode: a host outside the list is
   # refused. An empty list is rejected at load time rather than read as
-  # "trust nobody" — that is --skip-vcs-verify.
+  # "trust nobody".
   # allowed_vcs_hosts:
   #   - bitbucket.org
   #   - codeberg.org

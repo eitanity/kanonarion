@@ -738,9 +738,10 @@ func runContext(ctx context.Context, arg string, f contextFlags, stdout, stderr 
 	// another.
 	basis := resolveBasisWalk(ctx, ctr.QueryWalks, vulns.WalkBasisID)
 	callGraph, capability := buildCallGraph(ctx, coord, ctr.QueryCallGraph, f.entryPointsFull, f.packageFilter)
+	verification := buildVerification(ctx, coord, ctr.QueryFetch)
 	out := contextOutput{
 		Module:          contextModuleInfo{Path: coord.Path(), Version: coord.Version()},
-		Verification:    buildVerification(ctx, coord, ctr.QueryFetch),
+		Verification:    verification,
 		Provenance:      buildProvenance(coord),
 		Dependencies:    buildDependencies(ctx, coord, ctr.QueryWalks, basis),
 		License:         buildLicense(ctx, coord, ctr.QueryLicense, ctr.StdlibCustody),
@@ -750,7 +751,7 @@ func runContext(ctx context.Context, arg string, f contextFlags, stdout, stderr 
 		Examples:        buildExamples(ctx, coord, ctr.QueryExamples, compact, f.packageFilter),
 		Vulnerabilities: vulns,
 		Native:          deriveNativeCoverage(ctx, ctr.QueryNative, coord),
-		Commands:        buildCommandsWithWalk(coord, cmdWalkID),
+		Commands:        buildCommandsWithWalk(coord, cmdWalkID, verification, basis),
 	}
 
 	if f.sizeOnly {

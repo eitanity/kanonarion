@@ -96,7 +96,7 @@ func newNativeListCmd(stdout, stderr io.Writer) *cobra.Command {
 			annotationNetworkUse:  NetworkNever,
 		},
 		Short: "List the modules examined for native code, filterable by what was found",
-		Long: `native-list reads back the records 'kanonarion native' writes, so the question
+		Long: `native-list reads back the records the native command writes, so the question
 the fact exists to answer can be asked of a whole store at once: which of my
 dependencies ship or link a third-party C library.
 

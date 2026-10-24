@@ -979,7 +979,7 @@ func (uc *ScanModuleUseCase) tryReuseCachedRecord(ctx context.Context, params Sc
 // discarded on exactly this path.
 func (uc *ScanModuleUseCase) logMetadataFallback(coord coordinate.ModuleCoordinate, reason domain.UnscanReason, category, detail string) {
 	if reason.ExpectedOutOfToolchain() {
-		uc.logger.Info("vuln-scan: metadata-only, version outside the project build (expected); use reachability --local for project-rooted reachability",
+		uc.logger.Info("vuln-scan: metadata-only, version outside the project build (expected); reachability over the working tree is project-rooted",
 			"coordinate", coord, "category", category, "detail", detail)
 		return
 	}

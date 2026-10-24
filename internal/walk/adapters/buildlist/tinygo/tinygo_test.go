@@ -67,7 +67,7 @@ func TestProbe_NoTinyGoOnPath(t *testing.T) {
 
 	_, err := tinygo.Probe(context.Background(), "", "pico")
 
-	if err == nil || err.Error() != "declaring --tinygo needs the tinygo command on PATH" {
+	if err == nil || err.Error() != "a TinyGo build target needs the tinygo command on PATH" {
 		t.Fatalf("Probe = %v", err)
 	}
 	if !errors.Is(err, tinygo.ErrNotOnPath) {

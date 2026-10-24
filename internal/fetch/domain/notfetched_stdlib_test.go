@@ -9,9 +9,9 @@ import (
 )
 
 // TestNotFetchedRemedy_NeverNamesFetchForTheStandardLibrary is the whole class
-// in one assertion: `fetch` rejects "stdlib" before it reaches the proxy —
-// "malformed module path: missing dot in first path element" — so naming it is
-// advice that cannot be taken however often it is run.
+// in one assertion: `fetch` rejects "stdlib" before it reaches the proxy, and a
+// walk records custody but no artefact the stages read, so no command is named
+// and the refusal says this build does not extract the record.
 func TestNotFetchedRemedy_NeverNamesFetchForTheStandardLibrary(t *testing.T) {
 	t.Parallel()
 
@@ -23,8 +23,11 @@ func TestNotFetchedRemedy_NeverNamesFetchForTheStandardLibrary(t *testing.T) {
 	if strings.Contains(got, "kanonarion fetch") {
 		t.Errorf("the remedy names a command that refuses this coordinate: %s", got)
 	}
-	if !strings.Contains(got, "kanonarion walk") {
-		t.Errorf("the remedy names no command that records the standard library: %s", got)
+	if strings.Contains(got, "kanonarion ") {
+		t.Errorf("the refusal names a command that does not produce the record: %s", got)
+	}
+	if !strings.Contains(got, "this build does not extract this record") {
+		t.Errorf("the refusal does not say the record is not extracted: %s", got)
 	}
 }
 

@@ -46,7 +46,7 @@ func TestCallGraphFrameFlags_RefuseAsWalkDoes(t *testing.T) {
 			{"unknown pair", nil, []string{"--target", "linux/notanarch"},
 				"build target linux/notanarch is not one this Go toolchain builds for"},
 			{"no tinygo on PATH", pathWithoutTinyGo, []string{"--tinygo", "pico"},
-				"declaring --tinygo needs the tinygo command on PATH"},
+				"a TinyGo build target needs the tinygo command on PATH"},
 			{"unknown tinygo target", nil, []string{"--tinygo", "nosuchboard"},
 				"tinygo does not know the target \"nosuchboard\""},
 		} {
@@ -395,7 +395,7 @@ func TestCapability_ReadsTheDeclaredFrame(t *testing.T) {
 		t.Errorf("capability --walk-id --json = exit %d\n%s%s", code, out, stderr)
 	}
 	_, stderr, code = runTinyGoCLI(t, root, "capability", "example.com/app@local", "--walk-id", "01JS0NNOSUCHWALK0000000000")
-	if code != ExitConfig || !strings.Contains(stderr, `loading walk "01JS0NNOSUCHWALK0000000000"`) {
+	if code != ExitNotFound || !strings.Contains(stderr, `no walk record matched walk id "01JS0NNOSUCHWALK0000000000"`) {
 		t.Errorf("a missing walk = exit %d:\n%s", code, stderr)
 	}
 }

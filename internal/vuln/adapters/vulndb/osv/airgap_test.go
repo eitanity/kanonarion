@@ -116,9 +116,9 @@ func TestAdvisoryDownloads_RefusedUnderAirGap(t *testing.T) {
 	}
 }
 
-// TestRefusal_NamesTheRemedy: a refusal that does not say what to run instead
-// stops the operator rather than redirecting them.
-func TestRefusal_NamesTheRemedy(t *testing.T) {
+// TestRefusal_NamesNoFlag: the adapter cannot know which command is running, so
+// its refusal names no flag; the command that hit it adds what it accepts.
+func TestRefusal_NamesNoFlag(t *testing.T) {
 	airGapped(t)
 	srv, _ := countingServer(t)
 	db := osv.New(clientRewritingTo(t, srv), &fakeVulnStore{}, testClock)
@@ -127,10 +127,8 @@ func TestRefusal_NamesTheRemedy(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected a refusal")
 	}
-	for _, want := range []string{"--fresh", "--snapshot-source", "vuln-snapshot-list"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("refusal %q does not name %q", err, want)
-		}
+	if strings.Contains(err.Error(), "--") {
+		t.Errorf("refusal %q names a flag no adapter can know the command defines", err)
 	}
 }
 

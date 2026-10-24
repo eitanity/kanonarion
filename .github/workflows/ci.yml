@@ -57,6 +57,19 @@ jobs:
           go-version: ${{ matrix.go }}
           cache: true
 
+      # The restored module cache can miss a module, and the proxy has refused
+      # connections under the egress block; retry before anything compiles.
+      - name: Download modules
+        run: |
+          set -euo pipefail
+          for i in 1 2 3 4 5; do
+            if go mod download; then exit 0; fi
+            echo "::warning::module download failed (attempt $i of 5)"
+            sleep $((i * 10))
+          done
+          echo "::error::module download failed after 5 attempts"
+          exit 1
+
       # The release matrix in release.yml is the only place non-amd64 targets
       # are built, and it triggers on tag push — so the first machine able to
       # see platform-width breakage was the one publishing the release, and a
@@ -137,6 +150,19 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      # The restored module cache can miss a module, and the proxy has refused
+      # connections under the egress block; retry before anything compiles.
+      - name: Download modules
+        run: |
+          set -euo pipefail
+          for i in 1 2 3 4 5; do
+            if go mod download; then exit 0; fi
+            echo "::warning::module download failed (attempt $i of 5)"
+            sleep $((i * 10))
+          done
+          echo "::error::module download failed after 5 attempts"
+          exit 1
+
       - name: Install golangci-lint
         run: |
           set -euo pipefail
@@ -184,6 +210,19 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+
+      # The restored module cache can miss a module, and the proxy has refused
+      # connections under the egress block; retry before anything compiles.
+      - name: Download modules
+        run: |
+          set -euo pipefail
+          for i in 1 2 3 4 5; do
+            if go mod download; then exit 0; fi
+            echo "::warning::module download failed (attempt $i of 5)"
+            sleep $((i * 10))
+          done
+          echo "::error::module download failed after 5 attempts"
+          exit 1
       # The same script make lint runs: every package in the build, kanonarion's
       # and its dependencies', on every release target, against
       # scripts/restricted-imports.allow.
@@ -216,6 +255,19 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+
+      # The restored module cache can miss a module, and the proxy has refused
+      # connections under the egress block; retry before anything compiles.
+      - name: Download modules
+        run: |
+          set -euo pipefail
+          for i in 1 2 3 4 5; do
+            if go mod download; then exit 0; fi
+            echo "::warning::module download failed (attempt $i of 5)"
+            sleep $((i * 10))
+          done
+          echo "::error::module download failed after 5 attempts"
+          exit 1
       - name: Run benchmarks
         run: |
           set -euo pipefail

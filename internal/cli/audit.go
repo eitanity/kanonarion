@@ -871,6 +871,7 @@ func auditScope(
 	}
 	derivation.scanFacts = scanFacts
 	derivation.scanErr, derivation.scanPartial = auditScanOutcome(scanFacts, verr)
+	derivation.scanErr = withAdvisoryRemedy(ctx, derivation.scanErr, scanOffline(f.fresh))
 
 	// The toolchain axis, derived once the snapshot this run is judged against is
 	// settled: the scan run names it when one was reused, and the store's latest

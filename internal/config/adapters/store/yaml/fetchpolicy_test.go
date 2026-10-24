@@ -1,10 +1,13 @@
 package yaml_test
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
 	configyaml "github.com/eitanity/kanonarion/internal/config/adapters/store/yaml"
+
+	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 )
 
 // Absent and empty are different answers. Absent leaves the built-in host set
@@ -62,15 +65,15 @@ func TestParse_FetchPolicyRejectsUnusableHosts(t *testing.T) {
 	}
 }
 
-// An empty list is not "trust nobody" — that is --skip-vcs-verify, which never
-// runs git at all, rather than a list that resolves an Origin and then rejects
-// every host.
+// An empty list is not "trust nobody" — skipping the git leg is a command's
+// flag, which never runs git at all, rather than a list that resolves an Origin
+// and then rejects every host.
 func TestParse_FetchPolicyRejectsEmptyList(t *testing.T) {
 	_, err := configyaml.Parse([]byte("version: \"2\"\nfetch_policy:\n  allowed_vcs_hosts: []\n"))
 	if err == nil {
 		t.Fatal("an empty allowed_vcs_hosts must be rejected")
 	}
-	if !strings.Contains(err.Error(), "skip-vcs-verify") {
-		t.Errorf("the error should name the supported way to turn the git leg off, got %v", err)
+	if !errors.Is(err, fetchdomain.ErrEmptyVCSHostAllowlist) {
+		t.Errorf("the error should carry the empty-allowlist refusal, which the CLI gives its flag remedy, got %v", err)
 	}
 }

@@ -498,7 +498,7 @@ func newExamplesListCmd(stdout, stderr io.Writer) *cobra.Command {
 			annotationNetworkUse:  NetworkNever,
 		},
 		Short: "List example records, or examples within a specific module",
-		Long: `examples-list reads back the records 'kanonarion examples' writes, one row per
+		Long: `examples-list reads back the records the examples command writes, one row per
 module coordinate. Given a module coordinate it lists that module's examples
 instead.
 

@@ -220,7 +220,7 @@ func TestResolve_AListingThatFailsFailsTheBuildList(t *testing.T) {
 	if err == nil {
 		t.Fatal("Resolve succeeded although the package listing failed")
 	}
-	for _, want := range []string{"package machine is not in std", "-deps -json ./...", "--tinygo pico"} {
+	for _, want := range []string{"package machine is not in std", "-deps -json ./...", "TinyGo build target pico"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("err = %v, want it to carry %q", err, want)
 		}

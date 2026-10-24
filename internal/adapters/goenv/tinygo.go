@@ -133,7 +133,7 @@ func (f TinyGo) ResolutionClause() string {
 	if !f.Declared() {
 		return ""
 	}
-	return fmt.Sprintf(" (resolving for the declared build target --tinygo %s; this failure may be the target's rather than the project's)", f.target)
+	return fmt.Sprintf(" (resolving for the declared TinyGo build target %s; this failure may be the target's rather than the project's)", f.target)
 }
 
 // PostureTinyGo is the frame the declared-tinygo-target posture is stated

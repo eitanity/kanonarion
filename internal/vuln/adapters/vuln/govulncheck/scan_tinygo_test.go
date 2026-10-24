@@ -283,7 +283,7 @@ func TestTinyGoScan_AFailedGoListIsAScanFailure(t *testing.T) {
 			if status != domain.StatusScanFailed {
 				t.Errorf("status = %s, want ScanFailed", status)
 			}
-			for _, w := range []string{"go list -deps -json ./... failed", "could not import C", "--tinygo pico"} {
+			for _, w := range []string{"go list -deps -json ./... failed", "could not import C", "TinyGo build target pico"} {
 				if !strings.Contains(detail, w) {
 					t.Errorf("detail %q does not say %q", detail, w)
 				}

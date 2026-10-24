@@ -196,6 +196,7 @@ func contextGoModDocument(ctx context.Context, ctr *Container, mod scopeModule, 
 	}
 
 	callGraph, capability := buildCallGraph(ctx, coord, ctr.QueryCallGraph, f.entryPointsFull, f.packageFilter)
+	verification := buildVerification(ctx, coord, ctr.QueryFetch)
 	out := contextOutput{
 		Module: contextModuleInfo{
 			Path:    coord.Path(),
@@ -205,8 +206,8 @@ func contextGoModDocument(ctx context.Context, ctr *Container, mod scopeModule, 
 			Replace: replaceOf(mod),
 		},
 		DependencyScope: scopeField,
-		Commands:        buildCommandsWithWalk(coord, cmdWalkID),
-		Verification:    buildVerification(ctx, coord, ctr.QueryFetch),
+		Commands:        buildCommandsWithWalk(coord, cmdWalkID, verification, basis),
+		Verification:    verification,
 		Provenance:      buildProvenance(coord),
 		Dependencies:    buildDependencies(ctx, coord, ctr.QueryWalks, basis),
 		License:         buildLicense(ctx, coord, ctr.QueryLicense, ctr.StdlibCustody),

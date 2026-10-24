@@ -49,15 +49,6 @@ const maxDBJSONBytes = 1 << 20
 // same to a caller as the module proxy's.
 var ErrNetworkForbidden = fmt.Errorf("%w: the environment declares no advisory-database download", goenv.ErrNetworkForbidden)
 
-// snapshotRemedies names the ways to judge a scan without the network. It is
-// appended to the refusal so the message that stops the run also says what to
-// run instead — and what already works: a store that carries a snapshot answers
-// scans offline without any of this, because the scan use cases prefer the
-// stored generation and only reach the network when there is none.
-const snapshotRemedies = "a store that already holds a snapshot still answers scans offline: " +
-	"drop --fresh so the stored generation is used, or pin one with " +
-	"--snapshot-source/--snapshot-version (kanonarion vuln-snapshot-list shows what is held)"
-
 // modulevuln holds a single OSV entry from the modules index.
 type modulevuln struct {
 	id    string
@@ -337,7 +328,7 @@ func (d *Database) readWithProgress(body io.Reader, contentLength int64) ([]byte
 // a response it must close.
 func (d *Database) request(ctx context.Context, url string) (*http.Response, error) {
 	if goenv.NetworkForbidden() {
-		return nil, fmt.Errorf("%w: %s not fetched; %s", ErrNetworkForbidden, url, snapshotRemedies)
+		return nil, fmt.Errorf("%w: %s not fetched", ErrNetworkForbidden, url)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {

@@ -418,7 +418,7 @@ licence the detector could identify nor a copyright statement needs both
 entries.
 
 Neither block is offered where **extraction has not run**. `no license record:
-run 'kanonarion license' first` means nothing has been measured for that
+run: kanonarion license <module>@<version>` means nothing has been measured for that
 module, and a determination recorded ahead of the measurement is a guess; run
 the extraction the message names.
 

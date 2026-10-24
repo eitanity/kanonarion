@@ -26,21 +26,72 @@ import (
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
 )
 
-func buildCommandsWithWalk(coord coordinate.ModuleCoordinate, walkID string) contextCommands {
+func buildCommandsWithWalk(coord coordinate.ModuleCoordinate, walkID string, verification contextVerification, basis basisWalk) contextCommands {
 	mod := coord.Path() + "@" + coord.Version()
-	vulnCmd := "kanonarion vuln-show " + mod
-	if walkID != "" {
-		vulnCmd = "kanonarion vuln-scan " + walkID
+	cmds := contextProducers(coord, verification.Status != sectionStatusNotFetched, basisDir(coord, basis))
+	cmds.CallGraphNav = "kanonarion callers <symbol> | kanonarion callees <symbol>"
+	cmds.Vulnerabilities = vulnProducer(coord, walkID, basis)
+	cmds.Dependents = "kanonarion dependents " + mod
+	return cmds
+}
+
+// vulnProducer scans the walk the document reads, or one rooted at coord; with
+// neither, inspect walks and scans the coordinate itself. A working tree or the
+// standard library outside any walk has no single invocation, so it gets none.
+func vulnProducer(coord coordinate.ModuleCoordinate, walkID string, basis basisWalk) string {
+	switch {
+	case walkID != "":
+		return "kanonarion vuln-scan " + walkID
+	case basis.held():
+		return "kanonarion vuln-scan " + basis.rec.ID
+	case cgdomain.IsReFetchable(coord):
+		return "kanonarion inspect " + coord.String()
 	}
-	return contextCommands{
-		Interface:       "kanonarion interface-show " + mod,
-		CallGraph:       "kanonarion callgraph-show " + mod,
-		CallGraphNav:    "kanonarion callers <symbol> | kanonarion callees <symbol>",
-		Examples:        "kanonarion examples-find <symbol> | kanonarion examples-show " + mod + " <name>",
-		Vulnerabilities: vulnCmd,
-		License:         "kanonarion license " + mod,
-		Dependents:      "kanonarion dependents " + mod,
+	return ""
+}
+
+// contextProducers names the invocation that produces each record a section
+// reports not run. Every producer refuses a module the store has not acquired,
+// so the acquisition leads where it is missing; "" where nothing here acquires it.
+func contextProducers(coord coordinate.ModuleCoordinate, fetched bool, dir string) contextCommands {
+	var cmds contextCommands
+	if line, ok := cgdomain.ReanalysisCommand(coord, dir, false); ok {
+		cmds.CallGraph = line + targetFlagHint()
 	}
+	licenseLine := "kanonarion license " + coord.String()
+	var acquire string
+	switch {
+	case fetched:
+	case cgdomain.IsReFetchable(coord):
+		acquire = "kanonarion fetch " + coord.String()
+	case coord.IsLocal() && dir != "":
+		acquire = "kanonarion walk --gomod " + filepath.Join(dir, "go.mod") + " --analyse-root"
+	default:
+		// The standard library's licence comes off its custody chain, not a fetch.
+		cmds.License = licenseLine
+		return cmds
+	}
+	ifaceLine := "kanonarion interface " + coord.String()
+	examplesLine := "kanonarion examples " + coord.String()
+	cmds.Interface, cmds.Examples, cmds.License = andThen(acquire, ifaceLine), andThen(acquire, examplesLine), andThen(acquire, licenseLine)
+	return cmds
+}
+
+// andThen runs then after first, or alone when there is no first.
+func andThen(first, then string) string {
+	if first == "" {
+		return then
+	}
+	return first + " && " + then
+}
+
+// basisDir is the working tree behind a local coordinate when the document's
+// walk was rooted at it, and "" otherwise.
+func basisDir(coord coordinate.ModuleCoordinate, basis basisWalk) string {
+	if !coord.IsLocal() || !basis.held() || basis.rec.Target != coord {
+		return ""
+	}
+	return basis.rec.ProjectDir
 }
 
 func isoTime(t time.Time) string {

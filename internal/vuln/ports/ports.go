@@ -101,7 +101,7 @@ func SnapshotIntegrityAbort(snapshot domain.DatabaseSnapshot, err error) error {
 		"%w: the advisory database snapshot %s@%s does not match the bytes it is recorded as, "+
 			"so no finding derived from it can be vouched for and the run must not claim it; "+
 			"this run left the stored blob untouched as evidence — copy the store before re-fetching, "+
-			"because re-fetching (--fresh) overwrites this snapshot in place",
+			"because re-fetching overwrites this snapshot in place",
 		err, snapshot.Source(), snapshot.Version())
 }
 
@@ -138,7 +138,7 @@ func EmptySnapshotAbort(snapshot domain.DatabaseSnapshot, count int) error {
 	return fmt.Errorf(
 		"%w: the advisory database snapshot %s@%s holds %d advisories, so a scan against it can only report "+
 			"that nothing was found because nothing was consulted; no status may be sealed against it — "+
-			"fetch a populated database (--fresh) and re-run",
+			"fetch a populated database and re-run",
 		ErrSnapshotEmpty, snapshot.Source(), snapshot.Version(), count)
 }
 
@@ -169,7 +169,7 @@ func UnavailableSnapshotAbort(snapshot domain.DatabaseSnapshot, stage string, er
 	return fmt.Errorf(
 		"%w: %s for the advisory database snapshot %s@%s: %v; the record this scan would write names that "+
 			"snapshot, and answering from the live database instead would seal a status against an advisory "+
-			"set the record does not state — fix the store or re-fetch the database (--fresh) and re-run",
+			"set the record does not state — fix the store or re-fetch the database and re-run",
 		ErrSnapshotUnavailable, stage, snapshot.Source(), snapshot.Version(), err)
 }
 

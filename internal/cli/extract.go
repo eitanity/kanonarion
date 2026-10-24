@@ -30,6 +30,7 @@ func NewExtractCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use: "extract [walk-id]",
 		Annotations: map[string]string{
+			annotationWalkIDArgs:  "0",
 			annotationStoreIntent: StoreIntentCreate,
 			annotationNetworkUse:  NetworkNever,
 		},

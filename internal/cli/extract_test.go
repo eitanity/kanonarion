@@ -63,9 +63,11 @@ func TestExtractShowCmd_NotFound(t *testing.T) {
 // broke pipelines that parsed the JSON body. The extraction itself will
 // fail because the walk-id does not exist in the empty store, but the
 // preamble runs before that failure, so stdout/stderr can still be
-// asserted.
+// asserted. The walk is one the store holds, since a missing walk is refused
+// before anything runs; with no network its modules fail fast.
 func TestExtractCmd_StatusPreambleGoesToStderr(t *testing.T) {
-	dir := t.TempDir()
+	t.Setenv("GOPROXY", "off")
+	dir := seedOneWalkStore(t)
 	for _, mode := range []string{"text", "json"} {
 		t.Run(mode, func(t *testing.T) {
 			var stdout, stderr bytes.Buffer
@@ -73,8 +75,8 @@ func TestExtractCmd_StatusPreambleGoesToStderr(t *testing.T) {
 			if mode == "json" {
 				args = append(args, "--json")
 			}
-			args = append(args, "01ARZ3NDEKTSV4RRFFQ69G5FAV") // non-existent walk
-			_ = Run(args, &stdout, &stderr)                   //nolint:errcheck // the walk does not exist; the subject is where the preamble went
+			args = append(args, nsWalkID)
+			_ = Run(args, &stdout, &stderr) //nolint:errcheck // the modules cannot be fetched; the subject is where the preamble went
 
 			if strings.Contains(stdout.String(), "Starting extraction") {
 				t.Errorf("preamble leaked to stdout (breaks --json piping):\nstdout=%q", stdout.String())

@@ -31,7 +31,7 @@ status changes, added/removed license files, and copyright-holder changes.
 A meaningful relicensing from a permissive license to a copyleft license
 (the Redis, Terraform, HashiCorp, Sentry pattern) is visibly flagged.
 
-Both records must already be extracted — run 'kanonarion license' first.`,
+Both records must already be extracted: kanonarion license <module>@<version>.`,
 		Example: `  kanonarion license-diff github.com/redis/go-redis@v8.11.5 github.com/redis/go-redis@v9.0.0
   kanonarion license-diff github.com/hashicorp/terraform@v1.4.0 github.com/hashicorp/terraform@v1.5.0 --json`,
 		RunE: func(cmd *cobra.Command, args []string) error {
