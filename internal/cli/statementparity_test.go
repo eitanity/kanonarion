@@ -612,6 +612,7 @@ type parityResult struct {
 // twice against one seeded store — once plain, once under --json — and reports
 // every run-level statement the document does not carry.
 func TestRunLevelFactParity(t *testing.T) {
+	govulncheckStubOnPath(t)
 	fx := newJSONStdoutFixture(t)
 	chdirWithGoMod(t, "")
 
