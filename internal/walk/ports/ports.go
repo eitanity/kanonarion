@@ -83,6 +83,15 @@ type StdlibAcquirer interface {
 	AcquireStdlib(ctx context.Context, goVersion string, force, skipVCS bool) (walkdomain.StdlibFacts, domain.ArtifactDigests, error)
 }
 
+// TinyGoReleaseAcquirer measures the TinyGo release archive for one release and
+// host platform: its published digest, the digest of the bytes downloaded and,
+// when they match, the SHA-256 of every file under its src directory. It never
+// fails: a leg that cannot run is an outcome with its reason. force re-acquires
+// past a held measurement.
+type TinyGoReleaseAcquirer interface {
+	AcquireTinyGoRelease(ctx context.Context, version, goos, goarch string, force bool) walkdomain.TinyGoRelease
+}
+
 // ProgressReporter receives walk fetch-phase progress so a long, otherwise
 // silent run can show proof of life. The walker calls Advance once per distinct
 // module as it is fetched (cache hits included), passing the running total. The
@@ -113,6 +122,9 @@ type BuildListModule struct {
 	// filesystem replacement has an empty Version and a Path that is a directory
 	// (the LocalReplace case); a module replacement has both Path and Version.
 	Replace *BuildListReplace
+	// Dir is the directory holding the module's source, as the toolchain
+	// reports it. A workspace member is read from here.
+	Dir string
 }
 
 // BuildListReplace is the right-hand side of a replace directive as reported by
@@ -142,6 +154,9 @@ type BuildListEdge struct {
 type BuildList struct {
 	Modules []BuildListModule
 	Edges   []BuildListEdge
+	// WorkDir is the directory of the go.work file in force, empty when the
+	// project resolves outside a workspace.
+	WorkDir string
 	// GoVersion is the effective Go toolchain version that computed this build
 	// list, as reported by `go env GOVERSION` (e.g. "go1.26.4") — the version that
 	// actually compiles the project, not the go.mod `go` directive minimum. It
@@ -156,6 +171,24 @@ type BuildList struct {
 	// the toolchain did not report them.
 	GOOS   string
 	GOARCH string
+	// GOARM and the TinyGo fields are the declared TinyGo frame the list was
+	// resolved under, empty when none was declared.
+	GOARM         string
+	TinyGoTarget  string
+	TinyGoVersion string
+	TinyGoTags    []string
+	// TinyGo is, under a declared TinyGo target, which standard packages of the
+	// closure TinyGo supplies; GoPackages is the ones Go supplies. Both are nil
+	// on any other build list.
+	TinyGo     *walkdomain.TinyGoFacts
+	GoPackages []string
+	// TinyGoFiles is every file TinyGo's packages compile for the target, by
+	// path under TINYGOROOT/src with the installed bytes' SHA-256. TinyGoHostGOOS
+	// and TinyGoHostGOARCH are the platform tinygo itself was built for, which
+	// names its release archive.
+	TinyGoFiles      []walkdomain.TinyGoSourceFile
+	TinyGoHostGOOS   string
+	TinyGoHostGOARCH string
 }
 
 // BuildListResolver computes the authoritative build list for a project from the
@@ -177,10 +210,12 @@ type LocalModuleFetchResult struct {
 }
 
 // LocalModuleFetcher creates a FactRecord from a local filesystem path instead
-// of fetching from a module proxy. Used when a go.mod replace directive points
-// to an on-disk source tree and local analysis is enabled.
+// of fetching from a module proxy, for a coordinate at the local version: the
+// project root, a local-path replacement or a go.work member. absPath is only
+// read; the record names writtenPath, the replace target as go.mod spells it,
+// or the working tree when writtenPath is empty.
 type LocalModuleFetcher interface {
-	EnsureFetchedFromPath(ctx context.Context, coord coordinate.ModuleCoordinate, absPath string) (LocalModuleFetchResult, error)
+	EnsureFetchedFromPath(ctx context.Context, coord coordinate.ModuleCoordinate, absPath, writtenPath string) (LocalModuleFetchResult, error)
 }
 
 // PolicyLoadResult is the output of PolicyStore.LoadPolicy.
@@ -257,8 +292,11 @@ type WalkFilter struct {
 	// platform-filtered read to also pin a toolchain, and there is no value it
 	// could pass to mean "any".
 	Toolchain *string
-	Limit     int // 0 = no limit
-	Offset    int
+	// TinyGoVersion is the TinyGo release half of the toolchain axis, matched
+	// exactly as Toolchain is: nil = any, the empty string = not a TinyGo walk.
+	TinyGoVersion *string
+	Limit         int // 0 = no limit
+	Offset        int
 	// LatestOnly returns only the latest walk of each unique
 	// (target, scope, platform, toolchain) combination.
 	//
@@ -286,12 +324,28 @@ type BuildEnvFilter struct {
 	// GOARCH is the target architecture (e.g. "amd64"), as `go env GOARCH`
 	// reports it for the project the walk resolved.
 	GOARCH string
+	// TinyGoTarget is the declared TinyGo target, matched exactly with the
+	// pair, or alone when no pair is given: the empty string selects only
+	// walks that declared none.
+	TinyGoTarget string
+}
+
+// IsTinyGoNameOnly reports a filter naming a TinyGo target and no pair, which
+// matches every walk recorded under that target name, whatever pair it reported.
+func (f BuildEnvFilter) IsTinyGoNameOnly() bool {
+	return f.TinyGoTarget != "" && f.GOOS == "" && f.GOARCH == ""
 }
 
 // String renders the platform the way output and refusals name it. A filter is
 // not a walk: an empty filter selects the rows that stored no platform, and it
 // says so without claiming why any particular row is one of them.
 func (f BuildEnvFilter) String() string {
+	if f.IsTinyGoNameOnly() {
+		return "tinygo/" + f.TinyGoTarget
+	}
+	if f.TinyGoTarget != "" {
+		return walkdomain.TinyGoFrameText(f.TinyGoTarget, f.GOOS, f.GOARCH)
+	}
 	if f.GOOS == "" && f.GOARCH == "" {
 		return "unrecorded"
 	}
@@ -324,6 +378,10 @@ type WalkSummary struct {
 	// no build environment, and for one written before the toolchain was
 	// projected into a column of its own.
 	GoVersion string `json:"go_version,omitempty"`
+	// TinyGoTarget and TinyGoVersion are the declared TinyGo frame, empty for a
+	// walk that declared none.
+	TinyGoTarget  string `json:"tinygo_target,omitempty"`
+	TinyGoVersion string `json:"tinygo_version,omitempty"`
 }
 
 // Toolchain names the toolchain this walk was resolved by, for output that says
@@ -341,7 +399,7 @@ func (s WalkSummary) Toolchain() string {
 // module-rooted walk (no platform applies) is never confused with a project
 // walk whose platform was not recorded.
 func (s WalkSummary) Frame() walkdomain.WalkFrame {
-	return walkdomain.FrameOf(s.Target, walkdomain.BuildEnv{GOOS: s.GOOS, GOARCH: s.GOARCH})
+	return walkdomain.FrameOf(s.Target, walkdomain.BuildEnv{GOOS: s.GOOS, GOARCH: s.GOARCH, TinyGoTarget: s.TinyGoTarget})
 }
 
 // BuildFrame renders the target platform a walk answers in, for output that

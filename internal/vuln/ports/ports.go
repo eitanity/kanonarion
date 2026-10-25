@@ -52,6 +52,29 @@ var ErrCallGraphNotFound = errors.New("call graph record not found")
 // failure without importing the store.
 var ErrVulnIntegrity = errors.New("vulnerability record integrity check failed")
 
+// ErrWalkNotScanned is wrapped by WalkNotScanned: a walk-scoped read named a
+// walk with no vulnerability scan run. It is an absent record, not a bad
+// invocation, and the CLI exits 4 on it.
+var ErrWalkNotScanned = errors.New("walk has no vulnerability scan run")
+
+// WalkNotScanned is the refusal for a walk-scoped read of a walk that was never
+// scanned. Its message is the one sentence every such read prints.
+type WalkNotScanned struct{ WalkID string }
+
+func (e WalkNotScanned) Error() string {
+	return fmt.Sprintf("no vulnerability scan run for walk %s — run: kanonarion vuln-scan %s", e.WalkID, e.WalkID)
+}
+
+// Unwrap makes errors.Is(err, ErrWalkNotScanned) hold.
+func (e WalkNotScanned) Unwrap() error { return ErrWalkNotScanned }
+
+// ErrVulnConflict is wrapped by every refusal of composition to pick between
+// vulnerability records that disagree: two toolchains' verdicts on one snapshot
+// (domain.ToolchainConflict), or two analysed finding sets of one snapshot,
+// frame, toolchain and pipeline (domain.FindingConflict). Readers call
+// composition directly, so the domain declares it and this names it.
+var ErrVulnConflict = domain.ErrVulnConflict
+
 // ErrWalkScanRunExists is returned by PutWalkScanRun when the store already holds
 // a run under the id being written. A run is written once: merging a second scan
 // into it would leave one id naming two scans' records.
@@ -93,17 +116,15 @@ var ErrSnapshotIntegrity = errors.New("vulnerability database snapshot integrity
 // This run leaves the corrupt blob alone: it is the evidence of the tamper, and
 // re-fetching over it silently would destroy the one artefact an investigation
 // needs. The message says so, and says the opposite thing too — that the remedy
-// it recommends DOES overwrite it. Measured, not assumed: PutDatabaseSnapshot
-// upserts on (source, version), so a --fresh re-fetch of the same dated snapshot
-// version replaces the altered bytes in place and leaves nothing to examine. An
-// operator who wants the evidence must copy the store first, and would otherwise
-// learn that only after destroying it.
+// it recommends DOES overwrite it: a re-fetch of the bytes the hash names
+// restores them in place and leaves nothing to examine. An operator who wants
+// the evidence must copy the store first.
 func SnapshotIntegrityAbort(snapshot domain.DatabaseSnapshot, err error) error {
 	return fmt.Errorf(
 		"%w: the advisory database snapshot %s@%s does not match the bytes it is recorded as, "+
 			"so no finding derived from it can be vouched for and the run must not claim it; "+
 			"this run left the stored blob untouched as evidence — copy the store before re-fetching, "+
-			"because re-fetching (--fresh) overwrites this snapshot in place",
+			"because re-fetching overwrites this snapshot in place",
 		err, snapshot.Source(), snapshot.Version())
 }
 
@@ -140,7 +161,7 @@ func EmptySnapshotAbort(snapshot domain.DatabaseSnapshot, count int) error {
 	return fmt.Errorf(
 		"%w: the advisory database snapshot %s@%s holds %d advisories, so a scan against it can only report "+
 			"that nothing was found because nothing was consulted; no status may be sealed against it — "+
-			"fetch a populated database (--fresh) and re-run",
+			"fetch a populated database and re-run",
 		ErrSnapshotEmpty, snapshot.Source(), snapshot.Version(), count)
 }
 
@@ -171,7 +192,7 @@ func UnavailableSnapshotAbort(snapshot domain.DatabaseSnapshot, stage string, er
 	return fmt.Errorf(
 		"%w: %s for the advisory database snapshot %s@%s: %v; the record this scan would write names that "+
 			"snapshot, and answering from the live database instead would seal a status against an advisory "+
-			"set the record does not state — fix the store or re-fetch the database (--fresh) and re-run",
+			"set the record does not state — fix the store or re-fetch the database and re-run",
 		ErrSnapshotUnavailable, stage, snapshot.Source(), snapshot.Version(), err)
 }
 
@@ -449,10 +470,13 @@ type VulnerabilityStore interface {
 	// on the same partial-result terms as ListWalkScanRuns.
 	ListAllWalkScanRuns(ctx context.Context) ([]domain.WalkScanRun, error)
 
-	// PutDatabaseSnapshot persists a vulnerability database snapshot blob.
+	// PutDatabaseSnapshot appends a vulnerability database snapshot blob, keyed
+	// on source, version and content hash. It never replaces another row's
+	// bytes; held bytes that fail their hash are restored by the same bytes.
 	PutDatabaseSnapshot(ctx context.Context, snapshot domain.DatabaseSnapshot, content io.Reader) error
 
-	// GetDatabaseSnapshot retrieves the blob content for a pinned snapshot.
+	// GetDatabaseSnapshot retrieves the blob content for a pinned snapshot: the
+	// row with its content hash, else the latest row for its version.
 	GetDatabaseSnapshot(ctx context.Context, snapshot domain.DatabaseSnapshot) (io.ReadCloser, error)
 
 	// GetLatestDatabaseSnapshot returns the most recently stored snapshot metadata.
@@ -493,6 +517,12 @@ type VulnerabilityStore interface {
 	// generations this build can reproduce, return the rest as set aside, and
 	// fail closed on an altered row.
 	ListVulnerabilityRecordsByFindingID(ctx context.Context, findingID, walkID string) ([]domain.VulnerabilityRecord, error)
+
+	// ListCoordinatesByFindingID returns, in a stable order, every module version
+	// the findings index lists for findingID, under walkID's runs when it is set,
+	// whatever its served record now says. It is the lookup a history read starts
+	// from; an unknown walkID is an error, as on ListVulnerabilityRecordsByFindingID.
+	ListCoordinatesByFindingID(ctx context.Context, findingID, walkID string) ([]coordinate.ModuleCoordinate, error)
 
 	// ListVulnerabilityRecords returns all vulnerability records for a walk scan
 	// run.
@@ -989,6 +1019,11 @@ type CallGraphNode struct {
 	// it carries none.
 	ExportKind string
 	ExportName string
+	// HandlerKind, HandlerFile and HandlerLine are the node's interrupt-handler
+	// registration, opaque for the same reason; all zero when nothing installs it.
+	HandlerKind string
+	HandlerFile string
+	HandlerLine int
 }
 
 // CallGraphEdge is a directed call edge between two node IDs.
@@ -1070,6 +1105,10 @@ type CallSiteAnswer struct {
 	// Edges holds one fact per call site the graph records out of the requested
 	// callers. A site the graph does not record is absent, never a zero fact.
 	Edges map[CallSiteKey]CallSiteFact
+	// FrameMiss, when nothing was served, says the graph is held only under other
+	// build frames, and FrameMissRemedy produces this frame's. Empty otherwise.
+	FrameMiss       string
+	FrameMissRemedy string
 }
 
 // CallSiteReader reads what one module's SERVED call graph records about

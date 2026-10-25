@@ -113,7 +113,8 @@ kanonarion examples-find Marshal
 
 Also takes the build-scope flags `--gomod`, `--walk-id`, `--toolchain` and
 `--target GOOS/GOARCH` — see [Declaring the build
-target](walk.md#declaring-the-build-target---target).
+target](walk.md#declaring-the-build-target---target) — and `--tinygo <target>`
+— see [Declaring a TinyGo target](walk.md#declaring-a-tinygo-target---tinygo).
 
 ### `examples-list` - list modules with harvested example records
 
@@ -164,6 +165,10 @@ For each `Example*` function found in a `_test.go` file:
   file import list).
 - **Doc**: the doc comment on the `Example*` function.
 
+Extraction takes no `--target` or `--tinygo`. It reads every `_test.go` file
+in the module zip and applies no build constraint, so an example record holds
+the examples of every platform at once and no build frame selects it.
+
 The database schema is versioned via the shared `schema_migrations` table
 (migration version 3).
 
@@ -203,6 +208,8 @@ it again; `examples-list` and `examples-find` leave the module out and name it.
 
 A record whose stored bytes do **not** hash to its seal has been altered, and
 every command that meets one refuses at exit `10`, as before.
+
+A record whose seal verifies but which is filed under another coordinate, or under a column value its seal does not state, is refused at exit `10` too by every read that decodes it, naming the table: `examples` warns and extracts the coordinate again, and nothing removes the row, because the ledger is append-only.
 
 ## Limitations
 

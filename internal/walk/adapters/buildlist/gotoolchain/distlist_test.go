@@ -213,3 +213,91 @@ func TestSupports_ReportsAProbeItCouldNotRun(t *testing.T) {
 		t.Errorf("Supports = (%t, %d pairs) beside an error", ok, len(offered))
 	}
 }
+
+// TestResolve_UnderATinyGoFrame holds the split the frame makes: every child
+// sees TinyGo's environment, the list children alone get its tags, and the
+// build list records the frame it was resolved under.
+func TestResolve_UnderATinyGoFrame(t *testing.T) {
+	frame, root := tinyGoFrame(t)
+	pair, err := goenv.NewTarget("linux", "arm")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin, log := loggingFakeGo(t)
+
+	bl, err := gotoolchain.New(bin, nil).WithTarget(pair).WithTinyGo(frame).Resolve(context.Background(), filepath.Dir(bin))
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+
+	if bl.GOOS != "linux" || bl.GOARCH != "arm" || bl.GOARM != "6" || bl.TinyGoTarget != "pico" ||
+		bl.TinyGoVersion != "0.42.0" || strings.Join(bl.TinyGoTags, ",") != "tinygo,pico" {
+		t.Errorf("build list frame = %+v", bl)
+	}
+	if bl.TinyGo == nil || bl.TinyGo.Target != "pico" {
+		t.Errorf("build list TinyGo facts = %+v, want the pico split recorded", bl.TinyGo)
+	}
+	raw, err := os.ReadFile(log) // #nosec G304 -- the test's own log
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertTinyGoChildren(t, strings.Split(strings.TrimSpace(string(raw)), "\n"), root)
+}
+
+// assertTinyGoChildren holds each child to the frame: TinyGo's environment on
+// every one but the probe of Go's own GOROOT, and the tags on the lists alone.
+func assertTinyGoChildren(t *testing.T, calls []string, root string) {
+	t.Helper()
+	if len(calls) != 5 {
+		t.Fatalf("children = %q, want list, mod graph, env, the package listing and Go's GOROOT", calls)
+	}
+	for _, c := range calls {
+		// Go's own GOROOT is asked outside the frame: under it GOROOT is TinyGo's
+		// merged tree, which is the thing being told apart from Go's.
+		if strings.HasPrefix(c, "env GOROOT ") {
+			if strings.Contains(c, "GOROOT="+root+" ") {
+				t.Errorf("child %q asked Go's GOROOT under the TinyGo frame", c)
+			}
+			continue
+		}
+		if !strings.HasSuffix(c, "| GOROOT="+root+" GOARM=6 CGO_ENABLED=1") {
+			t.Errorf("child %q did not see the TinyGo environment", c)
+		}
+		if tagged, isList := strings.Contains(c, "-tags=tinygo,pico"), strings.HasPrefix(c, "list "); tagged != isList {
+			t.Errorf("child %q: tagged=%t, want tags on the list children only", c, tagged)
+		}
+	}
+}
+
+// tinyGoFrame is a pico frame over a GOROOT holding src.
+func tinyGoFrame(t *testing.T) (goenv.TinyGo, string) {
+	t.Helper()
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "src"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	frame, err := goenv.NewTinyGo("pico", "0.42.0", "go1.27.2", "linux", "arm", "6", root, root, "thumbv6m-unknown-unknown-eabi", []string{"tinygo", "pico"})
+	if err != nil {
+		t.Fatalf("NewTinyGo: %v", err)
+	}
+	return frame, root
+}
+
+// loggingFakeGo stands in for the go command, logging each call's arguments and
+// the TinyGo variables it saw, and answering list, mod graph and env.
+func loggingFakeGo(t *testing.T) (bin, log string) {
+	t.Helper()
+	dir := t.TempDir()
+	log = filepath.Join(dir, "calls.log")
+	bin = filepath.Join(dir, "go")
+	if err := os.MkdirAll(filepath.Join(dir, "src"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	script := "#!/bin/sh\n" +
+		`echo "$* | GOROOT=$GOROOT GOARM=$GOARM CGO_ENABLED=$CGO_ENABLED" >> ` + log + "\n" +
+		`case "$*" in *-deps*) ;; list*) echo '{"Path":"example.com/frame","Main":true}' ;; "env GOROOT") echo ` + dir + ` ;; env*) printf 'go1.27.2\n%s\n%s\n' "$GOOS" "$GOARCH" ;; esac` + "\n"
+	if err := os.WriteFile(bin, []byte(script), 0o700); err != nil { // #nosec G306 -- a test stand-in that must be executable
+		t.Fatal(err)
+	}
+	return bin, log
+}

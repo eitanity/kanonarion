@@ -22,7 +22,7 @@ func newCallGraphListCmd(stdout, stderr io.Writer) *cobra.Command {
 			annotationNetworkUse:  NetworkNever,
 		},
 		Short: "List extracted call graph records",
-		Long: `callgraph-list reads back the records 'kanonarion callgraph' writes, one row
+		Long: `callgraph-list reads back the records the callgraph command writes, one row
 per module coordinate, optionally restricted to one module path.
 
 By default only records at the pipeline version this build serves are listed,

@@ -581,7 +581,7 @@ func TestRunWalk_ReturnsTheRecordTheRunProduced(t *testing.T) {
 	uc := &testfakes.FakeExecuteWalk{Result: walkapp.ExecuteWalkResult{Record: reused, Reused: true}}
 
 	result, err := runWalk(context.Background(), "example.com/m@v1.0.0", commonWalkFlags{}, false, true, 0,
-		"", "", false, walkdomain.WalkScopeCode, walkdomain.WalkDepthFull, "", nil, uc, nil, io.Discard, io.Discard)
+		"", "", false, walkdomain.WalkScopeCode, walkdomain.WalkDepthFull, nil, uc, nil, io.Discard, io.Discard)
 	if err != nil {
 		t.Fatalf("runWalk: %v", err)
 	}

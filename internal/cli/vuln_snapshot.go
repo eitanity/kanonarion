@@ -63,8 +63,13 @@ func runSnapshotList(ctx context.Context, jsonOut bool, uc QueryScanRunsUseCase,
 	}
 
 	for _, s := range snapshots {
-		_, _ = fmt.Fprintf(stdout, "%-30s %-20s %s\n",
-			s.Source(), s.Version(), s.RetrievedAt().UTC().Format("2006-01-02T15:04:05Z"))
+		// The hash tells apart two contents published under one version.
+		line := fmt.Sprintf("%-30s %-20s %s %s", s.Source(), s.Version(),
+			s.RetrievedAt().UTC().Format("2006-01-02T15:04:05Z"), s.ContentHash())
+		if origin := s.Origin(); origin != "" {
+			line += "  from " + origin
+		}
+		_, _ = fmt.Fprintln(stdout, line)
 	}
 	return nil
 }
@@ -134,6 +139,9 @@ func runSnapshotShow(ctx context.Context, source, version string, jsonOut bool, 
 			_, _ = fmt.Fprintf(stdout, "Version:      %s\n", s.Version())
 			_, _ = fmt.Fprintf(stdout, "Retrieved at: %s\n", s.RetrievedAt().UTC().Format(time.RFC3339))
 			_, _ = fmt.Fprintf(stdout, "Content hash: %s\n", s.ContentHash())
+			if origin := s.Origin(); origin != "" {
+				_, _ = fmt.Fprintf(stdout, "Origin:       %s\n", origin)
+			}
 			return nil
 		}
 	}

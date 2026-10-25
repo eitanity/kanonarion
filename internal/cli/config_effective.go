@@ -185,7 +185,28 @@ func effectiveSettings(cfg domain.Config, raw rawConfigDoc) []effectiveSetting {
 	}
 	add("fetch_policy.allowed_vcs_hosts", hosts, raw.isSet("fetch_policy", "allowed_vcs_hosts"))
 
+	add("storage.backend", cfg.Storage.Backend, raw.isSet("storage", "backend"))
+	add("storage.sumdb_cache", sumdbCacheDisplay(cfg.Storage.SumDBCache), raw.isSet("storage", "sumdb_cache"))
+	add("vulndb.url", vulndbURLDisplay(cfg.VulnDB.URL), raw.isSet("vulndb", "url"))
+
 	return out
+}
+
+// sumdbCacheDisplay renders storage.sumdb_cache, naming where an unset value
+// puts the cache rather than printing a blank.
+func sumdbCacheDisplay(v string) string {
+	if v == "" {
+		return "(unset: sumdb under the store root)"
+	}
+	return v
+}
+
+// vulndbURLDisplay renders vulndb.url, naming the default an unset value uses.
+func vulndbURLDisplay(v string) string {
+	if v == "" {
+		return "(unset: https://vuln.go.dev)"
+	}
+	return v
 }
 
 // callgraphToolchainDisplay renders the stored toolchain preference for a
@@ -250,7 +271,12 @@ func writeEffectiveConfig(w io.Writer, cfg domain.Config, raw rawConfigDoc) erro
 			width = len(s.Key)
 		}
 	}
-	if _, err := fmt.Fprintf(w, "\n# effective configuration (resolved; (default) = not set in this file)\n"); err != nil {
+	hash, err := cfg.Hash()
+	if err != nil {
+		return err //nolint:wrapcheck // the domain error names the hashing
+	}
+	if _, err := fmt.Fprintf(w, "\n# effective configuration (resolved; (default) = not set in this file)\n"+
+		"# config hash %s (every section but preferences and storage)\n", hash); err != nil {
 		return fmt.Errorf("writing effective config: %w", err)
 	}
 	for _, s := range settings {

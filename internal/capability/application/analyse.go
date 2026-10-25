@@ -64,7 +64,13 @@ func (uc *AnalyseCapabilitiesUseCase) Analyse(
 	if err != nil {
 		return capdomain.CapabilityReport{}, err
 	}
-	return capdomain.Analyse(rec, capdomain.SelectRoots(rec, scope), scope), nil
+	return AnalyseRecord(rec, scope), nil
+}
+
+// AnalyseRecord is the report for a record the caller already holds. Analyse
+// and context's capability section both run it, so the two cannot disagree.
+func AnalyseRecord(rec cgdomain.CallGraphRecord, scope cgdomain.RootScope) capdomain.CapabilityReport {
+	return capdomain.Analyse(rec, capdomain.SelectRoots(rec, scope), scope)
 }
 
 // Diff reads the call graphs for two coordinates and returns their per-side

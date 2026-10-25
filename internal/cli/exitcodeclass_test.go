@@ -228,6 +228,8 @@ func TestExitCodeClass_InspectRollUp(t *testing.T) {
 	}{
 		{"WalkStatusAllClean", vuldomain.WalkStatusAllClean, ExitOK},
 		{"WalkStatusAffected", vuldomain.WalkStatusAffected, ExitOK},
+		// Inconclusive is a findings answer over complete coverage, as Affected is.
+		{"WalkStatusInconclusive", vuldomain.WalkStatusInconclusive, ExitOK},
 		{"WalkStatusPartial", vuldomain.WalkStatusPartial, ExitPartial},
 		// ScanFailed keeps the code it has. inspect's own roll-up carries the
 		// vuln-scan verdict forward, and vuln-scan is the command that gates on it.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -311,7 +312,7 @@ func TestTreeIdentity_AnswersWithoutAnalysing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("TreeIdentity second call: %v", err)
 	}
-	if again != first {
+	if !reflect.DeepEqual(again, first) {
 		t.Fatalf("an unchanged tree identified differently on a second call: %+v vs %+v", again, first)
 	}
 

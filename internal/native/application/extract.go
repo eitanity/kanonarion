@@ -124,7 +124,7 @@ func (uc *ExtractNativeUseCase) Execute(ctx context.Context, req ExtractRequest)
 	}
 	zipData, err := uc.readBlob(ctx, zipIdentity)
 	if err != nil {
-		return ExtractResult{}, err
+		return ExtractResult{}, fetchports.AttributeBlobTamper(err, req.Coordinate)
 	}
 
 	components, sources, linked, err := uc.measure(ctx, req.Coordinate, zipData)

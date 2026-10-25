@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"log/slog"
 	"os"
@@ -11,8 +12,16 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
+	"github.com/eitanity/kanonarion/internal/composition/storage"
+	sqlitestorage "github.com/eitanity/kanonarion/internal/composition/storage/sqlite"
 	"github.com/eitanity/kanonarion/internal/config/domain"
 )
+
+// allMigrations returns every migration the binary knows about, for fixtures
+// that build a store by hand.
+func allMigrations() []sqlitestore.Migration {
+	return sqlitestorage.Migrations()
+}
 
 // seedStoreWithUnknownMigration builds a real store in a temp dir, brings it fully
 // up to date, and then records one migration this binary does not know — which is
@@ -185,18 +194,52 @@ func TestStoreSchemaGate_DoesNotRefuseAStoreThisBinaryKnows(t *testing.T) {
 
 			// And it really was brought up to date, so "did not refuse" is not being
 			// confused with "did not migrate either".
-			handle, err := sqlitestore.Open(filepath.Join(root, "mirror.db"), nil, sqlitestore.IntentCreate)
+			st, err := sqlitestorage.Open(storage.Request{StoreRoot: root, Intent: storage.IntentInspect})
 			if err != nil {
 				t.Fatalf("reopening store: %v", err)
 			}
-			defer func() { _ = handle.Close() }()
-			state, err := readStoreSchemaState(handle)
+			defer func() { _ = st.Close() }() //nolint:errcheck // a read-only inspection
+			report, err := st.Schema.SchemaState(context.Background())
 			if err != nil {
-				t.Fatalf("readStoreSchemaState: %v", err)
+				t.Fatalf("SchemaState: %v", err)
 			}
-			if state.status() != "ok" {
+			if state := schemaStateOf(report); state.status() != "ok" {
 				t.Errorf("status after NewContainer = %q, want %q: the container must still apply the migrations it knows", state.status(), "ok")
 			}
 		})
+	}
+}
+
+// fetch writes, so it takes the operating path's refusal: same text, same exit
+// code, and nothing written to the newer store.
+func TestStoreSchemaGate_FetchRefusesANewerStoreAndWritesNothing(t *testing.T) {
+	root := seedStoreWithUnknownMigration(t, "vuln", 9999)
+	// A proxy the fetch would use, so the refusal is the store's and not a
+	// GOPROXY=off refusal; nothing is fetched before the store is admitted.
+	t.Setenv("GOPROXY", "https://proxy.golang.org")
+	before := entries(t, root)
+
+	var stdout, stderr bytes.Buffer
+	err := Run([]string{"fetch", "example.com/mod@v1.0.0", "--store-root", root}, &stdout, &stderr)
+	if err == nil {
+		t.Fatal("fetch wrote into a store carrying a migration this binary does not know")
+	}
+	if code, carried := ExitCodeFromError(err); !carried || code != ExitConfig {
+		t.Errorf("exit code = (%d, carried %v), want ExitConfig carried", code, carried)
+	}
+	if !strings.Contains(err.Error(), newerStoreError(filepath.Join(root, "mirror.db"), storeSchemaState{unknown: []string{"vuln@v9999"}}).Error()) {
+		t.Errorf("refusal = %v, want the container's refusal text", err)
+	}
+	if after := entries(t, root); strings.Join(after, " ") != strings.Join(before, " ") {
+		t.Errorf("root holds %v after the refusal, want %v", after, before)
+	}
+	handle, err := sqlitestore.Open(filepath.Join(root, "mirror.db"), nil, sqlitestore.IntentRead)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = handle.Close() }() //nolint:errcheck // a read of the fixture
+	var n int
+	if err := handle.DB().QueryRow(`SELECT count(*) FROM fetch_records`).Scan(&n); err != nil || n != 0 {
+		t.Errorf("fetch_records = (%d, %v), want 0 rows", n, err)
 	}
 }

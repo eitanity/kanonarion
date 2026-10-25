@@ -188,11 +188,18 @@ func printContextSummary(out contextOutput, stdout io.Writer) error {
 		}
 	case sectionStatusReadError:
 		w.printf("  Call Graph:      (failed: %s)\n", out.CallGraph.Error)
+	case sectionStatusConflict:
+		w.printf("  Call Graph:      (%s)\n", out.CallGraph.Error)
+	case sectionStatusOtherFrame:
+		w.printf("  Call Graph:      %s\n", otherFrameSection(out.CallGraph))
+	case sectionStatusSuperseded:
+		w.printf("  Call Graph:      (superseded — %s)\n", out.CallGraph.Error)
 	default:
 		w.printf("  Call Graph:      %d nodes, %d edges (%s)\n",
 			out.CallGraph.NodeCount, out.CallGraph.EdgeCount,
 			statusWithReason(out.CallGraph.Status, out.CallGraph.Error))
 	}
+	printCapabilityLines(w, "  Capability:      ", "    ", out.Capability)
 
 	printExamplesSummary(w, out)
 
@@ -269,6 +276,8 @@ func printInterfaceSummary(w *errWriter, out contextOutput) {
 		}
 	case sectionStatusReadError:
 		w.printf("  Interface:       (failed: %s)\n", out.Interface.Error)
+	case sectionStatusConflict:
+		w.printf("  Interface:       (%s)\n", out.Interface.Error)
 	case sectionStatusSuperseded:
 		w.printf("  Interface:       (superseded — %s)\n", out.Interface.Error)
 	default:
@@ -310,8 +319,12 @@ func printLicenseSummary(w *errWriter, out contextOutput) {
 		}
 	case sectionStatusReadError:
 		w.printf("  License:         (failed: %s)\n", out.License.Error)
+	case sectionStatusConflict:
+		w.printf("  License:         (%s)\n", out.License.Error)
 	case sectionStatusSetAside:
 		w.printf("  License:         (no record this build can serve — %s)\n", out.License.Error)
+	case sectionStatusSuperseded:
+		w.printf("  License:         (superseded — %s)\n", out.License.Error)
 	default:
 		line := licenseSummaryLine(out.License)
 		if out.License.Error != "" {
@@ -340,8 +353,12 @@ func printExamplesSummary(w *errWriter, out contextOutput) {
 		}
 	case sectionStatusReadError:
 		w.printf("  Examples:        (failed: %s)\n", out.Examples.Error)
+	case sectionStatusConflict:
+		w.printf("  Examples:        (%s)\n", out.Examples.Error)
 	case sectionStatusSetAside:
 		w.printf("  Examples:        (no record this build can serve — %s)\n", out.Examples.Error)
+	case sectionStatusSuperseded:
+		w.printf("  Examples:        (superseded — %s)\n", out.Examples.Error)
 	default:
 		w.printf("  Examples:        %d (%s)\n", out.Examples.Count,
 			statusWithReason(out.Examples.Status, out.Examples.Error))
@@ -378,6 +395,9 @@ func printVulnerabilitiesSummary(w *errWriter, out contextOutput) {
 		}
 	case sectionStatusReadError:
 		w.printf("  Vulnerabilities: (failed: %s)\n", out.Vulnerabilities.Error)
+	case sectionStatusConflict:
+		// The statement names the records and the --history read.
+		w.printf("  Vulnerabilities: (%s)\n", out.Vulnerabilities.Error)
 	case sectionStatusSetAside:
 		w.printf("  Vulnerabilities: (no record this build can serve — %s)\n", out.Vulnerabilities.Error)
 	default:

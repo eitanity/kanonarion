@@ -78,10 +78,7 @@ func TestAuditEntryNamesTheAcquisitionMode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	store, err := sqlite.NewAuditingStore(inner, auditPath)
-	if err != nil {
-		t.Fatalf("NewAuditingStore: %v", err)
-	}
+	store := sqlite.NewAuditingStore(inner, auditPath)
 	defer func() {
 		if cerr := store.Close(); cerr != nil {
 			t.Errorf("store.Close: %v", cerr)
@@ -125,10 +122,7 @@ func TestAuditEntryOmitsAnUnrecordedMode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	store, err := sqlite.NewAuditingStore(inner, auditPath)
-	if err != nil {
-		t.Fatalf("NewAuditingStore: %v", err)
-	}
+	store := sqlite.NewAuditingStore(inner, auditPath)
 	defer func() {
 		if cerr := store.Close(); cerr != nil {
 			t.Errorf("store.Close: %v", cerr)

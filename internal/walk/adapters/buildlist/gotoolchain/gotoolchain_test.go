@@ -50,7 +50,7 @@ func TestParseModules(t *testing.T) {
 	}
 
 	want := []walkports.BuildListModule{
-		{Path: "example.com/project", Main: true},
+		{Path: "example.com/project", Main: true, Dir: "/home/u/project"},
 		{Path: "golang.org/x/mod", Version: "v0.35.0"},
 		{Path: "golang.org/x/sys", Version: "v0.20.0", Indirect: true},
 		{
@@ -136,5 +136,18 @@ func TestGoBinDefault(t *testing.T) {
 	}
 	if got := New("/opt/go/bin/go", nil).goBin(); got != "/opt/go/bin/go" {
 		t.Errorf("goBin() = %q, want the configured path", got)
+	}
+}
+
+// GOWORK names the go.work file in force; empty and "off" name none.
+func TestWorkDir(t *testing.T) {
+	for in, want := range map[string]string{
+		"":                   "",
+		"off":                "",
+		"/home/u/ws/go.work": "/home/u/ws",
+	} {
+		if got := workDir(in); got != want {
+			t.Errorf("workDir(%q) = %q, want %q", in, got, want)
+		}
 	}
 }

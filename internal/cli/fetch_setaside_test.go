@@ -227,7 +227,7 @@ func TestAuditRow_FetchRecordIntegrityFailure(t *testing.T) {
 		if err != nil {
 			t.Fatalf("buildAuditResult: %v", err)
 		}
-		return res, auditOutcomeErr([]auditModuleResult{res})
+		return res, auditOutcomeErr([]auditModuleResult{res}, auditDerivation{})
 	}
 
 	root, _ := fetchAsideStore(t, false, true)
@@ -307,7 +307,7 @@ func TestFetchRecord_DivergentRecordsAreNotAbsent(t *testing.T) {
 	if res.Verification != "(divergent fetch records)" || res.coverage.Bucket != fetchdomain.BucketDivergent || !res.coverage.Recorded {
 		t.Errorf("audit row = %q, coverage %+v; want (divergent fetch records) counted apart", res.Verification, res.coverage)
 	}
-	if code := ExitCodeForError(auditOutcomeErr([]auditModuleResult{res})); code == ExitIntegrity {
+	if code := ExitCodeForError(auditOutcomeErr([]auditModuleResult{res}, auditDerivation{})); code == ExitIntegrity {
 		t.Errorf("a divergence made audit exit %d; its exit contribution is unchanged", code)
 	}
 }

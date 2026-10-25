@@ -10,10 +10,12 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 
 	"github.com/eitanity/kanonarion/internal/adapters/interrupt"
+	"github.com/eitanity/kanonarion/internal/callgraph/adapters/analyser/staticcha/tinycgo"
 	"github.com/eitanity/kanonarion/internal/callgraph/domain"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
@@ -66,30 +68,16 @@ func (a *Analyser) loadAndBuildSSA(ctx context.Context, fset *token.FileSet, tem
 		return res, nil
 	}
 
-	// NeedModule is what makes membership a measurement rather than a guess. Go
-	// module paths nest, so a package path that begins with the analysed module's
-	// path may belong to a different module entirely, and only the go command
-	// knows which. It is requested on the load that produces the SSA program
-	// because that is the load every node in the graph comes from; the same flag
-	// is already carried by the symbol analyser's load for the same reason.
-	const fullMode = packages.NeedName | packages.NeedSyntax | packages.NeedTypes |
-		packages.NeedTypesInfo | packages.NeedFiles | packages.NeedImports | packages.NeedDeps |
-		packages.NeedModule
-
+	// Under a TinyGo frame the closure is loaded as TinyGo loads it, and TinyGo's
+	// own packages come back beside the roots so they are built with bodies.
+	var tinyGoPkgs []*packages.Package
 	load := func(withTests bool) ([]*packages.Package, error) {
-		cfg := &packages.Config{
-			Mode:    fullMode,
-			Dir:     tempDir,
-			Context: ctx,
-			Env:     env,
-			Fset:    fset,
-			Tests:   withTests,
+		if a.tinygo.Declared() {
+			roots, tiny, err := a.loadTinyGo(ctx, coord, fset, tempDir, env, targetPkgPaths, withTests)
+			tinyGoPkgs = tiny
+			return roots, err
 		}
-		pkgs, lErr := packages.Load(cfg, targetPkgPaths...)
-		if lErr != nil {
-			return nil, fmt.Errorf("syntax load: %w", lErr)
-		}
-		return pkgs, nil
+		return a.loadPackages(ctx, fset, tempDir, env, targetPkgPaths, withTests)
 	}
 
 	a.step(coord, "loading package syntax")
@@ -127,6 +115,7 @@ func (a *Analyser) loadAndBuildSSA(ctx context.Context, fset *token.FileSet, tem
 	a.logMem(ctx, "syntax_loaded")
 	a.step(coord, fmt.Sprintf("syntax loaded (%d packages)", len(loaded)))
 	res.SourceFiles = loadedSourceFiles(loaded)
+	a.reportIgnored(mode, tempDir, loaded)
 	// Taken here, while the loader's own answer is still in hand: p.Syntax and
 	// p.TypesInfo are dropped further down, and the module a package belongs to is
 	// not recoverable from the ssa.Program afterwards.
@@ -134,8 +123,9 @@ func (a *Analyser) loadAndBuildSSA(ctx context.Context, fset *token.FileSet, tem
 	if mode == modeStdlib {
 		res.Membership = newStdlibMembership(coord, loaded)
 	}
+	res.Membership = res.Membership.withTinyGo(tinyGoPkgs)
 	// Read here for the same reason: the syntax is dropped once the packages build.
-	res.ExportDirectives = a.readExportDirectives(ctx, coord, loaded, fset)
+	a.readDirectives(ctx, coord, &res, slices.Concat(loaded, tinyGoPkgs), fset)
 
 	// Pass 1: register every target package from syntax. This must complete
 	// before any Build, and before the type-only dependency sweep below: a
@@ -149,6 +139,7 @@ func (a *Analyser) loadAndBuildSSA(ctx context.Context, fset *token.FileSet, tem
 	// main is skipped — it is generated code, and its package main would
 	// otherwise make every library look like an application to the rooting rule.
 	built := registerTargetPackages(&res, loaded, markFailed)
+	built = append(built, registerTinyGoPackages(&res, tinyGoPkgs, markFailed)...)
 
 	// Every import the loader could not resolve because the module providing it is
 	// not on this host and the analysis is not permitted to fetch one. It is read
@@ -205,7 +196,7 @@ func (a *Analyser) loadAndBuildSSA(ctx context.Context, fset *token.FileSet, tem
 	res.ForeignModulesBuilt = res.Membership.foreignModules(builtPaths)
 	// The ASTs and type info are held only until the packages that need them are
 	// built; ssa keeps its own references while building and drops them after.
-	for _, p := range loaded {
+	for _, p := range append(loaded, tinyGoPkgs...) {
 		p.Syntax = nil
 		p.TypesInfo = nil
 	}
@@ -216,6 +207,52 @@ func (a *Analyser) loadAndBuildSSA(ctx context.Context, fset *token.FileSet, tem
 	recordFailedPackages(&res, failedSet)
 
 	return res, nil
+}
+
+// readDirectives reads the export directives and, under a TinyGo frame, the
+// linknames. TinyGo's own packages carry the vector table's and the runtime's.
+func (a *Analyser) readDirectives(ctx context.Context, coord coordinate.ModuleCoordinate, res *ssaBuildResult, pkgs []*packages.Package, fset *token.FileSet) {
+	res.ExportDirectives = a.readExportDirectives(ctx, coord, pkgs, fset)
+	if a.tinygo.Declared() {
+		res.Linknames = readLinknames(pkgs)
+	}
+}
+
+// loadPackages is the go/packages load of the standard frame.
+func (a *Analyser) loadPackages(ctx context.Context, fset *token.FileSet, dir string, env, patterns []string, withTests bool) ([]*packages.Package, error) {
+	// NeedModule is what makes membership a measurement rather than a guess. Go
+	// module paths nest, so a package path that begins with the analysed module's
+	// path may belong to a different module entirely, and only the go command
+	// knows which. It is requested on the load that produces the SSA program
+	// because that is the load every node in the graph comes from; the same flag
+	// is already carried by the symbol analyser's load for the same reason.
+	const fullMode = packages.NeedName | packages.NeedSyntax | packages.NeedTypes |
+		packages.NeedTypesInfo | packages.NeedFiles | packages.NeedImports | packages.NeedDeps |
+		packages.NeedModule
+	cfg := &packages.Config{
+		Mode:       fullMode,
+		Dir:        dir,
+		Context:    ctx,
+		Env:        env,
+		BuildFlags: a.buildFlags(),
+		Fset:       fset,
+		Tests:      withTests,
+	}
+	pkgs, lErr := packages.Load(cfg, patterns...)
+	if lErr != nil {
+		return nil, fmt.Errorf("syntax load: %w", lErr)
+	}
+	return pkgs, nil
+}
+
+// loadTinyGo is the load under a TinyGo frame: the roots, and TinyGo's own
+// packages among their closure.
+func (a *Analyser) loadTinyGo(ctx context.Context, coord coordinate.ModuleCoordinate, fset *token.FileSet, dir string, env, patterns []string, withTests bool) ([]*packages.Package, []*packages.Package, error) {
+	loaded, err := tinycgo.Load(ctx, a.tinyGoConfig(coord, fset, dir, env, withTests), patterns...)
+	if err != nil {
+		return nil, nil, fmt.Errorf("syntax load: %w", err)
+	}
+	return loaded.Roots, loaded.TinyGo, nil
 }
 
 // registerTargetPackages registers every loaded target package from syntax,
@@ -259,6 +296,42 @@ func registerTargetPackages(res *ssaBuildResult, loaded []*packages.Package, mar
 		}
 	}
 	return built
+}
+
+// registerTinyGoPackages registers TinyGo's own packages from syntax, so their
+// functions are built with bodies like the module's. They are analysed, so a
+// package that failed to type-check makes the record Partial as a target does.
+func registerTinyGoPackages(res *ssaBuildResult, pkgs []*packages.Package, markFailed func(string)) []*ssa.Package {
+	var built []*ssa.Package
+	for _, p := range pkgs {
+		for _, e := range p.Errors {
+			res.LoadErrs = append(res.LoadErrs, e.Error())
+		}
+		if len(p.Errors) > 0 {
+			markFailed(p.PkgPath)
+		}
+		if p.Types == nil || res.Prog.Package(p.Types) != nil {
+			continue
+		}
+		ssaPkg, cerr := createSSAPackageSafe(res.Prog, p, true)
+		if cerr != nil {
+			res.LoadErrs = append(res.LoadErrs, fmt.Sprintf("SSA package creation panic for %s: %v", p.PkgPath, cerr))
+			markFailed(p.PkgPath)
+			continue
+		}
+		built = append(built, ssaPkg)
+	}
+	return built
+}
+
+// tinyGoConfig is the TinyGo loader's view of this analysis.
+func (a *Analyser) tinyGoConfig(coord coordinate.ModuleCoordinate, fset *token.FileSet, dir string, env []string, withTests bool) tinycgo.Config {
+	return tinycgo.Config{
+		SourceRoot: a.tinygo.SourceRoot(), Target: a.tinygo.Target(), Triple: a.tinygo.LLVMTriple(),
+		GOOS: a.tinygo.GOOS(), GOARCH: a.tinygo.GOARCH(),
+		Dir: dir, Env: env, BuildFlags: a.buildFlags(), Tests: withTests, Fset: fset,
+		Step: func(text string) { a.step(coord, text) },
+	}
 }
 
 // buildSSAPackages builds each registered target package's bodies, returning
@@ -353,6 +426,9 @@ type ssaBuildResult struct {
 	// ExportDirectives is the export directive of each package-level function the
 	// analysed packages declare, keyed by node ID.
 	ExportDirectives map[string]domain.ExportDirective
+	// Linknames is what //go:linkname makes of each package-level function under
+	// a TinyGo frame, keyed by node ID; nil under any other.
+	Linknames map[string]linknameDecl
 }
 
 // Registered returns every package registered from syntax, production and test
@@ -444,6 +520,45 @@ func loadedSourceFiles(pkgs []*packages.Package) []string {
 		out = append(out, p.GoFiles...)
 		out = append(out, p.OtherFiles...)
 	}
+	return out
+}
+
+// reportIgnored hands a working tree's standard-frame load's ignored files to
+// the caller that states the ones only TinyGo builds.
+func (a *Analyser) reportIgnored(mode analysisMode, dir string, loaded []*packages.Package) {
+	if mode == modeWorktree && !a.tinygo.Declared() && a.ignoredFiles != nil {
+		a.ignoredFiles(dir, ignoredPackages(loaded))
+	}
+}
+
+// IgnoredPackage is one loaded package's Go files the build frame left out.
+type IgnoredPackage struct {
+	ImportPath string
+	Dir        string
+	Files      []string // base names
+}
+
+// ignoredPackages lists the ignored Go files of every non-standard package in
+// the load's closure.
+func ignoredPackages(roots []*packages.Package) []IgnoredPackage {
+	var out []IgnoredPackage
+	packages.Visit(roots, nil, func(p *packages.Package) {
+		if p.Module == nil {
+			return
+		}
+		var ip IgnoredPackage
+		for _, f := range p.IgnoredFiles {
+			if !strings.HasSuffix(f, ".go") {
+				continue
+			}
+			ip.Dir = filepath.Dir(f)
+			ip.Files = append(ip.Files, filepath.Base(f))
+		}
+		if len(ip.Files) > 0 {
+			ip.ImportPath = p.PkgPath
+			out = append(out, ip)
+		}
+	})
 	return out
 }
 

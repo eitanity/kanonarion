@@ -114,7 +114,9 @@ in addition to the flat component list, carries:
   component carries one `vcs` reference — the repository its module zip was
   cross-verified against — when the fetch ledger holds a positively
   cross-verified record for that coordinate, and its comment names the ref and
-  commit the cross-verification read. A component with no such record carries
+  commit the cross-verification read, and the directory compared (`the
+  compute/metadata directory of …`, or `the repository root of …`) where the
+  record names one. A component with no such record carries
   no `externalReferences` block at all: a local main module, a module fetched
   offline or with `--skip-vcs-verify`, and a module whose VCS check could not
   reach the repository are all in that state. **No library component carries a
@@ -224,6 +226,48 @@ from a gap.
 
 The same statement is reported by [`kanonarion vendor`](vendor.md#scope-statement).
 
+### TinyGo builds
+
+A walk taken with `--tinygo` adds the component
+`pkg:golang/github.com/tinygo-org/tinygo@v<release>` (type `library`), with an
+edge from the root in the dependency graph. Its properties are
+`kanonarion:component:tinygo` (`true`), `kanonarion:tinygo:target`,
+`kanonarion:tinygo:packages` (the standard packages TinyGo supplies,
+comma-separated) and, when a package holds files of both, `kanonarion:tinygo:mixed`
+(`pkg:file,file;pkg:file`, naming the files Go supplies). The `stdlib` component
+gains `kanonarion:stdlib:packages`: the standard packages Go supplies.
+
+When the walk checked TinyGo's source (see
+[the TinyGo walk](walk.md#declaring-a-tinygo-target---tinygo)), the component
+also carries the result, under `kanonarion:tinygo:custody:`:
+
+- `module`, `module_verification`, `verified_by_module`;
+- `release_asset`, `release_outcome`, `release_published_sha256`,
+  `release_observed_sha256` and `release_measured_at`, each only when the walk
+  reached it;
+- `verified_by_release`;
+- `differs_from_module` and `differs_from_release`: the differing files,
+  comma-separated, present only when a file differs;
+- `not_established`, once per reason: `<reason>: <file>,<file>`;
+- `anchor_limitation`: one sentence saying what the files were checked against
+  and with what result, written from what the walk reached.
+
+The TinyGo component carries no hashes, licence or external references. It is
+therefore named in the licence-completeness statement like any component with
+no licence identity.
+
+### Modules read from disk
+
+A local-path replacement and a `go.work` member are listed at `<path>@local`
+(`pkg:golang/example.com/foo@local`), with the licence extracted from the
+directory, and carry one property that says what they stand for:
+
+- `kanonarion:replaces` — the published require the directory replaces, for
+  example `example.com/foo@v1.2.3`;
+- `kanonarion:workspace_member` — `true` for a `go.work` member.
+
+They carry no hashes of a published artefact and no external references.
+
 ### Standard-library chain of custody
 
 The synthetic `stdlib` component is toolchain-provided, not a proxy module, so it
@@ -301,6 +345,7 @@ re-run when `--force` is passed.
 | `--output <path>` | _(stdout)_ | Write SBOM content to a file |
 | `--force` | `false` | Re-generate even if a cached SBOM exists |
 | `--target` | _(this host's platform)_ | Build target as `GOOS/GOARCH`, e.g. `wasip1/wasm`. Both the `--package` allow-list and the project walk are resolved for this platform, so the closure matches the binary built for it. Unknown pairs are refused against `go tool dist list`. `--goos`/`--goarch` set the two halves separately. See [Declaring the build target](walk.md#declaring-the-build-target---target). |
+| `--tinygo` | _(none)_ | TinyGo target, e.g. `pico` or `wasip1`, as the `tinygo` command on `PATH` defines it. Mutually exclusive with `--target`, `--goos` and `--goarch`. See [Declaring a TinyGo target](walk.md#declaring-a-tinygo-target---tinygo). |
 | `--generated-at <time>` | _(derived)_ | RFC3339 time the document is being created; becomes `metadata.timestamp`. Omitted, the document is stamped with the newest licence extraction time among its inputs and says so. Supplying it bypasses the cache |
 | `--operator` | _(empty)_ | Identity of the operator requesting generation |
 | `--stdlib-from-gomod` | `false` | Version the `stdlib` component from the `go.mod` directive, not the live toolchain. Applies when `sbom` builds a project walk (`--package` with no walk id); refused by name when a walk id is given, because that walk's `stdlib` node is already pinned. See [Standard-library version](walk.md#standard-library-version---stdlib-from-gomod). |
@@ -489,13 +534,14 @@ identity: github.com/eitanity/kanonarion@local (the document's subject) — run
 
 A component the build **replaces with a local path** (`replace example.com/mod
 => ./sub`) has no published source, so `kanonarion license` cannot reach it
-either. It is ingested from the directory that replaces it:
+either. A project walk reads it from the directory that replaces it, under
+`<path>@local`:
 
 ```
 sbom generated with undetermined licences: 1 component(s) with no licence
 identity: example.com/mod@v0.0.0-00010101000000-000000000000 — run
-'kanonarion walk --gomod /path/to/go.mod --analyse-local' then
-'kanonarion extract <walk-id>' to analyse example.com/mod from the local path
+'kanonarion walk --gomod /path/to/go.mod' then
+'kanonarion extract <walk-id>' to analyse example.com/mod@local from the local path
 this build replaces it with
 ```
 

@@ -43,11 +43,12 @@ func poisonBlobTemps(t *testing.T, root string) {
 // absent from stdout: an assertion that stdout is clean is worthless if
 // nothing logged at all.
 func TestQueryCommands_LogsGoToStderrNotStdout(t *testing.T) {
+	seeded := seedOneWalkStore(t)
 	for _, tc := range []struct {
 		name string
 		args []string
 	}{
-		{"dependents", []string{"dependents", "example.com/mod@v1.0.0", "--walk-id", "absent"}},
+		{"dependents", []string{"dependents", "example.com/mod@v1.0.0", "--walk-id", nsWalkID}},
 		{"sbom-show", []string{"sbom-show", "absent"}},
 		{"sbom-list", []string{"sbom-list"}},
 		{"vuln", []string{"vuln", "example.com/mod@v1.0.0"}},
@@ -55,20 +56,23 @@ func TestQueryCommands_LogsGoToStderrNotStdout(t *testing.T) {
 		{"vuln-by-id", []string{"vuln-by-id", "GO-9999-0000"}},
 		{"vuln-scan-list", []string{"vuln-scan-list"}},
 		{"vuln-scan-show", []string{"vuln-scan-show", "absent"}},
-		{"vuln-scan-history", []string{"vuln-scan-history", "absent"}},
+		{"vuln-scan-history", []string{"vuln-scan-history", nsWalkID}},
 		{"vuln-scan-diff", []string{"vuln-scan-diff", "absent-a", "absent-b"}},
 		// Not a query, but it reaches the store and narrates before it fails, and
 		// that narration was going to stdout. It belongs in this table for exactly
 		// that reason: the invariant is about the channel, not about the command
 		// being read-only.
-		{"vuln-scan-rescan", []string{"vuln-scan-rescan", "absent"}},
+		{"vuln-scan-rescan", []string{"vuln-scan-rescan", nsWalkID}},
 		{"vuln-snapshot-list", []string{"vuln-snapshot-list"}},
 		{"vuln-snapshot-show", []string{"vuln-snapshot-show", "govulndb", "v0"}},
-		{"walk-show", []string{"walk-show", "absent"}},
-		{"walk-diff", []string{"walk-diff", "absent-a", "absent-b"}},
+		{"walk-show", []string{"walk-show", nsWalkID}},
+		{"walk-diff", []string{"walk-diff", nsWalkID, nsWalkID}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			root := t.TempDir()
+			// A walk the store holds, since a missing one is refused before the
+			// store is opened; no network, so the re-scan fails fast.
+			t.Setenv("GOPROXY", "off")
+			root := copyOfStore(t, seeded)
 			poisonBlobTemps(t, root)
 
 			var stdout, stderr bytes.Buffer

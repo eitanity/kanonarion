@@ -191,4 +191,8 @@ type Record struct {
 	// ContentHash is the deterministic hash of the sorted finding set
 	// folded with the toolchain capability headline.
 	ContentHash string
+	// ConfigHash is the config hash the policy outcomes were evaluated under.
+	// Provenance only: no read selects by it. Empty on records written before
+	// it was recorded.
+	ConfigHash string `json:",omitempty"`
 }

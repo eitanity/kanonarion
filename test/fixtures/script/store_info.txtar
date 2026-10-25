@@ -6,17 +6,17 @@ stderr 'no store at'
 stderr 'kanonarion inspect'
 ! exists $WORK/.kanonarion
 
-# Initialise the store by running a command that creates mirror.db. `extract`
+# Initialise the store by running a command that creates mirror.db. `license`
 # writes records, so it creates the store root and the database before it looks
-# for the walk; naming a walk that is not there leaves the store behind and
-# fails on the record, which is exactly the state this case needs. The reads
-# above cannot be used for this any more — a read no longer creates a store.
-! kanonarion extract 01JX0000000000000000000000
-stderr 'walk record not found'
+# for the module; naming one never fetched leaves the store behind and fails on
+# the record, which is exactly the state this case needs. The reads above cannot
+# be used for this any more — a read no longer creates a store.
+! kanonarion license example.com/never@v1.0.0
+stderr 'module not fetched'
 
 # store info now reports the schema state.
 kanonarion store info
-stdout 'binary expects: v87'
+stdout 'binary expects: v93'
 stdout 'status:'
 
 # JSON output contains the required fields.

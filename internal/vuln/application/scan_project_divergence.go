@@ -160,7 +160,7 @@ func (uc *ScanWalkUseCase) scanProjectDiverged(
 		// so every matched advisory is added with a nil Reachable. That parameter
 		// already exists for the one other case where the analysis could not have
 		// reported an advisory at all, and it means the same thing here.
-		findings, err := uc.mergeCoordinateFindings(ctx, coord, nil, false, *snapshot)
+		findings, err := uc.mergeCoordinateFindings(ctx, coord, nil, false, domain.ScanModeSource, *snapshot)
 		if interrupt.Cancelled(ctx, err) {
 			return fmt.Errorf("matching advisories for %s: %w", coord, err)
 		}
@@ -173,6 +173,7 @@ func (uc *ScanWalkUseCase) scanProjectDiverged(
 			out[coord] = moduleResult{coord: coord, record: rec}
 			continue
 		}
+		findings = partitionStdlibUnderTinyGo(walk, coord, findings)
 		rec, perr := uc.persistProjectRecord(ctx, root, coord, findings,
 			// No analysis of this build ran, so nothing establishes a toolchain.
 			domain.StatusUnscannable, domain.UnscanReasonProjectBuildDiverged, reason, "",

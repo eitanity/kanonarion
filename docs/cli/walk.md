@@ -56,13 +56,14 @@ kanonarion walk --gomod ./go.mod [flags]
 | `--shallow` | `false` | Fetch only the target; list its `go.mod` requires without recursing (positional module walk only) |
 | `--skip-vcs-verify` | `false` | Skip git cross-verification (checksum still runs) |
 | `--allow-verification-downgrade` | `false` | Permit a weaker re-measurement of a module to be recorded alongside a stronger stored one. Without it the weaker measurement is refused, the stronger record is kept and answers, and the run warns. See [Re-measuring with a weaker anchor](fetch.md#re-measuring-with-a-weaker-anchor---allow-verification-downgrade) |
-| `--analyse-local` | `false` | Ingest `replace` targets that point to local directories so callgraph/iface/license can analyse them. Requires `--gomod`; refused by name on a positional module walk, which has no local source context |
+| `--analyse-local` | `false` | No effect: every `--gomod` walk reads local-path `replace` targets from disk. Accepted so existing invocations still run, with a note on stderr; refused by name on a positional module walk, which has no local source context |
 | `--analyse-root` | `false` | Ingest the project's own working tree so all extraction stages analyse the project's own packages. Re-reads the tree fresh on every run. Requires a `go.mod` walk; incompatible with `--tool` (a tool walk does not cover the project's own packages). See [Analysing the project root](#analysing-the-project-root---analyse-root). |
 | `--stdlib-from-gomod` | `false` | Version the `stdlib` node from the `go.mod` directive, not the live toolchain. Requires a `go.mod` walk; refused by name on a positional module walk, which has no project `go.mod` to read the directive from. See [Standard-library version](#standard-library-version---stdlib-from-gomod). |
 | `--from-modcache[=dir]` | _(off)_ | Source modules from an existing Go module cache instead of the network proxy, verifying each against the project's local `go.sum` - the offline walk. Passed bare it uses `go env GOMODCACHE`; an optional value names the cache directory. A module missing from the cache, or whose bytes disagree with `go.sum`, fails the walk. Requires a `go.mod` walk; refused by name on a positional module walk, which has no project `go.sum` to verify the cache against. See [Offline and air-gapped walks](#offline-and-air-gapped-walks). |
 | `--target` | _(this host's platform)_ | Build target as `GOOS/GOARCH`, e.g. `wasip1/wasm`. The canonical spelling. Requires a `go.mod` walk; refused by name on a positional module walk, which records no build environment. See [Declaring the build target](#declaring-the-build-target---target). |
 | `--goos` | _(this host's)_ | The `GOOS` half of `--target`. Must be given with `--goarch`; mutually exclusive with `--target`. |
 | `--goarch` | _(this host's)_ | The `GOARCH` half of `--target`. Must be given with `--goos`; mutually exclusive with `--target`. |
+| `--tinygo` | _(none)_ | TinyGo target, e.g. `pico` or `wasip1`, as the `tinygo` command on `PATH` defines it. Mutually exclusive with `--target`, `--goos` and `--goarch`. Requires a `go.mod` walk. See [Declaring a TinyGo target](#declaring-a-tinygo-target---tinygo). |
 | `--json` | `false` | Emit the walk record, and this run's verification coverage, as JSON |
 
 #### What `walk --json` carries
@@ -130,7 +131,8 @@ A walk rooted at a published `module@version` resolves no platform and prints
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--module` | _(all)_ | Filter by the `module@version` the walk is rooted at |
-| `--goos`, `--goarch` | _(all)_ | Filter by the recorded platform. Pass both; the pair is validated as `walk --goos/--goarch` validates it. Walks that recorded no platform never match |
+| `--goos`, `--goarch` | _(all)_ | Filter by the recorded platform. Pass both; the pair is validated as `walk --goos/--goarch` validates it. Walks that recorded no platform never match, and neither do TinyGo walks |
+| `--tinygo` | _(all)_ | Filter by the recorded TinyGo target name, e.g. `pico`. The name is matched as recorded, so the `tinygo` command need not be on `PATH`, and a name no walk recorded lists nothing. Cannot be combined with `--goos`/`--goarch`. See [Declaring a TinyGo target](#declaring-a-tinygo-target---tinygo) |
 | `--since` | _(none)_ | Filter by start time (RFC3339) |
 | `--status` | _(all)_ | Filter by overall status (`succeeded`, `partial`, `failed`, or `cancelled`) |
 | `--scope` | _(all)_ | Filter by walk scope (`code`, `tool`, or `complete`) |
@@ -157,7 +159,7 @@ a miss on either exits `4` and the message names how many walk records were
 searched and the invocation that lists them.
 
 `--walk-id` names one walk, so it is refused (exit `20`) beside any row filter
-— `--module`, `--goos`, `--goarch`, `--since`, `--status`, `--scope`, `--tool`,
+— `--module`, `--goos`, `--goarch`, `--tinygo`, `--since`, `--status`, `--scope`, `--tool`,
 `--latest` or `--latest-success` — rather than ignoring it. `--limit`, `--offset`
 and `--json` still apply.
 
@@ -527,6 +529,164 @@ That is a truthful answer about this project: its SQLite driver depends on a
 libc package with no `wasip1` files, so it has no `wasip1/wasm` build to resolve. A project
 whose dependencies do build for the target resolves normally.
 
+### Declaring a TinyGo target (`--tinygo`)
+
+TinyGo sets the `tinygo` tag and per-board tags, and builds against its own
+standard library, so a `//go:build tinygo` file can need a module the standard
+build never selects. `--tinygo <target>` walks TinyGo's build for that target:
+
+```console
+$ kanonarion walk --gomod ./go.mod --tinygo pico
+$ kanonarion walk --gomod ./go.mod --tinygo wasip1
+```
+
+Without it, a stderr notice (`frame_excludes` in `--json`) names the files only
+TinyGo builds. With it, files only standard Go builds are left out silently: a
+project that ships both builds needs a walk of each.
+
+**The `tinygo` command on `PATH` defines the target.** kanonarion asks it three
+questions and runs its own `go list` with the answers:
+
+- `tinygo version` for the TinyGo release and the Go release it uses;
+- `tinygo info -json -target=<target>` for `GOOS`, `GOARCH`, `GOARM` and the
+  target's build tags;
+- `tinygo list -target=<target> -json runtime` for the `GOROOT` TinyGo builds
+  with.
+
+The module list, requirement graph and package scope are then resolved with
+that `GOOS`/`GOARCH`/`GOARM`, that `GOROOT`, `CGO_ENABLED=1` and the target's
+tags passed as `-tags`. The answers are asked once per run.
+
+Two refusals, both exit 20:
+
+```console
+$ kanonarion walk --gomod ./go.mod --tinygo pico
+error: execute root command: a TinyGo build target needs the tinygo command on PATH
+$ kanonarion walk --gomod ./go.mod --tinygo nosuchboard
+error: execute root command: tinygo does not know the target "nosuchboard": run `tinygo targets` for the names it offers
+```
+
+Any other failure of those three commands is reported with what it printed. A
+positional module walk refuses `--tinygo` as it refuses `--target`.
+
+**The walk records the frame.** The walk stores the TinyGo target, the TinyGo
+version and the tag set beside `goos`, `goarch` and `go_version`
+(`.graph.build_env` in `walk-show --json`; `tinygo_target` and
+`tinygo_version` in `walk-list --json`), and its identity hash covers them. The
+frame is printed as `tinygo/<target> (<goos>/<goarch>)`:
+
+```console
+$ kanonarion walk-show 01M545E5WQZESCN1480KWPAKV4
+...
+build:
+  tinygo/pico (linux/arm) under go1.27.2
+$ kanonarion walk-list --tinygo wasip1
+01M545ASCP97M7N350S3VBAQHW  example.com/tagdep@local  2026-10-17T05:28:38.550365743Z  succeeded  scope=code  platform=tinygo/wasip1 (wasip1/wasm)  depth=full  nodes=3 failures=0
+```
+
+**The walk records who supplies the standard library.** TinyGo replaces part
+of the standard library with its own packages. The walk lists the build's
+packages under the frame (`go list -deps -json ./...`, as `vuln-scan` does) and
+follows each standard package's files to where they really live: in TinyGo's
+`TINYGOROOT` or in Go's `GOROOT`. It records the split in two places:
+
+- a node `github.com/tinygo-org/tinygo@v<release>`, resolution source `tinygo`,
+  not a direct dependency, with an edge from the root as the `stdlib` node has.
+  It carries `tinygo.target`, `tinygo.packages` (TinyGo's packages) and, for a
+  package holding files of both, `tinygo.mixed`: that package's files Go
+  supplies. Such a package counts as TinyGo's.
+- `packages` on the `stdlib` node: the standard packages Go supplies.
+
+```console
+$ kanonarion walk-show 01M574CJB0W75P6DEF00F3V1EM --json | jq '.graph.nodes[] | select(.resolution_source=="tinygo") | .tinygo.packages | length'
+16
+```
+
+The node is never extracted or scanned as a module: TinyGo ships with its
+toolchain. If the project itself requires `github.com/tinygo-org/tinygo`,
+the split rides on that dependency's node and no second node is added. If the
+package listing fails, the build list fails with the `go list` error, as any
+other build-list failure does; no walk is recorded with the split missing.
+
+**The walk records whether TinyGo's source is the source TinyGo released.**
+The files checked are every file TinyGo's packages compile for the target, from
+every file list `go list` reports (`.go`, `.s`/`.S`, `.c`, `.h` and the rest),
+followed to where they really live under `TINYGOROOT/src`. Each file is checked
+against one anchor:
+
+- **The module.** kanonarion fetches `github.com/tinygo-org/tinygo@v<release>`
+  as it fetches any module: verified against the checksum database, and
+  recorded in the fetch ledger. A file whose path is in the module zip under
+  `src/` is checked against the zip.
+- **The release archive.** TinyGo generates some files, such as the
+  `device/rp` register files, when it builds a release, and the module zip
+  does not carry them. These files are checked against the archive TinyGo
+  publishes on GitHub for the platform `tinygo version` names:
+  `tinygo<release>.<goos>-<goarch>.tar.gz`, or `.zip` on Windows. The archive
+  is downloaded only when a compiled file needs it, and its SHA-256 must match
+  the digest GitHub publishes for it. The archive itself is not kept. The
+  store keeps the SHA-256 of every file under its `src/`, so the next walk
+  for that TinyGo release and platform downloads nothing. A release that
+  publishes no digest for the archive, or has no such archive, is kept the
+  same way and is not asked again. A failure to reach GitHub is not kept, and
+  the next walk tries again. `--force` asks GitHub again in every case.
+
+The result is `tinygo.custody` on the TinyGo node:
+
+| Field | Meaning |
+|-------|---------|
+| `module`, `module_verification` | the module coordinate and how its fetch was verified |
+| `release_asset`, `release_outcome` | the archive and what became of it: `digest_matched`, `digest_mismatch`, `no_digest_published`, `asset_absent` or `unavailable`. Absent when no file needed the archive |
+| `release_published_digest`, `release_observed_digest`, `release_measured_at` | the digest GitHub publishes, the digest of the bytes downloaded, and when they were measured |
+| `verified_by_module`, `verified_by_release` | how many files match their anchor |
+| `differs` | each file whose bytes are not its anchor's, by `path` and `anchor` (`module` or `release`) |
+| `not_established` | the files no anchor could check, grouped by reason: each `reason` once, with its `paths` sorted |
+
+```console
+$ kanonarion walk-show 01M5K9NHJQSW5Z23YEWTTF4SQG --json | jq '.graph.nodes[] | select(.tinygo) | .tinygo.custody | {verified_by_module, verified_by_release, differs, not_established}'
+{
+  "verified_by_module": 185,
+  "verified_by_release": 3,
+  "differs": [],
+  "not_established": []
+}
+```
+
+A differing file is a disagreement between this installation and the release.
+It is reported and never repaired. When the archive does not match its
+published digest, no file is checked against it: the files it was needed for
+are not established, and the record keeps both digests. Checking the source
+never fails the walk. A part that cannot run leaves its files not established,
+with the reason, and logs one warning. For example, the module cannot be
+fetched, GitHub cannot be reached, or the release has no such asset or no
+digest. When the module zip cannot be read, the release archive is not
+consulted either, because the zip decides which files need it.
+
+Offline (`--from-modcache`, or an environment that declares no network),
+nothing is downloaded:
+
+- The module is fetched the way `--from-modcache` fetches every module: from
+  the module cache, checked against the project's `go.sum`. A project's
+  `go.sum` does not normally list TinyGo. The module is then checked only if
+  the store already holds a verified fetch of it, from an earlier connected
+  walk or from `kanonarion fetch github.com/tinygo-org/tinygo@v<release>`.
+  Otherwise every file is not established, and the reason names `go.sum`.
+- The archive's file list is used only if the store already holds it.
+  Otherwise the files that need it are not established, with the reason
+  `release archive unavailable offline`.
+
+**Only the same declaration selects it.** Every command that takes `--target`
+takes `--tinygo`, and a read declaring `--tinygo pico` answers only from a walk
+taken with `--tinygo pico`. A read declaring `--target linux/arm`, or nothing,
+never selects a TinyGo walk, even one for the same `GOOS`/`GOARCH`.
+
+**The target's default configuration.** The walk resolves the target as TinyGo
+defines it by default. TinyGo's `-gc`, `-scheduler`, `-serial` and `-tags`
+options are not accepted, so a build that changes them is not described.
+
+How `vuln-scan` analyses a TinyGo walk is described in
+[Scanning under a TinyGo frame](vuln.md#scanning-under-a-tinygo-frame).
+
 ## Standard-library version (`--stdlib-from-gomod`)
 
 A project walk injects the Go standard library as a first-class node (`stdlib`),
@@ -619,10 +779,30 @@ nothing set in the shell. See
 ## Local-replace targets
 
 A `go.mod` file may redirect a dependency to a local path via a
-`replace example.com/foo => ../local/foo` directive. When the **local main
-module** carries such a directive (a `--gomod` project walk), the walk records
-the redirected node with resolution source `local_replace` and marks it as
-unscannable by default - there is no version to fetch from a proxy.
+`replace example.com/foo v1.2.3 => ../local/foo` directive. When the **local main
+module** carries such a directive (a `--gomod` project walk), the walk reads the
+directory from disk and records it under its own identity,
+`example.com/foo@local`, never under the published `example.com/foo@v1.2.3`:
+
+- the node's resolution source is `local_replace`, its `original_coordinate` is
+  the require it replaces (`example.com/foo@v1.2.3`), and its `local_path` is the
+  path as written in `go.mod`;
+- the directory is zipped, hashed and stored like a fetched module, and
+  `extract` analyses it (licence, interface, call graph, examples) as it does the
+  project root;
+- it is re-read on every walk and never served from cache, so an edit to the
+  directory is in its record on the next run, with or without `--force`.
+
+A published `example.com/foo@v1.2.3` held in the same store is untouched: its
+records keep their bytes and a read of that coordinate still serves them.
+
+A relative path is read the way the go command reads it: against the `go.work`
+directory when a workspace is in force, otherwise against the directory of the
+`go.mod` passed to `--gomod`. An absolute path is read where it is.
+
+If a directory cannot be read (missing, no `go.mod`, zip error), the node's
+result is `fetch_failed` with error type `local_fetch_failed` and the walk is
+`partial`.
 
 Local-path replaces are honoured only for the local main module, exactly as the
 Go toolchain does: it applies the *main* module's replaces and ignores a
@@ -634,26 +814,35 @@ why a multi-module repository member such as `go.opentelemetry.io/otel/trace`,
 whose published `go.mod` declares `replace go.opentelemetry.io/otel => ../`,
 does not strand its sibling as an unscannable `local_replace` node.
 
-Pass `--analyse-local` (with `--gomod`) to opt in to ingesting those directories
-from disk:
+`--analyse-local`, which used to opt in to reading these directories, is still
+accepted and has no effect.
+
+A walk recorded before this behaviour carries a `local_replace` node at the
+published coordinate (`example.com/foo@v1.2.3`); that node was never read from
+disk, and `extract` and `vuln-scan` still skip it with the reason.
+
+### Identity
+
+A project with a local replacement walks to a different identity than it did
+before local identities existed, because the node's coordinate changed: the
+first walk after the upgrade is a new walk, and later walks of an unchanged tree
+reuse it. A project with no local replacement and no workspace member walks to
+the same identity as before.
+
+## Workspace members
+
+When the project is inside a `go.work` workspace, every member module other than
+the one the walk starts from becomes a node at `<path>@local` with resolution
+source `local_workspace_member`, read from the member's directory and analysed
+like a local replacement. An edge from the root reaches it, and its own
+`go.mod` requirements are edges from it. Under the default code scope a member is
+kept only when the project's packages import it; `--project` keeps every member.
 
 ```
-kanonarion walk --gomod ./go.mod --analyse-local
+kanonarion walk --gomod ./a/go.mod     # inside a go.work that uses ./a and ./b
 ```
 
-When `--analyse-local` is set, the walker reads each local directory,
-creates an in-memory module zip with `golang.org/x/mod/zip.CreateFromDir`,
-hashes it, and stores it in the blob store exactly like a remotely-fetched
-module. The node is promoted to resolution source `local_analysed` and
-proceeds through `extract`, `callgraph`, `iface`, and `license` analysis
-as a normal dependency.
-
-If a local path cannot be read (directory missing, no `go.mod`, zip error),
-the walker falls back to `local_replace` with a warning log; the overall walk
-still succeeds.
-
-The base directory for resolving relative paths is the directory that contains
-the `go.mod` file supplied via `--gomod`.
+records `example.com/b@local` beside the root.
 
 ## Per-node fetch results
 
@@ -670,10 +859,10 @@ follow* below:
 | `fetch_record` | The full `FactRecord` for the successful fetch (null on failure) |
 
 The `N failed` on the walk line, and the `failures=` column in `walk-list`, count
-`fetch_failed` and `internal_panic` only. A `local_replace` node is a require
-redirected to a directory: there is no remote artefact to fetch, so it is not a
-fetch that failed and the walk is not partial because of one. A project with a
-local `replace` of its own subpackage reports `0 failed`.
+`fetch_failed` and `internal_panic` only. A local replacement or workspace
+member that was read from disk is `succeeded`; one that could not be read is
+`fetch_failed`. The `local_replace` status remains for a walk with no local
+reader wired, and for walks recorded before local identities existed.
 
 `from_cache` and `duration_ms` reflect the *first* call to the underlying
 fetcher for each coordinate during the walk. This means the cold-fetch
@@ -804,6 +993,15 @@ tamper-evidence and records a fetch failure with the mismatch detail. A module
 The network check covers the same two hashes: a module whose zip or `go.mod`
 disagrees with the checksum database records `UnverifiedHashMismatch`.
 
+A module that matches `GONOPROXY`, or `GOPRIVATE` when `GONOPROXY` is not
+set, is never named to the proxy. A project walk reads it from the module
+cache, where `go mod download` puts it with your own credentials when it is not
+there yet, and checks it against this `go.sum`: it records `VerifiedByGoSum`,
+and a module missing from `go.sum` stops the walk. No `git` process is started
+for it. `walk <module>@<version>` on a private module is refused, exit `20`,
+because it has no `go.sum` to check against. See
+[`fetch`: private modules](fetch.md#private-modules-goprivate-gonoproxy).
+
 ### Replaced modules
 
 `go.sum` records a replaced module's checksum under the **replace target**. The
@@ -822,7 +1020,8 @@ replacement, or point `--gomod` at the project root whose `go.sum` describes
 this build.
 
 A **filesystem** replacement (`=> ./dir`) records `LocalSource` with the detail
-`no checksum is available for a filesystem source, so none was checked`.
+`local directory ./dir (local source, nothing to verify)`, naming the directory
+as `go.mod` writes it.
 
 See [`audit` › Local `go.sum` verification](audit.md#local-gosum-verification)
 for the full behaviour, which `audit` and `sbom --package` promote to a hard,
@@ -866,7 +1065,9 @@ root; the empty value is that distinction, not a gap.
 The directory is **provenance, not identity**. It is machine-local, so it is
 deliberately outside the walk's content hash and outside the serialised record:
 two walks of one project taken from two checkouts are the same walk, and a walk
-whose checkout has since moved still verifies. It is stored in its own column,
+whose checkout has since moved still verifies. This holds with `--analyse-root`
+too: the analysed project and its local replace targets are recorded without the
+directory they were read from. It is stored in its own column,
 which is why recording it needed no pipeline bump and no purge of existing rows.
 
 ## A stored walk this build cannot verify

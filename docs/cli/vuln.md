@@ -105,6 +105,111 @@ question, with its own cost: it needs a non-Go advisory source, a version
 comparator that is not semver, and an identity scheme. It is deliberately not
 begun. What is offered here is the truthful statement kanonarion can make today.
 
+#### Scanning under a TinyGo frame
+
+`vuln-scan --gomod ./go.mod --tinygo <target>` scans the walk taken with the
+same `--tinygo <target>`. Before govulncheck runs, kanonarion lists the
+packages that build under the TinyGo frame (`go list -deps -json ./...` with
+TinyGo's `GOROOT`, platform and tags) and checks whether any of them compiles C:
+
+- **No package compiles C** (for example `wasip1`): govulncheck analyses the
+  build from source with the target's tags, as for any other scan. The mode is
+  `source`.
+- **A package compiles C** (every Cortex-M board, such as `pico`, has
+  `device/arm`): the host C compiler cannot build TinyGo's C, so govulncheck
+  cannot load the packages. It runs at module level instead
+  (`govulncheck -scan module`), matching advisories against the module
+  versions only. The mode is `module`, and the scan log names the first three
+  packages that decided it.
+
+A module-level scan examines no package or symbol. Its findings say which
+advisories match the modules in the build, but not whether your code reaches
+them, so every finding reads `reachability_state: not_determined`, with
+`soundness: unconfirmed` and the reason "govulncheck ran at module level because
+the TinyGo closure compiles C that the host toolchain cannot load; no package or
+symbol was examined, so reachability is not established". It is never reported
+as `not_reachable`.
+
+The mode is recorded on each finding as the `fidelity` of its derivation:
+
+```console
+$ kanonarion vuln-show golang.org/x/text@v0.3.7 --gomod ./go.mod --tinygo pico
+...
+      reachability: not_determined — an analysis ran and could not decide; it recorded its answer at Unknown confidence
+      derived:  by govulncheck, fidelity module, rooted at target-rooted:example.com/wvuln@local
+      soundness: unconfirmed — govulncheck ran at module level because the TinyGo closure compiles C that the host toolchain cannot load; no package or symbol was examined, so reachability is not established
+$ kanonarion vuln-show golang.org/x/text@v0.3.7 --gomod ./go.mod --tinygo wasip1
+...
+      derived:  by govulncheck, fidelity source, rooted at target-rooted:example.com/wvuln@local
+```
+
+In `--json` the same value is `reachable.derived_by.fidelity`: `source`,
+`binary` or `module`.
+
+`reachability <module>@<version> --vuln <id> --gomod ./go.mod --tinygo <target>`
+answers such a finding as `not_determined` (exit 0), with the same soundness
+reason and `remedy: none this build can run`: kanonarion cannot yet extract a
+call graph under a TinyGo frame, so no command settles it.
+
+If the package listing itself fails, the scan is recorded as `ScanFailed` with
+the `go list` error and the declared `--tinygo` target named. `--binary-pre-pass`
+is refused under `--tinygo`: `go build` cannot produce the TinyGo binary, and a
+test binary built for the host would describe a different build.
+
+**Standard-library advisories under TinyGo.** The walk records which standard
+packages TinyGo supplies and which Go supplies (see
+[Declaring a TinyGo target](walk.md#declaring-a-tinygo-target---tinygo)). Go's
+advisories describe Go's code, so each `stdlib` finding is judged by the
+packages it names (`affected_packages`):
+
+| the advisory names | the finding |
+|---|---|
+| only packages Go supplies | judged as in any other build |
+| only packages TinyGo supplies | not established: `not_established: true`, `reachability_state: not_determined`, `soundness: unconfirmed`, `tinygo_note` "TinyGo supplies os; Go's affected range describes Go's code" |
+| both | judged on Go's packages; `tinygo_note` names TinyGo's |
+| no package | not established, `tinygo_note` "the advisory names no package, so it cannot be told whether Go or TinyGo supplies the code" |
+
+A finding that is not established is never counted as affected and never as
+clean. A module whose findings are all of that kind reads `Inconclusive`, is
+listed under `Not established under the TinyGo frame`, and the summary line
+says `Inconclusive (N module(s) not established)` instead of `Clean`. The run
+records the same: `findings_status` and `overall_status` read `Inconclusive`
+when no module is affected and one is Inconclusive, and `counts.inconclusive`
+names how many. A run with an affected module stays `Affected`. The split is
+applied the same way when the project directory is gone and the scan falls back
+to scanning each module in isolation. The
+`github.com/tinygo-org/tinygo` node is not scanned as a module and is not counted
+in the module totals.
+
+The toolchain block states TinyGo beside Go. It is never a clear and never a
+cover:
+
+```
+toolchain:
+  go1.27.2: none of the 34 toolchain advisories in vuln.go.dev@2026-10-08T22:31:09Z covers it
+  tinygo 0.42.0: no advisory source kanonarion reads covers TinyGo; 16 of 39 standard packages in this build are TinyGo's
+```
+
+`--json` carries it as `toolchain.tinygo`, in the toolchain section's own shape
+with `status: unjudged`.
+
+After the native-code lines, the coverage block names TinyGo's packages:
+
+```
+tinygo code: 16 of 39 standard-library package(s) in this build are TinyGo's code, covered by no advisory source kanonarion reads; 23 are Go's and are judged against Go's advisories
+  internal/abi internal/bytealg internal/gclayout internal/itoa internal/poll internal/reflectlite internal/task os reflect runtime runtime/interrupt runtime/volatile sync syscall tinygo unicode/utf8
+```
+
+`--json` carries it as `native_coverage.tinygo` (`version`, `target`,
+`standard_packages`, `tinygo_packages`, `go_packages`).
+
+`vuln-scan <walk-id>` refuses a walk recorded under a TinyGo frame (exit `20`),
+before anything runs, and names the command that scans it:
+
+```console
+$ kanonarion vuln-scan 01M5487W409X025Z1QAE6KA7MV
+error: execute root command: vuln-scan <walk-id> cannot scan a walk recorded under tinygo/pico (linux/arm): a TinyGo frame reaches the scan only through the manifest; run vuln-scan --gomod /path/to/project/go.mod --tinygo pico
+```
 
 ### Coverage decides the exit code
 
@@ -121,17 +226,14 @@ Findings do not change the exit code. Whether a finding should fail a build is a
 policy question, and `audit` answers it.
 
 **If the walk's own target will not load**, the run scans each module in
-isolation instead. That is a weaker answer — it describes each module built
-alone, not the build that consumes it — so the run records the target's refusal
-under the `target-load-failed` reason with the toolchain's error, and counts that
-rather than the isolated result. Records from the other frame still stand and
-still answer their own question.
+isolation instead, a weaker answer about each module built alone. The run records
+the refusal under `target-load-failed` with the toolchain's error and counts
+that, not the isolated result. Records from the other frame still stand.
 
 **On a project scope** (`--gomod`, `--tool`, `--project`) partial coverage always
-means something genuinely went unanalysed. A `version not in project build`
-reason cannot arise there, so seeing one means the scan was not project-rooted —
-usually a walk-id scan whose recorded project directory is gone, which falls back
-to per-module isolation and names the missing directory in its log.
+means something went unanalysed. A `version not in project build` reason there
+means the scan was not project-rooted: usually a walk-id scan whose project
+directory is gone, which falls back to isolation and names the directory in its log.
 
 
 ### Prerequisites
@@ -142,14 +244,12 @@ to per-module isolation and names the missing directory in its log.
 go install golang.org/x/vuln/cmd/govulncheck@latest
 ```
 
-If the binary is not found, `vuln-scan` returns a descriptive error with the
-install command rather than a generic failure.
+If it is not found, `vuln-scan` names the install command.
 
 **The Go release that built it decides which projects it can read.** govulncheck
-type-checks the project's source in-process, with the `go/types` compiled into
-it, so a binary built with go1.26 cannot parse go1.27 source however new the `go`
-on `PATH` is. `GOTOOLCHAIN` does not change this - the type checker is inside the
-binary - and only rebuilding the tool does.
+type-checks with the `go/types` compiled into it, so a binary built with go1.26
+cannot parse go1.27 source; neither the `go` on `PATH` nor `GOTOOLCHAIN` changes
+this, only rebuilding the tool does.
 
 kanonarion reads the tool's build version when it resolves the binary, so a scan
 that fails this way names the tool rather than the project's files:
@@ -162,9 +262,8 @@ change this - only rebuilding the tool can. Rebuild it with:
 GOTOOLCHAIN=go1.27.1 GOBIN=/home/op/.local/bin go install golang.org/x/vuln/cmd/govulncheck@latest
 ```
 
-The record carries `failure_cause: environment` beside its `ScanFailed`, which is
-what tells "this box cannot analyse it" from "this module cannot be analysed":
-only the first is repaired by rebuilding the tool and scanning again. The
+The record carries `failure_cause: environment` beside its `ScanFailed`: this box
+cannot analyse it, which rebuilding the tool and scanning again repairs. The
 `GOTOOLCHAIN` named is a release already unpacked on this host where there is
 one, so the rebuild needs no upgrade to the installed Go.
 
@@ -172,19 +271,19 @@ one, so the rebuild needs no upgrade to the installed Go.
 
 Under `GOPROXY=off` - read as the go command reads it, so `go env -w
 GOPROXY=off` counts, and so does `--goproxy off` on `audit` and `inspect` -
-the advisory snapshot is **not downloaded**. What that
-means in practice:
+the advisory snapshot is **not downloaded**:
 
-- A store that already holds a snapshot **scans normally**. Snapshot resolution
-  prefers the stored generation, so nothing changes: the run is judged against
-  the snapshot the store carries, and the scan-run record names it as always.
-  Both routes into a record read that stored snapshot — the `govulncheck`
-  analysis and the advisory match by coordinate — so neither needs the network.
-- `--fresh` refuses. Refreshing means reading the published generation from
-  `vuln.go.dev`, which is the network.
+- A store that already holds a snapshot **scans normally**: the run is judged
+  against the stored snapshot, and both routes into a record (the `govulncheck`
+  analysis and the advisory match by coordinate) read it offline.
+- `--fresh` refuses. Refreshing means reading the published generation, which
+  is the network.
 - A store with **no** snapshot refuses, naming the remedy: drop `--fresh`, pin
   one with `--snapshot-source`/`--snapshot-version`, or carry in a store that
   holds one. `vuln-snapshot-list` shows what the store has.
+
+A host that reaches an internal mirror of `vuln.go.dev` but not the internet
+sets [`vulndb.url`](config.md#key-paths) and leaves `GOPROXY` on.
 
 The scan itself is already offline - `govulncheck` is run with `GOPROXY=off`
 against the verified module cache, which is unchanged. See
@@ -253,7 +352,8 @@ Compiles a test binary per module and reads its symbol table, then runs the
 slower source analysis only on modules that look affected. The build sets
 `CGO_ENABLED=0`, so a module needing cgo fails the fast path and falls through
 to source mode. It loses the speed-up, not its answer. Source-mode and project
-scans are unaffected.
+scans are unaffected. It is refused under `--tinygo`; see
+[Scanning under a TinyGo frame](#scanning-under-a-tinygo-frame).
 
 **The toolchain axis**
 
@@ -600,6 +700,7 @@ the current resolution, and scanning that walk gives a reachability answer again
 | `--store-root` | `~/.kanonarion` | Path to fact store root (or `KANONARION_STORE` env var) |
 | `--module` | _(none)_ | Look up the latest walk for `<module@version>` and scan it (not platform-filtered; such walks record no platform) |
 | `--target` | _(this host's platform)_ | Build target as `GOOS/GOARCH`, e.g. `wasip1/wasm`. Selects the project walk a scope scan reads, and is the platform govulncheck analyses for. Refused beside a positional walk id or `--module`, which already name the walk. Unknown pairs are refused against `go tool dist list`. `--goos`/`--goarch` set the two halves separately. See [Declaring the build target](walk.md#declaring-the-build-target---target). |
+| `--tinygo` | _(none)_ | TinyGo target, e.g. `pico` or `wasip1`, as the `tinygo` command on `PATH` defines it. Mutually exclusive with `--target`, `--goos` and `--goarch`. A closure that compiles C is scanned at module level; see [Scanning under a TinyGo frame](#scanning-under-a-tinygo-frame) and [Declaring a TinyGo target](walk.md#declaring-a-tinygo-target---tinygo). |
 | `--gomod` | `./go.mod` | Scan the latest project walk for this `go.mod`'s scope (default scope `code`) on this platform |
 | `--tool` | `false` | Scan the tooling supply chain (the latest tool-scoped project walk). Mutually exclusive with `--project` |
 | `--project` | `false` | Scan the complete set (the latest complete-scope project walk). Mutually exclusive with `--tool` |
@@ -608,7 +709,7 @@ the current resolution, and scanning that walk gives a reachability answer again
 | `--reachability` | `false` | Enable call-graph reachability analysis; spawns `kanonarion callgraph` on demand for modules with findings but no cached callgraph |
 | `--callgraph-workers` | `1` | Maximum number of concurrent on-demand callgraph subprocesses (SSA builds are memory-heavy; keep low) |
 | `--go-binary` | _(from `PATH`)_ | Path to the `go` binary if not on `PATH` (used by on-demand callgraph extraction) |
-| `--binary-pre-pass` | `false` | Fast binary-mode pre-pass; source mode only for affected modules. Applies to a walk-id scan; refused by name with `--module` and with a `--gomod`/`--tool`/`--project` scope scan, neither of which carries it into the scan |
+| `--binary-pre-pass` | `false` | Fast binary-mode pre-pass; source mode only for affected modules. Applies to a walk-id scan; refused by name with `--module` and with a `--gomod`/`--tool`/`--project` scope scan, neither of which carries it into the scan, and with `--tinygo` |
 | `--no-vendor` | `false` | Analyse the fetched artefacts even when the project is vendored. By default a project carrying `vendor/modules.txt` is analysed from `vendor/`, the source it actually compiles. Refused by name with `--module`, which scans a walk rooted at a published coordinate and has no project tree to vendor |
 | `--operator` | `$USER` | Operator name recorded in the scan run |
 | `--no-progress` | `false` | Suppress stderr progress output (the throttled heartbeat and any per-module progress lines); results and warnings are unaffected |
@@ -786,8 +887,7 @@ modules, at which versions, from which project root. Under `--json` the entry
 gains an `inputs_unresolvable` field naming the missing walk; the field is absent
 on a run whose walk resolves, so an existing consumer sees no change. The same
 statement appears on `vuln-scan-show` (on the `Walk ID:` line),
-`vuln-scan-history` (once, above the table, and also for a walk with no runs
-left) and `vuln-scan-diff` (on the `Walk:` line).
+`vuln-scan-history` (once, above the table) and `vuln-scan-diff` (on the `Walk:` line).
 
 The check is a live lookup against the walks table on every read, so it
 classifies any run stranded in future as well as the ones already in the store,
@@ -856,7 +956,8 @@ A walk that recorded none says so and never reports the reader's own. Where the
 project the walk was taken from is still present and `go env GOVERSION` there no
 longer resolves the recorded toolchain, a second line names both versions.
 `--json` carries the same fact as a `build` object of `goos`, `goarch` and
-`go_version`.
+`go_version`; a TinyGo walk adds `goarm`, `tinygo_target`, `tinygo_version` and
+`tinygo_tags`, which are absent on every other walk.
 
 **Why this matters:** the findings you are reading include the standard
 library's, and which standard library that is comes from the toolchain named
@@ -993,7 +1094,9 @@ A stored record answers "what did this advisory do in **this** build", so the
 answer depends on which build you mean:
 
 - `--walk-id <id>` answers in the frame of that walk's scans, restricted to the
-  records that walk covered. A `notice:` line names the walk and its frame.
+  records that walk covered. A `notice:` line names the walk and its frame. The
+  walk's build frame is also the frame the call graphs behind the answer (the
+  route root, the negative search, the call sites) are read in.
 - `--gomod <path>` does the same for the newest succeeded **code-scope** project
   walk of that `go.mod`, resolved for **this platform**. The path is required and
   may be written either way round (`--gomod ./go.mod` or `--gomod=./go.mod`).
@@ -1221,6 +1324,7 @@ counts them: those rows are history, not the answer a scan would give today. In
 | `--gomod <path>` | _(none)_ | Answer in the frame of the latest **code-scope** project walk for this go.mod on this platform. Takes a path, e.g. `--gomod ./go.mod`. Refuses, naming the scopes the store does hold, rather than answering from a walk of another scope or platform. The notice names the walk's scope and frame, and states that the go.mod was not re-resolved for the read, so an edit made since that walk is not reflected |
 | `--target <GOOS/GOARCH>` | _(this host's platform)_ | Select the walk taken for this build target, e.g. `--target windows/amd64`. Applies to the `--gomod` route; refused by name on `--walk-id`, which names a walk that already recorded its platform. A refusal raised under a declared target prints a remedy carrying it. See [Declaring the build target](walk.md#declaring-the-build-target---target) |
 | `--goos` / `--goarch` | _(this host's)_ | The two halves of `--target`, for a caller holding them separately. Both are required, and neither combines with `--target` |
+| `--tinygo <target>` | _(none)_ | Select the walk taken with `--tinygo <target>`, e.g. `--tinygo pico`; the `tinygo` command on `PATH` defines the target. Mutually exclusive with `--target`, `--goos` and `--goarch`. See [Declaring a TinyGo target](walk.md#declaring-a-tinygo-target---tinygo) |
 | `--history` | `false` | List all scan records across walks, snapshots and pipeline generations, marking superseded rows |
 | `--json` | `false` | Emit record as JSON |
 
@@ -1371,7 +1475,7 @@ field with a machine-readable cause code alongside the human-readable `unscannab
 | `project-no-go-mod` | The project directory supplied for a project-rooted scan contains no `go.mod`, so there is no main module to root the analysis at — an operator-side input fault, not a property of any artefact |
 | `project-dir-unavailable` | The project directory supplied for a project-rooted scan could not be stat'ed (missing or unreadable) — an operator-side input fault; the scan never got far enough to check for a `go.mod` |
 | `project-build-diverged` | The project directory the walk was taken from is still readable but requires different versions of modules the walk resolved, so no analysis of it was attributed to this walk. Advisories were matched by coordinate against the versions the walk pinned; reachability was not established. `unscannable_reason` names the directory and each disagreement as `path walked -> required` |
-| `local-replace` | Node is a local filesystem replacement (a `replace` pointing at a working-tree path), not a fetched version, so there is no fetched source to scan; `unscannable_reason` retains the local path |
+| `local-replace` | Node is a local filesystem replacement recorded at the published coordinate by a walk taken before local replacements were read from disk, so there is no source to scan; `unscannable_reason` retains the local path. A replacement at `<path>@local` is scanned through the project build like the root |
 
 On the **coordinate-keyed path** (`--module`, and a positional walk-id whose walk
 is not a project walk or whose recorded directory is gone) each module is
@@ -1596,6 +1700,8 @@ the build that wrote it, or upgrade.
 A record whose bytes do **not** hash to their own seal has been altered. Every
 command that meets one refuses at exit `10`, as before.
 
+A record or scan run whose seal verifies but which is filed under another coordinate, run id or walk id, or under a column value its seal does not state, is refused at exit `10` too, naming the table; a listing such as `vuln-by-id` names it as `unreadable`, and a re-scan refuses rather than append beside it.
+
 #### Commands that answer for one coordinate
 
 `vuln-show`, `reachability --vuln` and `context` answer from the generations this
@@ -1725,17 +1831,15 @@ kanonarion vuln-by-id <finding-id> [flags]
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--walk-id` | *(none)* | Restrict results to the modules scanned under this walk |
+| `--walk-id` | *(none)* | Restrict results to the modules scanned under this walk; its build frame is the frame each route root is classified in |
+| `--timeline` | `false` | List when the advisory's state changed, and why |
 | `--store-root` | `~/.kanonarion` | Path to fact store root |
 | `--json` | `false` | Emit records as JSON |
 
-Without `--walk-id` the answer spans the whole store: every module version,
-every pipeline version and every database snapshot generation ever scanned.
-That includes a module version a later build patched out, which will still be
-listed as `Affected`. Pass `--walk-id` when the question is "which of the
-modules in *this* build is hit by this advisory"; text output then prints a
-`notice:` line naming the walk it filtered against, so a shorter list is never
-mistaken for an unrestricted one.
+Without `--walk-id` the answer spans every module version, pipeline version
+and snapshot ever scanned, including a module version a later build patched
+out. `--walk-id` answers for one build; text output then prints a `notice:`
+naming the walk.
 
 A `--walk-id` with no stored vulnerability scan run is an error, not an empty
 result — an all-clear for a walk that was never scanned would be a claim the
@@ -1743,23 +1847,22 @@ store cannot support. The walk constraint resolves through scan-run membership,
 not the `walk_id` provenance column on the record, so a scan two walks share is
 reported for both.
 
-**One row per module version.** A module accumulates a scan record for every
-(pipeline version, database snapshot) it has been scanned under, and those
-records disagree. `vuln-by-id` reports one row per module version, choosing the
-record that reports the advisory as affecting the module; only among records
-that agree does the most recent scan win. A later all-clear does not retire an
-earlier finding: `Clean` is the right label for a module where the advisory was
-never found, not a state a finding may decay into without a stated reason. Each
-row carries the snapshot and scan time it came from, so a stale answer is
-visible as one. Use `vuln-show --history` to see every generation.
+**One row per module version.** Within a pipeline version and frame the row is
+the record `vuln-show` serves, so a module whose served record no longer reports
+the advisory is not listed; `--timeline` still shows it. Across pipeline
+versions a record reporting the advisory wins, newest first.
 
-**Every row names the pipeline version that produced it**, marked
-`[superseded]` when it is not the version this build serves. Those rows are
-served — they are the newest evidence the store holds for those coordinates —
-but `vuln-show` and `reachability` will not answer from them, so a row marked
-this way is not what a current scan would say. A `notice:` under the listing
-counts them. `--json` needs no marking: it emits the record, `pipeline_version`
-and all.
+**Every row names its pipeline version**, marked `[superseded]` when this build
+does not serve it: `vuln-show` and `reachability` will not answer from such a
+row. A `notice:` counts them.
+
+**`--timeline`** lists, per module version and analysis frame, each change of
+the advisory's state across the stored records, with one reason: `withdrawn`,
+`coverage-lost` (nothing was analysed; not a fix), `reachability-corrected`,
+`advisory-added` (the earlier record's stored snapshot lacks it) or
+`unattributed`. Two records from different pipeline versions are a
+`generation-disagreement`, not a change. `first reported: at or before` means no
+earlier analysed record of the same pipeline bounds it.
 
 **Example:**
 
@@ -1810,9 +1913,12 @@ kanonarion vuln-snapshot-list [flags]
 
 ```
 $ kanonarion vuln-snapshot-list
-vuln.go.dev                    20240115000000       2024-01-15T00:00:00Z
-vuln.go.dev                    20240101000000       2024-01-01T00:00:00Z
+vuln.go.dev                    20240115000000       2024-01-15T00:00:00Z sha256:9c1e…
+vuln.go.dev                    20240101000000       2024-01-01T00:00:00Z sha256:4b7a…
 ```
+
+A version re-published with different bytes is two rows; a read by source and
+version answers with the later.
 
 This command takes no filter and no `--limit`, so an empty answer has exactly one
 cause and says it:
@@ -1823,8 +1929,8 @@ the store holds no vulnerability database snapshot at all
   to produce one: kanonarion vuln-scan <walk-id>
 ```
 
-A snapshot is pinned by the scan that judged a walk against it; there is no
-command whose job is to fetch one on its own.
+A snapshot is pinned by the scan that judged a walk against it; no command
+fetches one on its own.
 
 ---
 
@@ -1853,9 +1959,7 @@ Retrieved at: 2024-01-15T00:00:00Z
 Content hash: sha256:abc123...
 ```
 
-A snapshot that is not there exits `4` and the message says how many snapshots
-were searched, so an unrecognised version over a stocked store cannot be read as
-an empty one:
+A snapshot that is not there exits `4`, saying how many snapshots were searched:
 
 ```
 no vulnerability database snapshot matched source and version "vuln.go.dev@20991231000000" — the value is
@@ -1870,26 +1974,26 @@ vuln-snapshot-list
 
 ```bash
 # 1. Walk the dependency graph
-kanonarion walk github.com/gin-gonic/gin@v1.6.2 --store-root ~/.kanonarion
+kanonarion walk github.com/gin-gonic/gin@v1.6.2
 
 # 2. Scan for vulnerabilities (fetches and pins the database snapshot)
-kanonarion vuln-scan --module github.com/gin-gonic/gin@v1.6.2 --store-root ~/.kanonarion
+kanonarion vuln-scan --module github.com/gin-gonic/gin@v1.6.2
 
 # 3. Inspect the scan run
-kanonarion vuln-scan-list --store-root ~/.kanonarion
-kanonarion vuln-scan-show <run-id> --store-root ~/.kanonarion
+kanonarion vuln-scan-list
+kanonarion vuln-scan-show <run-id>
 
 # 4. Drill into a specific module (walk-id optional; defaults to most recent scan)
-kanonarion vuln-show github.com/gin-gonic/gin@v1.6.2 --store-root ~/.kanonarion
+kanonarion vuln-show github.com/gin-gonic/gin@v1.6.2
 
 # 4a. Check whether a finding was detected in earlier scans
-kanonarion vuln-show github.com/gin-gonic/gin@v1.6.2 --history --store-root ~/.kanonarion
+kanonarion vuln-show github.com/gin-gonic/gin@v1.6.2 --history
 
 # 5. Cross-reference a CVE across all scanned modules
-kanonarion vuln-by-id CVE-2020-28483 --store-root ~/.kanonarion
+kanonarion vuln-by-id CVE-2020-28483
 
 # 6. Inspect stored database snapshots
-kanonarion vuln-snapshot-list --store-root ~/.kanonarion
+kanonarion vuln-snapshot-list
 ```
 
 ## Modules resolved under pre-modules semantics

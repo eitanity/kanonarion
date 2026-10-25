@@ -130,7 +130,7 @@ func TestRunCallGraphHistory_SaysWhyEachGenerationExists(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	out := buf.String()
-	if !strings.Contains(out, "worktree reuse gate bypassed (--force)") {
+	if !strings.Contains(out, "worktree reuse gate bypassed (forced)") {
 		t.Errorf("history does not say the forced generation was forced:\n%s", out)
 	}
 	if got := strings.Count(out, "derived:"); got != 1 {

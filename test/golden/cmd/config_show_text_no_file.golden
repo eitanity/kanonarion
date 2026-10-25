@@ -6,7 +6,8 @@ exit 0
 #   to write a commented template: kanonarion config init
 
 # effective configuration (resolved; (default) = not set in this file)
-version                                           2  (default)
+# config hash sha256:a37af31e289032660d55309642f99f5ed7112a1715b72fdda9716a29cc7eb7cd (every section but preferences and storage)
+version                                           3  (default)
 preferences.json                                  false  (default)
 preferences.log_level                             warn  (default)
 preferences.progress                              true  (default)
@@ -43,5 +44,8 @@ vendor_policy.vendor_only                         false  (default)
 fips_policy.required                              false  (default)
 fips_policy.on_deviation                          warn  (default)
 fetch_policy.allowed_vcs_hosts                    (unset: built-in host set, advisory)  (default)
+storage.backend                                   sqlite  (default)
+storage.sumdb_cache                               (unset: sumdb under the store root)  (default)
+vulndb.url                                        (unset: https://vuln.go.dev)  (default)
 --- stderr ---
 (empty)

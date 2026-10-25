@@ -14,6 +14,32 @@ output-schema stability contract and the store-migration policy.
 
 ## Config schema
 
+### v2 → v3
+
+**Additive, backward-compatible.** v3 adds the `storage` section to
+`config.yaml`:
+
+- `storage.backend` - the storage backend that holds the store's records,
+  default `sqlite`
+- `storage.sumdb_cache` - the checksum-database tile cache directory, default
+  empty (`<store-root>/sumdb`)
+
+It also lets a file carry one more top-level section per storage backend the
+binary registered, named after the backend; `config init` writes the `sqlite`
+section, which has no settings. Top-level sections the schema does not define
+were already ignored and still are; a registered backend now reads its own.
+
+`config init` and `config set` stamp `version: "3"` on a new file, and append
+the `storage` section and each registered backend's section, commented out, to
+an existing one. `config show --json` gains a `storage` object and, when the
+file carries backend sections, a `sections` object; `config show` lists
+`storage.backend` and `storage.sumdb_cache`.
+
+Migration for existing configs: **none required.** A `version: "1"` or
+`version: "2"` file has no `storage` section and opens the SQLite store under
+the store root exactly as before. A v3 file is refused by a binary that
+supports only v2, as every newer config version is.
+
 ### v1 → v2
 
 **Additive, backward-compatible.** v2 adds four unified supply-chain
@@ -116,6 +142,167 @@ pinned to the prior shape are unaffected (unknown-section rule above):
 | `vendor`     | reserved              |
 | `fips`       | reserved              |
 
+Values added to existing fields, additively (consumers must already accept new
+values there, as they did when `verdict` and `reachability_state` gained theirs):
+
+- `reachable.derived_by.fidelity` on a govulncheck finding gains `module`,
+  beside `source` and `binary`: a scan under a TinyGo frame whose closure
+  compiles C. Existing records are unchanged; no pipeline bump.
+- `reachability --json` gains `remedy`, present only on a `not_determined`
+  answer whose fidelity is `module`. Additive; absent everywhere else.
+- The `build` object (`vuln-scan-show --json`, `verification-coverage --json`)
+  and the SBOM's `kanonarion:build:*` properties gain `goarm`, `tinygo_target`,
+  `tinygo_version` and `tinygo_tags` on a TinyGo walk only. They are absent on
+  every other walk, so those documents are unchanged.
+- On a TinyGo walk only: a `stdlib` finding gains `not_established` and
+  `tinygo_note`; a vulnerability record's status and findings axis may read
+  `Inconclusive`, and so may a scan run's `findings_status` and
+  `overall_status`, with `counts.inconclusive` and an `inconclusive` key on the
+  `vuln_scan_completed` event; the `toolchain` section of `vuln-scan --json` and `audit --json`
+  gains `tinygo`, in the section's own shape; `native_coverage` gains `tinygo`;
+  `vuln-scan-show --json` gains `inconclusive_modules`; and the SBOM gains the
+  `github.com/tinygo-org/tinygo` component with `kanonarion:component:tinygo`,
+  `kanonarion:tinygo:*` and, on the stdlib component, `kanonarion:stdlib:packages`.
+  All are absent on every other walk.
+- The call-graph record document (`callgraph-show --json`, and the `local` and
+  `callgraph` summary documents) gains `frame`: `text`, `goos`, `goarch`, and
+  `goarm`, `tinygo_target`, `tinygo_version`, `tinygo_tags` where set. Absent on
+  a record that names no frame. `callgraph-show` text gains a `frame:` line and
+  `--history` a `frame:` line per generation, both absent on such a record.
+
+## Vulnerability store: module `vuln`, migration 17 - snapshots keyed on their bytes, and where they came from
+
+**A table rebuild, one additive field, no pipeline bump.** Migration 17
+rebuilds `vulnerability_snapshots` with the key `(source, version,
+content_hash)` and an `origin TEXT NOT NULL DEFAULT ''` column. A version
+re-published with different bytes was overwritten in place, so a run's
+snapshot could no longer be read; it is now stored beside the first, and the
+same bytes again write nothing. Existing rows keep their bytes and read
+`origin` `''`, which is `vuln.go.dev`. `config.yaml` gains `vulndb.url`,
+additive within v3: the base of a mirror of `vuln.go.dev`. The snapshot object
+in records and runs gains `origin`, `omitzero`, so a snapshot not from a
+mirror keeps its sealed bytes. Store `v92` -> `v93`; an older build refuses a
+`v93` store at the schema gate.
+
+## TinyGo store: module `tinygo`, migration 1 - the release archive a TinyGo walk checked against, and a walk record field
+
+**One new table, one additive walk-record field, no pipeline bump.** A walk
+taken with `--tinygo` now checks every file TinyGo's packages compile against
+TinyGo's module zip and, for the files the zip does not carry, against the
+release archive TinyGo publishes on GitHub. The archive is not kept. Migration
+1 of the new `tinygo` module adds one append-only table holding each
+measurement of an archive:
+
+```sql
+CREATE TABLE IF NOT EXISTS tinygo_release_measurements (
+    tinygo_version   TEXT NOT NULL,
+    asset            TEXT NOT NULL,
+    url              TEXT NOT NULL,
+    published_sha256 TEXT NOT NULL,
+    observed_sha256  TEXT NOT NULL,
+    outcome          TEXT NOT NULL,
+    reason           TEXT NOT NULL DEFAULT '',
+    manifest         TEXT NOT NULL DEFAULT '',
+    measured_at      TEXT NOT NULL,
+    PRIMARY KEY (tinygo_version, asset, measured_at, observed_sha256)
+)
+```
+
+`outcome` is `digest_matched` or `digest_mismatch` when the archive's digest
+was compared, `no_digest_published` when the release lists no digest, and
+`asset_absent` when it has no such archive or no such release. A failure to
+reach GitHub writes no row. `manifest` holds one `<sha256>  <path>` line for
+every file under the archive's `src/`, and is empty for every outcome but
+`digest_matched`. A walk reads the row appended last for its TinyGo release and
+asset, and `walk --force` appends a new one. Store `v91` -> `v92`.
+
+The walk record's TinyGo node gains `tinygo.custody`: the module and its fetch
+verification, the archive, its outcome, both digests and the measurement time,
+the counts verified by each anchor, the differing files, and the files not
+established grouped by reason (each reason once, with its sorted paths). It
+is `omitempty`, so every walk recorded before it, and every walk without
+`--tinygo`, keeps its content hash and its identity. `--gomod` walks always
+re-resolve, so the walk pipeline stays `1.11.0` and the next TinyGo walk
+records the field. `walk-show --json` carries it. The SBOM's TinyGo component
+gains the `kanonarion:tinygo:custody:*` properties.
+
+An older build meets a `v92` store at the schema gate: it names `tinygo@v1` as
+a migration it does not know and refuses, and `store info` still reads the
+store.
+
+## Fetch record: pipeline `0.5.0` → `0.6.0`, and fetch migrations 11 and 12 - which directory the VCS check hashed, and the version's own time
+
+**Derivation change, two additive fields, two store migrations.** A module that
+lives in a subdirectory of its repository (`service/s3` of the AWS SDK,
+`client/v3` of etcd) is tagged under that directory (`service/s3/v1.2.3`), and
+the proxy zips that directory alone. A `0.5.0` build looked for the module's
+`go.mod` only at the repository root and one level below, hashed the root when
+it found none there, and on a route with no proxy `Origin` asked for the
+unprefixed tag. Every such module read `VerifiedBySumDBOnly`, "proxy hash …
+does not match git checkout hash …", although its tree was never compared.
+A `0.6.0` build:
+
+- takes the module's directory from the proxy's `Origin.Subdir`, or derives it
+  from the module path and the repository root where no `Origin` is used, and
+  asks for the prefixed tag on that route;
+- hashes exactly the directory the go command zips: that directory, or its
+  major-version subdirectory (`client/v3`) where the go command's rule selects
+  it. A directory that is absent, or whose `go.mod` names another module,
+  is recorded as such in the detail, and nothing is hashed;
+- keeps directories named `.hg`, `.svn` or `.bzr` in the hash, as the go
+  command's zip does.
+
+So `git_ref`, `git_commit_hash`, `verification_status` and
+`verification_detail` change for nested modules: most move from
+`VerifiedBySumDBOnly` to `Verified`.
+
+`FactRecord` gains `git_subdir`, the directory the check hashed, relative to the
+repository root: `.` for the root, empty where nothing was hashed and on every
+record written before the field. The `fetch_records` table gains a column of the
+same name:
+
+```sql
+ALTER TABLE fetch_records ADD COLUMN git_subdir TEXT NOT NULL DEFAULT ''
+```
+
+The field is `omitempty` in the canonical JSON, so every record written before
+it existed keeps its content hash. Store `v89` -> `v90`. `fetch --json` and each
+`verification-coverage --json` row always carry `git_subdir`: the directory,
+`"."` for the root, or `null` where the record names none.
+From a `0.6.0` record, `use` writes `Origin.Subdir` into the `.info` it derives,
+as the go command names it (`client` for `go.etcd.io/etcd/client/v3`), and an
+SBOM component's `vcs` reference comment names the directory compared. Neither
+changes for a record that names no directory.
+
+`FactRecord` also gains `version_time`: the time the module proxy or module
+cache gave for the version in its `.info`, in UTC with full precision
+(`time.RFC3339Nano`). It is empty where the source gave none, on every record
+written before the field, and on a `0.6.0` record written before it. Fetch
+migration 12 adds the column:
+
+```sql
+ALTER TABLE fetch_records ADD COLUMN version_time TEXT NOT NULL DEFAULT ''
+```
+
+It is `omitempty` in the canonical JSON on the same terms as `git_subdir`, and
+the pipeline stays `0.6.0`. Store `v90` -> `v91`. `fetch --json` always carries
+`version_time`: the time, or `null` where the record holds none. `use` writes it
+as the `.info` `Time`, as the go command writes it, and leaves `Time` out where
+the record holds none. It used to write the time the store first fetched the
+module there.
+
+Fetch records are append-only, so `0.5.0` and older rows stay as written and
+keep their detail. A fetch at `0.6.0` does not serve a `0.5.0` row from cache:
+the next full fetch of a coordinate (`fetch`, `walk --force`) appends a `0.6.0`
+record, and reads serve it. The steps that fetch a `go.mod` alone skip a
+coordinate held as a full record at any version, or as a `0.6.0` go.mod-only
+record; a coordinate held only as a `0.5.0` go.mod-only record is fetched once
+more. A walk or scan that is itself reused fetches nothing.
+
+An older build meets a `v91` store at the schema gate: it names `fetch@v11` and
+`fetch@v12`, or `fetch@v12` alone, as migrations it does not know and refuses, and
+`store info` still reads the store.
+
 ## Native record: pipeline `0.4.0` → `0.5.0`
 
 **Derivation change; no record shape change, no store migration.** `0.4.0`
@@ -196,6 +383,71 @@ helper`. A `0.3.0` record could count such a file as compiled native source.
 Records are keyed by generation (`<pipeline>+recipes.<n>`), so the bump is the
 migration: `0.3.0` rows stay and are never served for a `0.4.0` request. Cost is
 one re-measurement per coordinate on its next `native` run.
+
+## Call graph record: pipeline `0.12.0` → `0.13.0`
+
+**Derivation and record shape change; no store migration.** Under a TinyGo
+frame (`--tinygo`) a record now carries three things inside its seal: edges of
+kind `compiler-inserted`, the runtime calls TinyGo's compiler emits for maps,
+strings, channels, `append`, panics, bounds checks, `go`, `defer` and heap
+allocation; edges of kind `linkname`, from a declaration without a body to the
+function `//go:linkname` makes implement it; and an `interrupt_handler` node
+fact on each function handed to `runtime/interrupt.New`. The `export_directive`
+fact is also read from TinyGo's own packages, a wasm build's
+`runtime.wasmEntryCommand` carries it as `wasmexport` `_start` (TinyGo exports
+that entry by name), and an `//export` or
+`//go:export` on a declaration without a body no longer records one, under any
+frame. The node fact is omitted when absent, so every record without one
+marshals to the bytes it always did. A record under the host frame or
+`--target` is unchanged apart from its pipeline version, unless one of the
+module's own declarations without a body carried `//export`.
+
+A `0.12.0` TinyGo-frame record lacks the two edge kinds and the handler fact,
+and has no export directive on TinyGo's own packages, so it is not served for a
+`0.13.0` request. Records are keyed `(module, version, pipeline_version)`:
+`0.12.0` rows stay and become unreachable. Cost is one re-extraction per
+coordinate on its next `callgraph` or `local` run. No released build wrote
+`0.12.0`.
+
+## Call graph record: pipeline `0.11.0` → `0.12.0`
+
+**Derivation change; no record shape change, no store migration.** Under a
+TinyGo frame (`--tinygo`), TinyGo's own packages — those whose directory or
+files resolve under `$(tinygo env TINYGOROOT)/src`, such as `machine`,
+`device/arm`, `runtime` and `internal/task` — are now analysed with bodies:
+their functions keep `module ''` and `role: external`, and their call edges,
+including calls back into the analysed module, are recorded. They are no longer
+listed in the record's `stdlib_packages`. Packages that resolve under Go's own
+GOROOT stay standard library. A record under the host frame or `--target` is
+unchanged apart from its pipeline version.
+
+A `0.11.0` TinyGo-frame record holds TinyGo's packages as bodiless externals,
+so it is not served for a `0.12.0` request. Records are keyed
+`(module, version, pipeline_version)`: `0.11.0` rows stay and become
+unreachable. Cost is one re-extraction per coordinate on its next `callgraph`
+or `local` run.
+
+## Call graph record: pipeline `0.10.0` → `0.11.0`
+
+**Record shape change; store migration 17; no schema-version bump.** A record
+now carries the **build frame** it was extracted under, inside its seal: `GOOS`,
+`GOARCH` and `GOARM` as the loader's own go command resolved them, and the
+TinyGo target, release and build tags when `--tinygo` was declared. The field is
+omitted when zero, so every stored record still marshals to the bytes it was
+sealed over.
+
+Every call-graph read now selects by frame: the one the invocation declares
+with `--target`, `--goos`/`--goarch` or `--tinygo`, or this host's. `local`,
+`callgraph` and `callgraph-show` take those flags, and one working tree holds
+one record per frame. `reachability --local --json` carries the probe's `frame`
+in the same shape (additive).
+
+A `0.10.0` record names no frame, so it cannot be served to a read that names
+one, and the bump is what keeps it from being read as this host's. Records are
+keyed `(module, version, pipeline_version)`: `0.10.0` rows stay, become
+unreachable, and are never served for a `0.11.0` request. Cost is one
+re-extraction per coordinate on its next `callgraph` run; run `kanonarion local
+.` in each ingested tree whose answers you rely on.
 
 ## Call graph record: pipeline `0.9.0` → `0.10.0`
 
@@ -1036,6 +1288,85 @@ cannot decode is skipped rather than failing the migration.
 Additive: no purge, no pipeline bump, no record shape change. The blob is read,
 never rewritten, and every stored walk still verifies against its written hash.
 
+## Walk store: module `walk`, migration 12
+
+Adds `walks.tinygo_target` and `walks.tinygo_version`: the TinyGo target and
+TinyGo release a walk declared with `--tinygo`, and extends the platform index
+with `tinygo_target`. Store `v87` -> `v88`.
+
+Additive: no purge, no pipeline bump, no record shape change for any stored
+walk. The values live in the sealed blob as the graph's `BuildEnv`, beside
+`goarm` and the target's build tags; those fields are omitted when empty, so
+every walk written before them marshals and hashes exactly as it did.
+
+A walk-reading command declaring `--tinygo <target>` selects only walks whose
+`tinygo_target` matches, and one declaring `--target`, `--goos`/`--goarch` or
+nothing selects only walks whose `tinygo_target` is empty.
+
+**No back-fill.** No stored walk carries the fields, and the empty string is the
+recorded value "not a TinyGo walk".
+
+## Walk record: a TinyGo walk records who supplies the standard library — no migration and no bump (2026-10-18)
+
+**No store migration, no schema-version bump, no pipeline bump.** A walk taken
+with `--tinygo` gains one node, `github.com/tinygo-org/tinygo@v<release>`
+(resolution source `tinygo`), carrying the standard packages TinyGo supplies,
+and the `stdlib` node gains `packages`, the ones Go supplies. Both live in the
+sealed blob and are omitted when empty, so every other walk marshals and hashes
+exactly as before.
+
+A TinyGo walk's identity hash changes once, because a node is added: the first
+`--tinygo` walk of each project after upgrading is a cache miss and is taken
+again. Nothing is purged; the earlier TinyGo walk stays in the store and still
+verifies.
+
+## Walk record: an analysed project root records no directory — no migration and no bump (2026-10-19)
+
+**No store migration, no schema-version bump, no pipeline bump.** A walk taken
+with `--analyse-root` no longer records the project directory on its root node
+(`local_path`), and the fetch record of a directory read from disk no longer
+names its absolute path: it reads `analysed from the working tree` for the
+project root and `local directory <path as go.mod writes it>` for a local
+replace target. The sealed walk and the `fetch_records` row carry no
+machine-specific path.
+
+An `--analyse-root` walk's identity hash changes once: the first such walk of
+each project after upgrading is a cache miss and is taken again, and from then
+on two checkouts of one tree are one walk. Nothing is purged; an earlier walk
+that carries `local_path` on its root stays in the store and still verifies.
+A local replace written as an absolute path is now read from that path under
+`--analyse-local`, where it used to fail and stay unanalysed, so such a walk's
+identity also changes once.
+
+## Walk record: modules read from disk have their own identity — no migration and no bump (2026-10-19)
+
+**No store migration, no schema-version bump, no pipeline bump, no purge.** A
+local-path replacement is now a node at `<path>@local` (resolution source
+`local_replace`, `original_coordinate` the require it replaces) and is read from
+disk on every `--gomod` walk; a `go.work` member other than the walk's root is a
+node at `<path>@local` with the new resolution source `local_workspace_member`.
+Their fetch records are written at `<path>@local` under the `local-0.1.0`
+generation, which a published coordinate never shares.
+
+A project with a local replacement or a workspace member walks to a new
+identity once, because the node's coordinate changed: the first walk after
+upgrading is a cache miss, and later walks of an unchanged tree reuse it. A
+project with neither walks to the same identity as before.
+
+A store used by an earlier build may hold a `local-0.1.0` fetch record under a
+published coordinate, written by `--analyse-local`. It stays in the ledger. The
+composed read of that published coordinate leaves it out, so it no longer
+reads as a divergence, and `verification-coverage` lists it as
+`local generation, superseded by identity`. The licence, interface, call-graph,
+example and native records an earlier build derived from that directory are
+left out of the published coordinate's reads in the same way: they stay in the
+store, `--history` marks them `superseded by identity`, and `native-list
+--all-generations` lists them with that mark. Where they were the only records,
+a read of the coordinate says "the store holds N generation(s) of <coord>, all
+derived from a directory read under this published coordinate and superseded by
+identity" and names the command that measures the published module; that
+command, or the next `extract` of a walk that includes it, does.
+
 ## Call graph store: module `callgraph`, migration 12
 
 Adds `callgraph_edges.kind`: whether an edge is a call, or a REFERENCE to a
@@ -1134,6 +1465,21 @@ migration rather than being skipped.**
 when the set is non-empty, and `--json` carries the same field. `callers`,
 `callees`, their transitive forms and `implementers` qualify their `answer:` line
 when part of the answer comes from those modules' nodes.
+
+## Call graph store: module `callgraph`, migration 17
+
+Adds `callgraph_records.goos`, `goarch`, `goarm`, `tinygo_target` and
+`tinygo_version` — the build frame a record was extracted under — and the index
+`callgraph_records_frame_idx` on `(module_path, module_version,
+pipeline_version, goos, goarch, goarm, tinygo_target)`. Store `v88` -> `v89`.
+
+The columns are the denormalised copy of the record's sealed `frame`, written in
+the same statement as the blob, so every read selects its frame from columns
+without decoding a generation.
+
+**No back-fill.** Every existing row is at pipeline `0.10.0` or earlier, which
+records no frame and is never served at `0.11.0`. Its empty columns mean
+"unrecorded", and a read never takes them for this host's frame.
 
 
 ## Call graph records: the wrapper hop, no migration and no bump

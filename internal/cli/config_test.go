@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -77,7 +78,7 @@ func TestLoadStoreConfig_UserSetLogLevelWins(t *testing.T) {
 func TestRunConfigSet_DoesNotFreezeUnsetSiblings(t *testing.T) {
 	root := t.TempDir()
 	var buf bytes.Buffer
-	if err := runConfigSet(root, "preferences.json", "true", false, &buf); err != nil {
+	if err := runConfigSet(root, "preferences.json", "true", false, &buf, io.Discard); err != nil {
 		t.Fatalf("runConfigSet: %v", err)
 	}
 	data, err := os.ReadFile(filepath.Join(root, "config.yaml")) // #nosec G304 -- test-controlled t.TempDir() path
@@ -144,7 +145,7 @@ func TestRunConfigInit_Idempotent(t *testing.T) {
 func TestRunConfigSet_RoundTrip(t *testing.T) {
 	root := t.TempDir()
 	var buf bytes.Buffer
-	if err := runConfigSet(root, "preferences.json", "true", false, &buf); err != nil {
+	if err := runConfigSet(root, "preferences.json", "true", false, &buf, io.Discard); err != nil {
 		t.Fatalf("runConfigSet: %v", err)
 	}
 
@@ -170,7 +171,7 @@ func TestRunConfigSet_RoundTrip(t *testing.T) {
 func TestRunConfigSet_UnknownKey(t *testing.T) {
 	root := t.TempDir()
 	var buf bytes.Buffer
-	err := runConfigSet(root, "bogus.key", "x", false, &buf)
+	err := runConfigSet(root, "bogus.key", "x", false, &buf, io.Discard)
 	if err == nil {
 		t.Fatal("expected an error for an unknown config key")
 	}

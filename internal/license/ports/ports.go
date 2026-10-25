@@ -126,6 +126,13 @@ type LicenceRecordLister interface {
 	ListLicenseRecordsFor(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) ([]domain.LicenseRecord, error)
 }
 
+// PipelinesHeldReader is the optional read of which pipeline versions the
+// ledger holds one coordinate at. It reads that coordinate's keys only, so a
+// reader can tell "never extracted" from "extracted by superseded logic".
+type PipelinesHeldReader interface {
+	PipelinesHeld(ctx context.Context, coord coordinate.ModuleCoordinate) ([]string, error)
+}
+
 // IdenticalGenerationReader is the optional after-the-fact read: the generation
 // the ledger ALREADY holds that states the measurement a run has just taken.
 //

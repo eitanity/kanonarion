@@ -58,6 +58,22 @@ type moduleMembership struct {
 	// command's answer to "what is the standard library" — so a package the
 	// loader resolved under it belongs to the coordinate and nothing else does.
 	stdlib bool
+	// tinygo is the set of TinyGo's own packages under a TinyGo frame. The
+	// loader places them in no module, as it does the standard library, but
+	// they are analysed with bodies here, so no standard-library join covers them.
+	tinygo map[string]bool
+}
+
+// withTinyGo records pkgs as TinyGo's own packages.
+func (m moduleMembership) withTinyGo(pkgs []*packages.Package) moduleMembership {
+	if len(pkgs) == 0 {
+		return m
+	}
+	m.tinygo = make(map[string]bool, len(pkgs))
+	for _, p := range pkgs {
+		m.tinygo[p.PkgPath] = true
+	}
+	return m
 }
 
 // newModuleMembership records what the loader reported about every package it
@@ -184,7 +200,7 @@ func (m moduleMembership) prefixAttributed() []string {
 // could happen or a function the binary does not contain.
 func (m moduleMembership) stdlibPackages() []string {
 	return m.closure(func(pkgPath, modPath string) bool {
-		return modPath == "" && isStdlibPackagePath(pkgPath)
+		return modPath == "" && isStdlibPackagePath(pkgPath) && !m.tinygo[pkgPath]
 	})
 }
 

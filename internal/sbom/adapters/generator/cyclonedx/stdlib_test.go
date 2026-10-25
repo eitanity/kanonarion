@@ -156,3 +156,39 @@ func TestGenerate_NoBuildEnv_NoProperties(t *testing.T) {
 		}
 	}
 }
+
+// buildProperties is the kanonarion:build:* metadata properties in document order.
+func buildProperties(t *testing.T, walk walkdomain.WalkRecord) []string {
+	t.Helper()
+	rec, err := cyclonedx.New(testPipelineVersion).Generate(t.Context(), walk, nil, makeGenReq())
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	var b bom
+	if err := json.Unmarshal(rec.Content, &b); err != nil {
+		t.Fatalf("unmarshal bom: %v", err)
+	}
+	var out []string
+	for _, p := range b.Metadata.Properties {
+		if strings.HasPrefix(p.Name, "kanonarion:build:") {
+			out = append(out, strings.TrimPrefix(p.Name, "kanonarion:build:")+"="+p.Value)
+		}
+	}
+	return out
+}
+
+// A TinyGo walk states its frame as build properties; a standard walk gains
+// none of them, so its document is unchanged.
+func TestGenerate_TinyGoBuildPropertiesOnlyOnATinyGoWalk(t *testing.T) {
+	if got, want := strings.Join(buildProperties(t, walkWithStdlibAndEnv(t)), " "),
+		"goos=linux goarch=amd64 go_version=go1.26.4"; got != want {
+		t.Errorf("standard build properties = %q, want %q", got, want)
+	}
+	pico := walkWithStdlibAndEnv(t)
+	pico.Graph.BuildEnv = walkdomain.BuildEnv{GOOS: "linux", GOARCH: "arm", GoVersion: "go1.27.2",
+		GOARM: "6", TinyGoTarget: "pico", TinyGoVersion: "0.42.0", TinyGoTags: []string{"tinygo", "pico"}}
+	if got, want := strings.Join(buildProperties(t, pico), " "),
+		"goos=linux goarch=arm goarm=6 go_version=go1.27.2 tinygo_target=pico tinygo_version=0.42.0 tinygo_tags=tinygo,pico"; got != want {
+		t.Errorf("TinyGo build properties = %q, want %q", got, want)
+	}
+}

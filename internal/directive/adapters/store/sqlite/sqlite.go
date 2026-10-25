@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/adapters/blobcodec"
+	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
 	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
 	"github.com/eitanity/kanonarion/internal/directive/domain"
 )
@@ -134,7 +135,7 @@ ON CONFLICT (scan_id) DO UPDATE SET
 // GetDirectiveRecord returns the most recent scan for a project. found is
 // false (no error) when none is stored.
 func (s *Store) GetDirectiveRecord(ctx context.Context, projectModulePath string) (domain.Record, bool, error) {
-	const q = `SELECT scan_id, completed_at, serialised FROM directive_scans
+	const q = `SELECT scan_id, project_module_path, pipeline_version, completed_at, serialised FROM directive_scans
 WHERE project_module_path = ? AND pipeline_version = ?
 ORDER BY completed_at DESC, scan_id DESC LIMIT 1`
 
@@ -144,7 +145,7 @@ ORDER BY completed_at DESC, scan_id DESC LIMIT 1`
 
 // GetScanByID returns the scan record with the given ID.
 func (s *Store) GetScanByID(ctx context.Context, scanID string) (domain.Record, bool, error) {
-	const q = `SELECT scan_id, completed_at, serialised FROM directive_scans WHERE scan_id = ?`
+	const q = `SELECT scan_id, project_module_path, pipeline_version, completed_at, serialised FROM directive_scans WHERE scan_id = ?`
 	row := s.db.DB().QueryRowContext(ctx, q, scanID)
 	return scanOneRecord(row)
 }
@@ -157,7 +158,7 @@ func (s *Store) GetScanByID(ctx context.Context, scanID string) (domain.Record, 
 // the rows page 1 did not show if the two calls order the population the same
 // way.
 func (s *Store) ListScans(ctx context.Context, projectModulePath string, limit, offset int) ([]domain.Record, error) {
-	q := `SELECT scan_id, completed_at, serialised FROM directive_scans
+	q := `SELECT scan_id, project_module_path, pipeline_version, completed_at, serialised FROM directive_scans
 WHERE project_module_path = ? AND pipeline_version = ?
 ORDER BY completed_at DESC, scan_id DESC`
 	args := []any{projectModulePath, domain.PipelineVersion}
@@ -184,12 +185,12 @@ ORDER BY completed_at DESC, scan_id DESC`
 
 	var out []domain.Record
 	for rows.Next() {
-		var scanID, completedAt string
+		var f filedRow
 		var blob []byte
-		if err := rows.Scan(&scanID, &completedAt, &blob); err != nil {
+		if err := rows.Scan(&f.scanID, &f.project, &f.pipeline, &f.completedAt, &blob); err != nil {
 			return nil, fmt.Errorf("scanning directive scan row: %w", err)
 		}
-		rec, err := decodeRecord(scanID, completedAt, blob)
+		rec, err := decodeRecord(f, blob)
 		if err != nil {
 			return nil, err
 		}
@@ -217,25 +218,35 @@ func (s *Store) CountScans(ctx context.Context) (int, error) {
 }
 
 func scanOneRecord(row *sql.Row) (domain.Record, bool, error) {
-	var scanID, completedAt string
+	var f filedRow
 	var blob []byte
-	if err := row.Scan(&scanID, &completedAt, &blob); errors.Is(err, sql.ErrNoRows) {
+	if err := row.Scan(&f.scanID, &f.project, &f.pipeline, &f.completedAt, &blob); errors.Is(err, sql.ErrNoRows) {
 		return domain.Record{}, false, nil
 	} else if err != nil {
 		return domain.Record{}, false, fmt.Errorf("querying directive scan: %w", err)
 	}
-	rec, err := decodeRecord(scanID, completedAt, blob)
+	rec, err := decodeRecord(f, blob)
 	if err != nil {
 		return domain.Record{}, false, err
 	}
 	return rec, true, nil
 }
 
+// filedRow is the key columns a directive scan row is read with.
+type filedRow struct{ scanID, project, pipeline, completedAt string }
+
+// misfiledRemedy is what clears a misfiled directive scan row. A scan row is
+// never rewritten; a new scan of the project is listed ahead of it.
+const misfiledRemedy = "no kanonarion command clears it: a scan row is never rewritten, so every read that reaches it meets it; " +
+	"restore the store from a copy taken before the row was moved"
+
 // decodeRecord parses the serialised blob and backfills row-derived metadata
 // (scan_id, completed_at) so pre- records — whose JSON predates the
 // Record.ID and Record.CompletedAt fields — still report a usable identity
-// and timestamp to the application layer.
-func decodeRecord(scanID, completedAt string, blob []byte) (domain.Record, error) {
+// and timestamp to the application layer. A record whose project, pipeline or
+// stated id is not the row's is refused rather than served under that key.
+func decodeRecord(f filedRow, blob []byte) (domain.Record, error) {
+	scanID, completedAt := f.scanID, f.completedAt
 	decoded, decErr := blobcodec.Decode(blob)
 	if decErr != nil {
 		return domain.Record{}, fmt.Errorf("decompressing directive scan: %w", decErr)
@@ -246,6 +257,18 @@ func decodeRecord(scanID, completedAt string, blob []byte) (domain.Record, error
 	}
 	if rec.Ecosystem != domain.EcosystemGo {
 		return domain.Record{}, fmt.Errorf("%w: got %q, want %q", domain.ErrUnsupportedEcosystem, rec.Ecosystem, domain.EcosystemGo)
+	}
+	filed := []recordseal.Filed{
+		recordseal.Key(f.project, rec.ProjectModulePath),
+		recordseal.Column("pipeline_version", "pipeline_version", f.pipeline, rec.PipelineVersion),
+	}
+	// A record written before the id field states none, so only a stated id is
+	// compared.
+	if rec.ID != "" {
+		filed = append(filed, recordseal.Column("scan_id", "id", scanID, rec.ID))
+	}
+	if err := recordseal.CheckFiled("directive scan", "directive_scans", misfiledRemedy, filed...); err != nil {
+		return domain.Record{}, err //nolint:wrapcheck // the refusal names the row, the table and the remedy itself
 	}
 	if rec.ID == "" {
 		rec.ID = scanID

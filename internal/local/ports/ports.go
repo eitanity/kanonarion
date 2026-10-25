@@ -157,6 +157,9 @@ type BuildModuleLister interface {
 type ProbedBinary struct {
 	// ImportPath is the main package's import path.
 	ImportPath string
+	// Builder is the command that built this binary (domain.ProbeBuilderGo or
+	// domain.ProbeBuilderTinyGo).
+	Builder string
 	// Symbols is the set of fully-qualified Go symbol names present in this
 	// binary (as reported by go tool nm). Nil when BuildError is set.
 	Symbols map[string]struct{}
@@ -175,6 +178,8 @@ type SymbolProbeResult struct {
 	// Kind is "binary" when main package binaries were built directly, or
 	// "library" when a synthetic reference harness was compiled.
 	Kind string
+	// Builder is the command that built the probe artefacts.
+	Builder string
 	// Binaries is one entry per main package the enumeration found, built or
 	// failed, sorted by import path. Empty for a library probe, which has no
 	// main package to attribute a symbol to.

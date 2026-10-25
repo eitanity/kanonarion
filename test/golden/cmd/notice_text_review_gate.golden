@@ -9,4 +9,4 @@ execute root command: 1 module(s) require review
 notice: scope: walk 01ARZ3NDEKTSV4RRFFQ69G5FB2 (4 module(s))
 notice: 1 module(s) require human review before publishing:
 
-  example.com/unlicensed@v1.0.0: no license record: run 'kanonarion license' first
+  example.com/unlicensed@v1.0.0: no license record: run: kanonarion license example.com/unlicensed@v1.0.0

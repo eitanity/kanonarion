@@ -133,7 +133,21 @@ type ToolchainJudgment struct {
 	// Reason is why no judgment could be made; set only when Status is
 	// ToolchainUnjudged.
 	Reason string
+	// TinyGo is, on a TinyGo walk, the TinyGo release beside the Go toolchain.
+	TinyGo *TinyGoToolchain
 }
+
+// TinyGoToolchain is a TinyGo walk's TinyGo release and how many of the build's
+// standard packages it supplies. No advisory source kanonarion reads covers
+// TinyGo, so it is stated beside the Go judgment and never judged.
+type TinyGoToolchain struct {
+	Version          string
+	TinyGoPackages   int
+	StandardPackages int
+}
+
+// TinyGoToolchainReason is why a TinyGo release is never judged.
+const TinyGoToolchainReason = "no advisory source kanonarion reads covers TinyGo"
 
 // Reasons a toolchain judgment cannot be made. Each names the missing input
 // rather than the conclusion, because the remedy differs: a walk with no

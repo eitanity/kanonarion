@@ -114,6 +114,15 @@ func reanalysis(coord coordinate.ModuleCoordinate, dir, flags string) string {
 	return UnnamedWorkingTreeLead + ", so run kanonarion local" + flags + " from inside it"
 }
 
+// TinyGoReanalysisInstruction is ReanalysisInstruction for the TinyGo build: the
+// re-run with --tinygo, which no stored standard-frame record answers.
+func TinyGoReanalysisInstruction(coord coordinate.ModuleCoordinate, dir string) string {
+	if line, ok := ReanalysisCommand(coord, dir, false); ok {
+		return line + gotoolchain.TinyGoFlag
+	}
+	return UnnamedWorkingTreeLead + ", so run kanonarion local" + gotoolchain.TinyGoFlag + " from inside it"
+}
+
 // IsReFetchable reports whether coord names bytes 'kanonarion fetch' can go and
 // get. A project coordinate names a working tree, never a published artefact,
 // and the standard library arrives with the toolchain, so a remedy that tells

@@ -148,7 +148,8 @@ func assertVCSRefusal(t *testing.T, err error) {
 	if !errors.Is(err, ports.ErrVCSToolMissing) {
 		t.Errorf("error %v is not counted as a missing VCS leg", err)
 	}
-	if !strings.Contains(err.Error(), "--skip-vcs-verify") {
-		t.Errorf("refusal %q does not name the remedy", err)
+	// The flag that records the run checksum-only is the command's to add.
+	if strings.Contains(err.Error(), "--") {
+		t.Errorf("refusal %q names a flag no adapter can know the command defines", err)
 	}
 }

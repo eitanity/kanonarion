@@ -1,7 +1,8 @@
 # `kanonarion config` - Read and write configuration values
 
 `config` reads and writes the operator configuration file
-(`<store-root>/config.yaml`) using a git-config style interface: dotted key
+(`<store-root>/config.yaml`, or the file `--config` or `KANONARION_CONFIG`
+names) using a git-config style interface: dotted key
 paths, `get` reads a single value, `set` writes it. Writes are non-destructive
 - only the targeted key is modified, comments and unrelated keys are preserved.
 
@@ -63,45 +64,15 @@ fetch_policy.allowed_vcs_hosts                    (unset: built-in host set, adv
 ...
 ```
 
-The file alone does not answer "what is in force" - a key you never wrote is
-absent from it and still resolves to a built-in default at runtime. The block
-below the file is the answer.
+A key absent from the file still resolves to its built-in default, so the
+block, not the file, is what is in force.
 
 **No `config.yaml` in the store is a normal state, not an error.** The command
-exits `0` and prints the effective configuration, with a line in place of the
-file saying which path was looked for:
+exits `0`, says which path was looked for, and marks every key `(default)`.
 
-```
-# no config file at /home/you/.kanonarion/config.yaml — nothing is set in this store, so every value below is a built-in default
-#   to write a commented template: kanonarion config init
-
-# effective configuration (resolved; (default) = not set in this file)
-...
-```
-
-Every key in that case carries `(default)`.
-
-**A file that exists but is rejected still prints** — this is the command that
-answers "what is in force" when the answer is "not what your file says". The
-file is echoed, followed by a notice naming the rejection, and then the
-effective block in which *every* key carries `(default)`, because a rejected
-file sets nothing:
-
-```
-version: "2"
-preferences:
-  log_level: debug
-...
-      default: block
-
-# ^ the file above (/home/you/.kanonarion/config.yaml) was REJECTED and is NOT in force: rule 0 (scope "production"): unknown policy outcome "block": must be allow, notify, or warn
-#   no key from it applies; every value below is a built-in default
-#   fix the named value, or rewrite one key: kanonarion config set <key> <value>
-
-# effective configuration (resolved; (default) = not set in this file)
-preferences.log_level                             warn  (default)
-...
-```
+**A file that exists but is rejected still prints**: the file, a notice naming
+the rejection, then the effective block with *every* key `(default)`, because a
+rejected file sets nothing.
 
 The same notice goes to stderr, so it is visible when stdout is redirected or
 `--json` is used. `config show` itself exits `0` — it answered.
@@ -118,9 +89,7 @@ something was written and refused.
 The document also carries `settings`: one entry per resolved key, holding the
 dotted `key` a `config get` or `config set` takes, the `value` in force, and its
 `source` - `"file"` when the config file names that key, `"default"` when the
-value is the shipped built-in. It is the JSON leg of the `(default)` marker in
-the text, and the answer to "did an operator choose this, or is it what
-kanonarion ships with":
+value is the shipped built-in, as the `(default)` marker says in the text:
 
 ```json
 {
@@ -132,13 +101,9 @@ kanonarion ships with":
 }
 ```
 
-The claim is per value, not per section: a `preferences` block with one key set
-and two defaulted has no single source, and the file is kept parsed as an
-untyped document beside the typed config precisely so this can be asked key by
-key. Two entries are coarser and say so here: `license_overrides.*` and
+The source is per value, not per section. `license_overrides.*` and
 `copyright_declarations.*` exist only when the file names them, so `"file"`
-there is the presence of the entry rather than a comparison against a default -
-there is no default for them to differ from. A rejected file sets nothing, so
+there means the entry is present; they have no default. A rejected file sets nothing, so
 every entry reads `"default"`, matching the `(default)` markers in the text.
 
 ---
@@ -174,10 +139,9 @@ rejected.
 
 ### `kanonarion config set <key> <value>`
 
-Write a value to the configuration file. Creates the file from the commented
-template if it does not yet exist, then writes the targeted key. Only that key
-is changed - existing content and comments are preserved, and keys you have not
-set stay absent so they continue to resolve to the live built-in default.
+Write a value to the configuration file, creating it from the commented
+template if absent. Only that key changes - other content and comments are
+kept, and keys you have not set stay absent, resolving to the built-in default.
 
 ```
 kanonarion config set <key> <value> [--json]
@@ -209,26 +173,77 @@ default**. The config file holds only the keys you explicitly write with
 `config set` (or by hand); every other key stays absent and resolves to the
 *live* built-in default at runtime.
 
-This matters when kanonarion is upgraded: because unset keys are never frozen
-to disk, a changed built-in default (for example a new default `log_level`)
-takes effect automatically for any key you never set. A value you did set
-keeps winning until you change it.
+Unset keys are never written to disk, so after an upgrade a changed built-in
+default reaches every key you never set; a value you set keeps winning.
 
 The template (`config init` writes it, `config set` creates it on demand)
 leaves every key commented out for exactly this reason - uncomment a line only
 when you want to pin a value and stop tracking the built-in default.
 
-Read-only commands (`config get`, `config show`, `walk-list`, and every other
-query) never create or modify `config.yaml`. The file is materialised only by
-`config init` or `config set`. An empty store with no `config.yaml` resolves
-entirely to built-in defaults.
+Only `config init` and `config set` create or modify `config.yaml`; with no
+file, every key is a built-in default.
+
+## Which file is read
+
+Every command reads one configuration file:
+
+1. the path given with `--config <path>`, if any;
+2. otherwise the path in the `KANONARION_CONFIG` environment variable, if set;
+3. otherwise `<store-root>/config.yaml`.
+
+`config init`, `config set`, `config get` and `config show` read and write the
+same file. The store root still decides where the store lives; `--config` only
+moves the configuration.
+
+## The config hash
+
+`config show` prints `config hash sha256:…` (JSON `config_hash`): the hash of
+the configuration in force, defaults applied, over every section but
+`preferences` and `storage`. Reordered keys, comments or a default written out
+keep the hash. `audit`, `directives`, `godebug`, `vendor`, `fips` and
+`inspect --json` name it on their answer and record it; an older record reads
+`no config hash recorded`.
+
+The ledger (`store ledger`) holds every hash in use. `config set` appends
+`config_changed` when the hash moves; if the store cannot record it, it says so
+on stderr and exits 0. The next gate-evaluating command appends
+`config_drift_observed` for a change not yet recorded - observed at first use.
+`vendor --vendor-only`, with `vendor_policy.vendor_only` unset, is named on the
+answer and appends `config_override`.
+
+## Choosing the storage backend
+
+The `storage` section says where the store keeps its records:
+
+```yaml
+storage:
+  backend: sqlite      # default
+  sumdb_cache: ""      # default: <store-root>/sumdb
+```
+
+`storage.backend` names a storage backend the running kanonarion binary
+registered. The standard binary registers `sqlite`, which keeps `mirror.db`,
+`blobs/` and `audit.jsonl` under the store root. A file that names a backend the
+binary does not have is refused with exit `20`:
+
+```
+error: execute root command: backend "postgres" is not registered in this binary (registered: sqlite)
+```
+
+`storage.sumdb_cache` is the checksum-database tile cache directory. Empty
+means `<store-root>/sumdb`; a relative path is resolved against the store root.
+
+A backend with settings reads them from a top-level section named after it;
+any other unknown section is refused. `config init` writes one, commented out,
+for every registered backend; `sqlite` has no settings. Edit them by hand, not
+with `config set`; `config show --json` lists them under `sections`.
 
 ## When the config file is rejected
 
-A `config.yaml` that exists and cannot be loaded — unreadable, unparseable
-YAML, or valid YAML carrying a value the schema does not accept — is a refusal,
-not a fallback. **Every command exits `20`** and names the file and the value
-the loader objected to:
+A `config.yaml` that exists and cannot be loaded — unreadable, unparseable YAML,
+a key the schema does not define, or a value `config set` would refuse — is a
+refusal, not a fallback. **Every command exits `20`** and names the file and the
+key or value, with the nearest known key for a misspelling:
 
 ```
 $ kanonarion audit --gomod ./go.mod
@@ -277,7 +292,7 @@ Keys follow the dotted-path structure of `config.yaml`.
 
 | Key | Type | Example value |
 |-----|------|---------------|
-| `version` | string (read-only) | `"1"` |
+| `version` | string (read-only) | `"3"` |
 | `preferences.json` | bool | `true` |
 | `preferences.log_level` | string | `debug` / `info` / `warn` / `error` |
 | `preferences.progress` | bool | `false` (default `true`) - throttled stderr fetch heartbeat on long `walk`/`inspect`/`audit`/`sbom` runs, the traversal lines a `callers`/`callees` `--transitive` walk writes, and the staleness re-ask lines on `latest`, `fetch` and `audit`; never affects stdout/`--json`. Equivalent to `--no-progress` when `false`. |
@@ -291,6 +306,9 @@ Keys follow the dotted-path structure of `config.yaml`.
 | `staleness.ttl` | duration | `1h` |
 | `staleness.probe_concurrency` | int | `16` - newer-major probe requests in flight at once. A probe the proxy has not finished is re-asked after each round, whatever the width. `0` is serial. |
 | `fetch_policy.allowed_vcs_hosts` | sequence | `[github.com, git.example.org]` - absent leaves the built-in host set advisory; naming it switches to enforcing |
+| `storage.backend` | string | `sqlite` - the storage backend that holds the store's records; see [Choosing the storage backend](#choosing-the-storage-backend) |
+| `storage.sumdb_cache` | string | `/var/cache/kanonarion/sumdb` - empty means `<store-root>/sumdb` |
+| `vulndb.url` | string | `https://mirror.example.com/go` - a mirror serving `vuln.go.dev`'s `vulndb.zip`, `index/db.json` and `index/modules.json.gz`; `https://` with a host only. Unset is `https://vuln.go.dev`. A snapshot from it keeps source `vuln.go.dev` and records the mirror as `origin` |
 
 The unified governance blocks (`directive_policy`, `godebug_policy`,
 `vendor_policy`, `fips_policy`) are edited in the file rather than through
@@ -433,6 +451,7 @@ whether it is the default.
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--store-root` | `~/.kanonarion` | Root directory for blobs and SQLite |
+| `--config` | `<store-root>/config.yaml` | Configuration file to read and write; `KANONARION_CONFIG` names it when the flag is not given |
 | `--json` | `false` | Emit output as JSON (every `config` subcommand) |
 
 ## Exit codes
@@ -440,7 +459,7 @@ whether it is the default.
 | Code | Meaning |
 |------|---------|
 | `0` | Success |
-| `20` | Unknown key, read-only key, wrong value type, I/O error, or a `config.yaml` the loader rejected (every command except those listed under [When the config file is rejected](#when-the-config-file-is-rejected)) |
+| `20` | Unknown key, read-only key, wrong value type, I/O error, a `storage.backend` this binary did not register, or a `config.yaml` the loader rejected (every command except those listed under [When the config file is rejected](#when-the-config-file-is-rejected)) |
 
 ## Examples
 
@@ -465,6 +484,10 @@ kanonarion config set license_overrides.golang.org/x/mod MIT
 kanonarion config set callgraph.exclude '[]'
 kanonarion config set callgraph.toolchain go1.26.6
 kanonarion config set staleness.ttl 6h
+kanonarion config set storage.backend sqlite
+
+# Use a configuration file kept outside the store
+kanonarion walk-list --config /etc/kanonarion/config.yaml
 ```
 
 ## See also

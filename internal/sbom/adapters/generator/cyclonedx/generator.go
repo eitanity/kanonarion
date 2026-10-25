@@ -9,7 +9,10 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"maps"
+	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -141,12 +144,14 @@ func (g *Generator) buildBOM(
 	// failed fetches) simply have no entry and emit no hashes.
 	digestsByRef := make(map[domain.ModuleRef]fetchdomain.ArtifactDigests, len(walk.Graph.Nodes))
 	stdlibFactsByRef := make(map[domain.ModuleRef]*walkdomain.StdlibFacts, 1)
+	nodeByRef := make(map[domain.ModuleRef]walkdomain.GraphNode, len(walk.Graph.Nodes))
 	// The assembly policy speaks in ModuleRefs; the recorded origins are keyed by
 	// the coordinate the fetch ledger measured. This carries one back to the
 	// other so a component can be matched to its own origin fact.
 	coordByRef := make(map[domain.ModuleRef]coordinate.ModuleCoordinate, len(walk.Graph.Nodes))
 	for _, node := range walk.Graph.Nodes {
 		coordByRef[moduleRef(node.Coordinate)] = node.Coordinate
+		nodeByRef[moduleRef(node.Coordinate)] = node
 		if !node.Digests.IsZero() {
 			digestsByRef[moduleRef(node.Coordinate)] = node.Digests
 		}
@@ -166,6 +171,8 @@ func (g *Generator) buildBOM(
 		if subj.isRef(c.Module) && subj.isApplication {
 			comp.Type = cdx.ComponentTypeApplication
 		}
+		appendTinyGoProperties(&comp, nodeByRef[c.Module])
+		appendLocalSourceProperties(&comp, nodeByRef[c.Module])
 		if !strings.HasPrefix(comp.PackageURL, "pkg:"+purlTypeGolang+"/") {
 			return nil, nil, fmt.Errorf("%w: %q", domain.ErrNonGoComponent, comp.PackageURL)
 		}
@@ -512,11 +519,21 @@ func moduleExternalReferences(origin ports.ModuleOrigin) *[]cdx.ExternalReferenc
 		return nil
 	}
 	ref := cdx.ExternalReference{Type: cdx.ERTypeVCS, URL: origin.VCSURL}
+	// A module in a subdirectory is compared with that directory alone, so the
+	// reference names it rather than leave the repository root implied.
+	where := ""
+	switch origin.VCSSubdir {
+	case "":
+	case ".":
+		where = "the repository root of "
+	default:
+		where = "the " + origin.VCSSubdir + " directory of "
+	}
 	switch {
 	case origin.VCSRef != "" && origin.VCSCommit != "":
-		ref.Comment = "the module zip was cross-verified against " + origin.VCSRef + " at commit " + origin.VCSCommit
+		ref.Comment = "the module zip was cross-verified against " + where + origin.VCSRef + " at commit " + origin.VCSCommit
 	case origin.VCSCommit != "":
-		ref.Comment = "the module zip was cross-verified against commit " + origin.VCSCommit
+		ref.Comment = "the module zip was cross-verified against " + where + "commit " + origin.VCSCommit
 	}
 	return &[]cdx.ExternalReference{ref}
 }
@@ -723,11 +740,112 @@ func stdlibProperties(pipelineVersion string, facts *walkdomain.StdlibFacts) *[]
 	return &props
 }
 
+// appendLocalSourceProperties states what a dependency read from disk stands
+// for: the published require it replaces, or that it is a go.work member. The
+// purl alone says only <path>@local.
+func appendLocalSourceProperties(comp *cdx.Component, node walkdomain.GraphNode) {
+	var props []cdx.Property
+	switch node.ResolutionSource {
+	case walkdomain.ResolutionLocalReplace:
+		if !node.Coordinate.IsLocal() || node.OriginalCoordinate.IsZero() {
+			return
+		}
+		props = append(props, cdx.Property{Name: "kanonarion:replaces", Value: node.OriginalCoordinate.String()})
+	case walkdomain.ResolutionLocalWorkspaceMember:
+		props = append(props, cdx.Property{Name: "kanonarion:workspace_member", Value: "true"})
+	default:
+		return
+	}
+	var all []cdx.Property
+	if comp.Properties != nil {
+		all = *comp.Properties
+	}
+	all = append(all, props...)
+	comp.Properties = &all
+}
+
+// appendTinyGoProperties states a TinyGo walk's split of the standard library on
+// the component it belongs to: TinyGo's packages on TinyGo's component, Go's on
+// the stdlib component. Every other component is left as it was.
+func appendTinyGoProperties(comp *cdx.Component, node walkdomain.GraphNode) {
+	var props []cdx.Property
+	if node.ResolutionSource == walkdomain.ResolutionStdlib && node.Packages != nil {
+		props = append(props, cdx.Property{Name: "kanonarion:stdlib:packages", Value: strings.Join(node.Packages, ",")})
+	}
+	if f := node.TinyGo; f != nil {
+		props = append(props,
+			cdx.Property{Name: "kanonarion:component:tinygo", Value: "true"},
+			cdx.Property{Name: "kanonarion:tinygo:target", Value: f.Target},
+			cdx.Property{Name: "kanonarion:tinygo:packages", Value: strings.Join(f.Packages, ",")},
+		)
+		if len(f.Mixed) > 0 {
+			pkgs := slices.Sorted(maps.Keys(f.Mixed))
+			parts := make([]string, 0, len(pkgs))
+			for _, p := range pkgs {
+				parts = append(parts, p+":"+strings.Join(f.Mixed[p], ","))
+			}
+			props = append(props, cdx.Property{Name: "kanonarion:tinygo:mixed", Value: strings.Join(parts, ";")})
+		}
+		props = append(props, tinygoCustodyProperties(f.Custody)...)
+	}
+	if len(props) == 0 {
+		return
+	}
+	var all []cdx.Property
+	if comp.Properties != nil {
+		all = *comp.Properties
+	}
+	all = append(all, props...)
+	comp.Properties = &all
+}
+
+// tinygoCustodyProperties states whether the installed TinyGo source the build
+// compiled is the source TinyGo released, on the TinyGo component. Nothing is
+// stated when custody was not established at all.
+func tinygoCustodyProperties(c *walkdomain.TinyGoCustody) []cdx.Property {
+	if c == nil {
+		return nil
+	}
+	const p = "kanonarion:tinygo:custody:"
+	props := []cdx.Property{
+		{Name: p + "module", Value: c.Module},
+		{Name: p + "module_verification", Value: c.ModuleVerification},
+		{Name: p + "verified_by_module", Value: strconv.Itoa(c.VerifiedByModule)},
+	}
+	if c.ReleaseAsset != "" {
+		props = append(props,
+			cdx.Property{Name: p + "release_asset", Value: c.ReleaseAsset},
+			cdx.Property{Name: p + "release_outcome", Value: string(c.ReleaseOutcome)},
+		)
+		if c.ReleasePublishedDigest != "" {
+			props = append(props, cdx.Property{Name: p + "release_published_sha256", Value: c.ReleasePublishedDigest})
+		}
+		if c.ReleaseObservedDigest != "" {
+			props = append(props, cdx.Property{Name: p + "release_observed_sha256", Value: c.ReleaseObservedDigest})
+		}
+		if !c.ReleaseMeasuredAt.IsZero() {
+			props = append(props, cdx.Property{Name: p + "release_measured_at", Value: c.ReleaseMeasuredAt.UTC().Format(time.RFC3339)})
+		}
+	}
+	props = append(props, cdx.Property{Name: p + "verified_by_release", Value: strconv.Itoa(c.VerifiedByRelease)})
+	for _, anchor := range []walkdomain.TinyGoAnchor{walkdomain.TinyGoAnchorModule, walkdomain.TinyGoAnchorRelease} {
+		if paths := c.DiffersFrom(anchor); len(paths) > 0 {
+			props = append(props, cdx.Property{Name: p + "differs_from_" + string(anchor), Value: strings.Join(paths, ",")})
+		}
+	}
+	reasons, byReason := c.NotEstablishedByReason()
+	for _, r := range reasons {
+		props = append(props, cdx.Property{Name: p + "not_established", Value: r + ": " + strings.Join(byReason[r], ",")})
+	}
+	return append(props, cdx.Property{Name: p + "anchor_limitation", Value: c.Statement()})
+}
+
 // buildEnvProperties renders the resolved build environment as CycloneDX
 // metadata properties, emitting only the values that were captured so a record
 // with no build environment (a non-project walk, or a pre-BuildEnv record)
-// contributes none. The ordering is fixed (goos, goarch, go_version) for
-// deterministic output.
+// contributes none. The ordering is fixed (goos, goarch, goarm, go_version,
+// then the TinyGo target, version and comma-joined tags) for deterministic
+// output; the last four exist only on a TinyGo walk.
 func buildEnvProperties(env walkdomain.BuildEnv) []cdx.Property {
 	var props []cdx.Property
 	add := func(key, value string) {
@@ -737,7 +855,11 @@ func buildEnvProperties(env walkdomain.BuildEnv) []cdx.Property {
 	}
 	add("goos", env.GOOS)
 	add("goarch", env.GOARCH)
+	add("goarm", env.GOARM)
 	add("go_version", env.GoVersion)
+	add("tinygo_target", env.TinyGoTarget)
+	add("tinygo_version", env.TinyGoVersion)
+	add("tinygo_tags", strings.Join(env.TinyGoTags, ","))
 	return props
 }
 

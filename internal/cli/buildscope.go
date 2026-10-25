@@ -82,6 +82,15 @@ func (f *buildScopeFlags) bind(cmd *cobra.Command) error {
 	return resolveReadTarget(cmd.Context(), f.target, cmd.Name(), f.gomodSet && f.walkID == "", f.gomod)
 }
 
+// bindCallGraphRead is bind for a read answered from stored call graphs. The
+// declaration selects the call-graph frame as well as the walk, so it applies
+// with or without --gomod; beside --walk-id it is refused, because the named
+// walk's own frame is the read frame (see adoptNamedWalkFrame).
+func (f *buildScopeFlags) bindCallGraphRead(cmd *cobra.Command) error {
+	f.gomodSet = cmd.Flags().Changed("gomod")
+	return resolveReadTarget(cmd.Context(), f.target, cmd.Name(), f.walkID == "", f.gomod)
+}
+
 // toolchainPreference settles the toolchain this read prefers where a
 // coordinate's generations disagree about which one built them.
 //
@@ -285,19 +294,20 @@ func selectProjectWalkToRead(
 		OverallStatus: &succeeded,
 		BuildEnv:      &platform,
 		Toolchain:     env.toolchainFilter(),
+		TinyGoVersion: env.tinyGoVersionFilter(),
 	}
 	summaries, err := walks.ListWalks(ctx, filter)
 	if err != nil {
 		return walkChoice{manifestPath: gomodPath}, fmt.Errorf("listing %s project walks for %s: %w", scope, coord.Path(), err)
 	}
-	pinnedToolchain := filter.Toolchain != nil
+	pinnedToolchain := filter.Toolchain != nil || filter.TinyGoVersion != nil
 	if len(summaries) == 0 && pinnedToolchain {
 		// Nothing this project's toolchain resolved. The read widens rather than
 		// refusing, and the choice states the divergence: a reader whose toolchain
 		// moved since their last walk still gets the answer, and is told which
 		// standard library it is about.
 		pinnedToolchain = false
-		filter.Toolchain = nil
+		filter.Toolchain, filter.TinyGoVersion = nil, nil
 		if summaries, err = walks.ListWalks(ctx, filter); err != nil {
 			return walkChoice{manifestPath: gomodPath}, fmt.Errorf("listing %s project walks for %s: %w", scope, coord.Path(), err)
 		}
@@ -369,7 +379,7 @@ func describeWalkBuilds(summaries []walkports.WalkSummary) string {
 			// than as a blank, which would read as a walk of no scope at all.
 			scope = "unrecorded scope"
 		}
-		build := fmt.Sprintf("%s on %s", scope, walkports.BuildEnvFilter{GOOS: s.GOOS, GOARCH: s.GOARCH})
+		build := fmt.Sprintf("%s on %s", scope, walkports.BuildEnvFilter{GOOS: s.GOOS, GOARCH: s.GOARCH, TinyGoTarget: s.TinyGoTarget})
 		if _, ok := seen[build]; ok {
 			continue
 		}

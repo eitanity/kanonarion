@@ -138,3 +138,39 @@ func TestVerifier_VerifyPseudoVersionCommit(t *testing.T) {
 		t.Error("expected error for non-pseudo-version")
 	}
 }
+
+// The go command keeps a directory whose name is a version-control directory,
+// such as testdata/x/.hg, in the zip; the checkout hash must keep it too.
+func TestVerifier_HashDirAsModuleZip_KeepsNestedVCSDirectories(t *testing.T) {
+	root := t.TempDir()
+	for name, body := range map[string]string{
+		"go.mod":                  "module github.com/acme/repo\n",
+		"a.go":                    "package a\n",
+		"testdata/repo/.hg/store": "hg data\n",
+		"testdata/repo/.svn/x":    "svn data\n",
+	} {
+		p := filepath.Join(root, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(p), 0o750); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	coord := coordinatetest.MustNew("github.com/acme/repo", "v1.0.0")
+	verifier := domain2.NewVerifier(ziparchive.Hasher{})
+	withVCSDirs, err := verifier.HashDirAsModuleZip(root, coord)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.RemoveAll(filepath.Join(root, "testdata")); err != nil {
+		t.Fatal(err)
+	}
+	without, err := verifier.HashDirAsModuleZip(root, coord)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if withVCSDirs.Equal(without) {
+		t.Error("the .hg and .svn files were left out of the hash; the go command's zip keeps them")
+	}
+}

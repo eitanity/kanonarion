@@ -191,11 +191,13 @@ All query commands support `--json` for machine-readable output, making them eas
 - **Air-gapped and vendored builds.** `walk --from-modcache` acquires from a carried-in module cache; `vendor` reconciles a `vendor/` tree against what the manifest resolves, because a vendored tree is the build.
 - **Policy gates.** Walk-traversal rules in YAML - max depth, whether replace directives and indirect requirements are followed, and which VCS forges may be cross-verified against - validated with `policy validate`.
 - **SBOM generation.** CycloneDX 1.6 software bill of materials from any walk, with a full dependency graph and per-component `SHA-256/384/512` artefact hashes computed at download. The Go standard library is a first-class component, verified against Go's published source-tarball checksum; `--stdlib-from-gomod` pins its version to the `go.mod` directive for reproducible release artifacts.
-- **Auditable evidence chain.** Every fetch, verification and policy decision is recorded in an append-only `audit.jsonl`: reproducible, time-stamped evidence of what kanonarion did and when.
+- **Auditable evidence chain.** Every fetch, verification and policy decision is recorded in an append-only `audit.jsonl`.
 
 ---
 
 ## Store layout
+
+The default (SQLite) backend's layout:
 
 ```
 ~/.kanonarion/
@@ -265,7 +267,7 @@ tools. Have these on `PATH`:
 
 | Tool | When it's needed | Install |
 |---|---|---|
-| **Go 1.27.2+** (an older Go with the default `GOTOOLCHAIN=auto` downloads it) | Install *and* runtime - kanonarion drives the `go` toolchain (`go list`, `go mod download`, `go test -c`, `go tool nm`) to resolve build lists and analyse binaries. | [go.dev/dl](https://go.dev/dl/) |
+| **Go 1.27.3+** (an older Go with the default `GOTOOLCHAIN=auto` downloads it) | Install *and* runtime - kanonarion drives the `go` toolchain (`go list`, `go mod download`, `go test -c`, `go tool nm`) to resolve build lists and analyse binaries. | [go.dev/dl](https://go.dev/dl/) |
 | **git** | Runtime - VCS cross-verification (the `fetch` stage compares the proxy zip against the upstream source repository). Optional: without git, fetches still verify against the Go checksum database but record an unverified VCS status; pass `--skip-vcs-verify` to skip explicitly. | system package manager |
 | **govulncheck** | Runtime - required by `vuln-scan` / `inspect`. The scan fails fast with an actionable error if it's missing. It type-checks source in-process, so the Go release it was **built with** must be at least the one your project's `go` directive names; a scan that meets that gap names the tool and the command that rebuilds it. | `go install golang.org/x/vuln/cmd/govulncheck@latest` |
 | **jq** | Optional - only the shell snippets in this README use it to pull a walk id out of `--json` output. | system package manager |

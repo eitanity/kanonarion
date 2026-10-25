@@ -121,7 +121,7 @@ func TestCallgraphHeadroom_APermanentlyStarvedHostStillFinishesEveryModule(t *te
 				return
 			}
 			_ = i
-			res, eerr := adapter.Extract(t.Context(), coord, "callgraph", false, "")
+			res, eerr := adapter.Extract(t.Context(), coord, "callgraph", false, "", false)
 			if eerr != nil {
 				t.Errorf("Extract returned error: %v", eerr)
 				return
@@ -185,7 +185,7 @@ func TestCallgraphHeadroom_SaysWhyItIsWaiting(t *testing.T) {
 	// worker can take the idle fast path and nothing waits.
 	var wg sync.WaitGroup
 	extract := func() {
-		if _, eerr := adapter.Extract(t.Context(), coord, "callgraph", false, ""); eerr != nil {
+		if _, eerr := adapter.Extract(t.Context(), coord, "callgraph", false, "", false); eerr != nil {
 			t.Errorf("Extract returned error: %v", eerr)
 		}
 	}
@@ -247,7 +247,7 @@ func TestCallgraph_OutOfMemoryHasAProducer(t *testing.T) {
 	exec := &fakeSubprocessExecutor{err: errors.New("signal: killed")}
 	adapter := newCallgraphAdapter(exec, extractedOutcome())
 
-	res, eerr := adapter.Extract(t.Context(), coord, "callgraph", false, "")
+	res, eerr := adapter.Extract(t.Context(), coord, "callgraph", false, "", false)
 	if eerr != nil {
 		t.Fatalf("Extract failed: %v", eerr)
 	}
@@ -283,7 +283,7 @@ func TestCallgraph_OnlyAnUnexplainedKillIsOutOfMemory(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			exec := &fakeSubprocessExecutor{err: tc.err}
-			res, eerr := newCallgraphAdapter(exec, extractedOutcome()).Extract(t.Context(), coord, "callgraph", false, "")
+			res, eerr := newCallgraphAdapter(exec, extractedOutcome()).Extract(t.Context(), coord, "callgraph", false, "", false)
 			if eerr != nil {
 				t.Fatalf("Extract failed: %v", eerr)
 			}
@@ -317,7 +317,7 @@ func TestCallgraphHeadroom_ARunEndedWhileWaitingRecordsThatItNeverStarted(t *tes
 	// that never arrives.
 	var held sync.WaitGroup
 	held.Go(func() {
-		if _, eerr := adapter.Extract(ctx, coord, "callgraph", false, ""); eerr != nil {
+		if _, eerr := adapter.Extract(ctx, coord, "callgraph", false, "", false); eerr != nil {
 			t.Errorf("the holding analysis returned an error: %v", eerr)
 		}
 	})
@@ -327,7 +327,7 @@ func TestCallgraphHeadroom_ARunEndedWhileWaitingRecordsThatItNeverStarted(t *tes
 
 	waited := make(chan ports.StageResult, 1)
 	go func() {
-		res, eerr := adapter.Extract(ctx, coord, "callgraph", false, "")
+		res, eerr := adapter.Extract(ctx, coord, "callgraph", false, "", false)
 		if eerr != nil {
 			t.Errorf("the waiting analysis returned an error: %v", eerr)
 		}

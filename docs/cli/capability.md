@@ -321,6 +321,10 @@ send a reader to different places:
 | `--against` | _(none)_ | Second `<module>@<version>`; diff the two versions instead of reporting one |
 | `--include-tests` | `false` | Also root the traversal at test functions, which a consumer of the module does not compile |
 | `--show-suppressed` | `false` | Also print what text hides by default: `RUNTIME_INTERNAL` and unexported plumbing rows. JSON always carries them |
+| `--target <GOOS/GOARCH>` | _(this host's platform)_ | Read the call graph extracted under this build target, e.g. `--target wasip1/wasm`. Refused by name beside `--walk-id`: the named walk's own frame is the read frame. A refusal raised under a declared target prints a remedy carrying it. See [Composition](callgraph.md#composition) and [Declaring the build target](walk.md#declaring-the-build-target---target) |
+| `--goos` / `--goarch` | _(this host's)_ | The two halves of `--target`, for a caller holding them separately. Both are required, and neither combines with `--target` |
+| `--tinygo <target>` | _(none)_ | Read the call graph extracted under this TinyGo target, e.g. `--tinygo pico`; refused by name beside `--walk-id`. The `tinygo` command on `PATH` defines the target. Mutually exclusive with `--target`, `--goos` and `--goarch`. See [Declaring a TinyGo target](walk.md#declaring-a-tinygo-target---tinygo) |
+| `--walk-id` | _(none)_ | Read the call graph extracted under the frame this walk was resolved for |
 | `--store-root` | `~/.kanonarion` | Root directory for blobs and SQLite |
 | `--json` | `false` | Emit the report (or diff) as JSON |
 | `--log-level` | `warn` | Log level: `debug`, `info`, `warn`, `error` |
@@ -330,6 +334,7 @@ send a reader to different places:
 ```
 $ kanonarion capability github.com/spf13/cobra@v1.8.1
 github.com/spf13/cobra@v1.8.1 capabilities:
+  frame: linux/amd64
   roots: all of this module's own code; test functions excluded (widen with --include-tests)
   ENV_READ         [Direct]  [EXPORTED_API]  DIRECT_CALL  via os.Getenv
     path: github.com/spf13/cobra.CompDebug → os.Getenv
@@ -357,6 +362,12 @@ github.com/spf13/cobra@v1.8.1 capabilities:
       path: github.com/spf13/cobra.(*Command).RegisterFlagCompletionFunc → sync.(*RWMutex).Lock
 ```
 
+The `frame:` line names the build frame the call graph read was extracted
+under, as [`callgraph-show`](callgraph.md#callgraph-show) prints it. A
+coordinate holding no graph of that frame is refused with exit `4`, naming the
+frames the store does hold, the flag that reads each, and the command that
+produces this one.
+
 Each finding line reads: capability, the path's weakest edge confidence, the
 caller kind, the reach, and the callee. Read the confidence as well as the name:
 `REFLECT_INSPECT` rests on an `Unknown` edge, where `FS_WRITE` names a call
@@ -364,7 +375,8 @@ anyone can look up. A module's own assembly or linkname functions, when it has
 any, are listed under `unanalysed bodies`.
 
 JSON (`--json`) emits `module`, `version`, `test_roots` (`excluded` or
-`included`), `partial`, `caveat`, `capabilities` (the sorted set), `findings`,
+`included`), `frame` (in `callgraph-show`'s shape; each side of a diff carries
+its own), `partial`, `caveat`, `capabilities` (the sorted set), `findings`,
 `observations`, `row_count`, `sensitive_calls`, `collects_and_egresses`,
 `init_reaches_both`, `unanalyzed`, `unanalyzed_callees` and `package_defaults`.
 

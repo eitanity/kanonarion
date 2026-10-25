@@ -170,6 +170,7 @@ func TestExternalEntryPointReason(t *testing.T) {
 		symbol   string
 		receiver string
 		export   domain.ExportDirective
+		handler  domain.InterruptHandler
 		wantIn   string
 	}{
 		{name: "package init", symbol: "init", wantIn: "package initialisation"},
@@ -191,6 +192,11 @@ func TestExternalEntryPointReason(t *testing.T) {
 			export: domain.ExportDirective{Kind: domain.ExportInterrupt},
 			wantIn: "an interrupt handler (//go:interrupt) — the hardware invokes it",
 		},
+		{
+			name: "interrupt handler installed by value", symbol: "onPin",
+			handler: domain.InterruptHandler{Kind: domain.HandlerInterruptNew, Site: domain.SourcePosition{File: "src/machine/machine_rp2_gpio.go", Line: 315}},
+			wantIn:  "a hardware interrupt handler, installed by interrupt.New at src/machine/machine_rp2_gpio.go:315 — the hardware invokes it",
+		},
 
 		{name: "a method named main is not the entry point", symbol: "main", receiver: "*App"},
 		{name: "the same function with no directive is entered by nothing", symbol: "parse"},
@@ -202,7 +208,7 @@ func TestExternalEntryPointReason(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := domain.ExternalEntryPointReason(tt.symbol, tt.receiver, tt.export)
+			got := domain.ExternalEntryPointReason(tt.symbol, tt.receiver, tt.export, tt.handler)
 			if tt.wantIn == "" {
 				if got != "" {
 					t.Fatalf("ExternalEntryPointReason(%q, %q) = %q, want no entry-point claim",

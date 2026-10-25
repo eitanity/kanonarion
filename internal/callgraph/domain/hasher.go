@@ -80,6 +80,9 @@ func canonicalOrder(r CallGraphRecord) CallGraphRecord {
 	sort.Slice(r.ForeignModulesBuilt, func(i, j int) bool {
 		return ForeignModuleLess(r.ForeignModulesBuilt[i], r.ForeignModulesBuilt[j])
 	})
+	// Build tags are a set to the go command, so the seal takes them sorted.
+	r.Frame.TinyGoTags = append([]string(nil), r.Frame.TinyGoTags...)
+	sort.Strings(r.Frame.TinyGoTags)
 	return r
 }
 
@@ -137,8 +140,15 @@ func (CallGraphRecordHasher) Unmarshal(data []byte) (CallGraphRecord, error) {
 			UsesPlugin:           cn.UsesPlugin,
 			IsTest:               cn.IsTest,
 			ExportDirective:      ExportDirective{Kind: ExportKind(cn.ExportDirective.Kind), Name: cn.ExportDirective.Name},
+			InterruptHandler: InterruptHandler{
+				Kind: HandlerKind(cn.InterruptHandler.Kind),
+				Site: SourcePosition{File: cn.InterruptHandler.Site.File, Line: cn.InterruptHandler.Site.Line},
+			},
 		}
 		if err := nodes[i].ExportDirective.Validate(); err != nil {
+			return CallGraphRecord{}, fmt.Errorf("node %s: %w", cn.ID, err)
+		}
+		if err := nodes[i].InterruptHandler.Validate(); err != nil {
 			return CallGraphRecord{}, fmt.Errorf("node %s: %w", cn.ID, err)
 		}
 	}
@@ -225,6 +235,7 @@ func (CallGraphRecordHasher) Unmarshal(data []byte) (CallGraphRecord, error) {
 		AnalysisRoot:             c.AnalysisRoot,
 		BuildListSource:          c.BuildListSource,
 		Toolchain:                gotoolchain.Version(c.Toolchain),
+		Frame:                    domainFrame(c.Frame),
 		DerivedBy: GenerationDerivation{
 			Gate:    ReuseGate(c.DerivedBy.Gate),
 			Outcome: GateOutcome(c.DerivedBy.Outcome),
@@ -360,13 +371,15 @@ type canonicalNode struct {
 	IsExportedAPI        bool                     `json:"is_exported_api"`
 	IsExternal           bool                     `json:"is_external"`
 	IsTest               bool                     `json:"is_test"`
-	Module               string                   `json:"module"`
-	Package              string                   `json:"package"`
-	Position             canonicalPos             `json:"position"`
-	Receiver             string                   `json:"receiver"`
-	Symbol               string                   `json:"symbol"`
-	UsesPlugin           bool                     `json:"uses_plugin"`
-	UsesUnsafePointer    bool                     `json:"uses_unsafe_pointer"`
+	// InterruptHandler is omitted when absent, as ExportDirective is.
+	InterruptHandler  canonicalInterruptHandler `json:"interrupt_handler,omitzero"`
+	Module            string                    `json:"module"`
+	Package           string                    `json:"package"`
+	Position          canonicalPos              `json:"position"`
+	Receiver          string                    `json:"receiver"`
+	Symbol            string                    `json:"symbol"`
+	UsesPlugin        bool                      `json:"uses_plugin"`
+	UsesUnsafePointer bool                      `json:"uses_unsafe_pointer"`
 }
 
 // validateExportDirectives refuses a record whose node carries a directive this
@@ -376,8 +389,17 @@ func validateExportDirectives(nodes []CallNode) error {
 		if err := n.ExportDirective.Validate(); err != nil {
 			return fmt.Errorf("node %s: %w", n.ID, err)
 		}
+		if err := n.InterruptHandler.Validate(); err != nil {
+			return fmt.Errorf("node %s: %w", n.ID, err)
+		}
 	}
 	return nil
+}
+
+// canonicalInterruptHandler is the wire shape of domain.InterruptHandler.
+type canonicalInterruptHandler struct {
+	Kind string       `json:"kind"`
+	Site canonicalPos `json:"site"`
 }
 
 // canonicalExportDirective is the wire shape of domain.ExportDirective.
@@ -498,6 +520,9 @@ type canonicalRecord struct {
 	// than checking the stored bytes, so a new key present on every record moves
 	// every record's digest.
 	ForeignModulesBuilt []canonicalForeignModule `json:"foreign_modules_built,omitzero"`
+	// Frame is omitted when zero, so every record sealed before it marshals to the
+	// bytes it was sealed over. It is inside the seal because reads select on it.
+	Frame *canonicalFrame `json:"frame,omitempty"`
 	// StdlibPackages is omitted when empty, on the terms every additive field on
 	// this shape has used: every record sealed before it marshals to exactly the
 	// bytes it always did and keeps its stored content hash verifiable, so the
@@ -580,6 +605,39 @@ type canonicalSynthesisedGoMod struct {
 	VendorTreePresent bool               `json:"vendor_tree_present"`
 }
 
+// canonicalFrame is the wire shape of domain.BuildFrame, keys in alphabetical
+// order, pinned separately so a field added there does not move stored bytes.
+type canonicalFrame struct {
+	GOARCH        string   `json:"goarch"`
+	GOARM         string   `json:"goarm,omitempty"`
+	GOOS          string   `json:"goos"`
+	TinyGoTags    []string `json:"tinygo_tags,omitempty"`
+	TinyGoTarget  string   `json:"tinygo_target,omitempty"`
+	TinyGoVersion string   `json:"tinygo_version,omitempty"`
+}
+
+// canonicalFrameOf renders a frame onto the wire, nil when zero.
+func canonicalFrameOf(f BuildFrame) *canonicalFrame {
+	if f.IsZero() {
+		return nil
+	}
+	return &canonicalFrame{
+		GOARCH: f.GOARCH, GOARM: f.GOARM, GOOS: f.GOOS,
+		TinyGoTags: f.TinyGoTags, TinyGoTarget: f.TinyGoTarget, TinyGoVersion: f.TinyGoVersion,
+	}
+}
+
+// domainFrame reads a frame back off the wire.
+func domainFrame(c *canonicalFrame) BuildFrame {
+	if c == nil {
+		return BuildFrame{}
+	}
+	return BuildFrame{
+		GOOS: c.GOOS, GOARCH: c.GOARCH, GOARM: c.GOARM,
+		TinyGoTarget: c.TinyGoTarget, TinyGoVersion: c.TinyGoVersion, TinyGoTags: c.TinyGoTags,
+	}
+}
+
 // canonicalDroppedReplace is the wire shape of domain.DroppedReplace, pinned
 // separately from the domain type so a field added there does not silently
 // change what every stored record hashes over.
@@ -638,6 +696,10 @@ func canonicalShell(r CallGraphRecord) canonicalRecord {
 			UsesPlugin:           n.UsesPlugin,
 			UsesUnsafePointer:    n.UsesUnsafePointer,
 			ExportDirective:      canonicalExportDirective{Kind: string(n.ExportDirective.Kind), Name: n.ExportDirective.Name},
+			InterruptHandler: canonicalInterruptHandler{
+				Kind: string(n.InterruptHandler.Kind),
+				Site: canonicalPos{File: n.InterruptHandler.Site.File, Line: n.InterruptHandler.Site.Line},
+			},
 		}
 	}
 	var cIfaces []canonicalInterface
@@ -776,6 +838,7 @@ func canonicalShell(r CallGraphRecord) canonicalRecord {
 		WorktreeScanDigest: r.WorktreeScanDigest,
 		AnalysisRoot:       r.AnalysisRoot,
 		Toolchain:          string(r.Toolchain),
+		Frame:              canonicalFrameOf(r.Frame),
 	}
 	return c
 }
@@ -804,6 +867,10 @@ func marshalCanonical(r CallGraphRecord) ([]byte, error) {
 // correct, not that the guard is reachable with a real value today — it
 // exists for the never-silent-failure invariant, not a known failure mode.
 var canonicalMarshal = json.Marshal
+
+// encodeEdgeChunk is the same seam for the edge stream, which no canonicalEdge
+// can make fail today.
+var encodeEdgeChunk = func(enc *json.Encoder, chunk []canonicalEdge) error { return enc.Encode(chunk) }
 
 // canonicalEdgeChunk is how many edges are encoded at a time while streaming a
 // record into its digest. One at a time costs an allocation per edge; the whole
@@ -896,7 +963,7 @@ func writeCanonicalEdges(h hash.Hash, edges []CallEdge) error {
 			chunk = append(chunk, canonicalEdgeOf(edges[i]))
 		}
 		buf.Reset()
-		if err := enc.Encode(chunk); err != nil {
+		if err := encodeEdgeChunk(enc, chunk); err != nil {
 			return fmt.Errorf("marshalling canonical callgraph edges: %w", err)
 		}
 		// Encode writes the chunk's own array and a trailing newline. The

@@ -69,6 +69,24 @@ func (uc *QueryLicenseUseCase) LicenseHistory(ctx context.Context, coord coordin
 	return recs, nil
 }
 
+// ErrNoPipelineListing is returned by PipelinesHeld when the configured store
+// cannot list the pipelines a coordinate is held at.
+var ErrNoPipelineListing = errors.New("this license store cannot list the pipelines a coordinate is held at")
+
+// PipelinesHeld returns the pipeline versions the ledger holds coord at, oldest
+// first.
+func (uc *QueryLicenseUseCase) PipelinesHeld(ctx context.Context, coord coordinate.ModuleCoordinate) ([]string, error) {
+	r, ok := uc.store.(licenseports.PipelinesHeldReader)
+	if !ok {
+		return nil, ErrNoPipelineListing
+	}
+	held, err := r.PipelinesHeld(ctx, coord)
+	if err != nil {
+		return nil, fmt.Errorf("listing license pipelines for %s: %w", coord, err)
+	}
+	return held, nil
+}
+
 // ListLicenseRecords returns summaries matching the given filter.
 func (uc *QueryLicenseUseCase) ListLicenseRecords(ctx context.Context, filter licenseports.LicenseFilter) ([]licenseports.LicenseSummary, error) {
 	sums, err := uc.store.ListLicenseRecords(ctx, filter)

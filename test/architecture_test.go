@@ -3,6 +3,7 @@ package cmd_test
 import (
 	"fmt"
 	"go/ast"
+	"go/constant"
 	"go/parser"
 	"go/token"
 	"go/types"
@@ -178,12 +179,14 @@ func rel(pkgPath string) string {
 // only worth stating while it is true of every path, and a second re-zipper
 // would be indistinguishable from the first at a glance.
 //
-// The one entry is the local working tree, which has no upstream zip at all.
+// The local working tree has no upstream zip at all, and test fixtures are not fetched.
 // Key: repo-relative package directory.
 var zipWriterPackages = map[string]string{
 	"internal/walk/adapters/localfs": "a local module is packaged from its working tree rather than fetched, " +
 		"and modzip requires a canonical semver, so the synthetic zip is rewritten to carry the local " +
 		"coordinate's entry prefix; no fetched artefact reaches this path",
+	"internal/fetch/fetchtest": "builds fixture module zips for tests, so a store that verifies what it " +
+		"serves has bytes that hash to the identity they are stored under; no fetched artefact reaches it",
 }
 
 // TestNoZipRewritingOutsideNamedPackages enforces that module zips are stored
@@ -915,6 +918,275 @@ func TestConsumerCapstoneImportsPublicSurfaceOnly(t *testing.T) {
 	}
 }
 
+// TestPublishedPortsNameOnlyPublishedTypes holds the façade's substitution
+// contract implementable from another module: every type a published port names,
+// followed through exported struct fields and interface methods, must itself be
+// exported from pkg/kanonarion, or an external implementer cannot spell it.
+func TestPublishedPortsNameOnlyPublishedTypes(t *testing.T) {
+	cfg := &packages.Config{
+		Mode: packages.NeedName | packages.NeedTypes | packages.NeedDeps | packages.NeedImports,
+		Dir:  "..",
+	}
+	pkgs, err := packages.Load(cfg, "./pkg/kanonarion")
+	if err != nil {
+		t.Fatalf("packages.Load: %v", err)
+	}
+	if packages.PrintErrors(pkgs) > 0 || len(pkgs) != 1 {
+		t.Fatalf("packages.Load reported errors or %d packages", len(pkgs))
+	}
+	for _, v := range unpublishedPortTypes(pkgs[0].Types) {
+		t.Error(v)
+	}
+	for _, v := range unpublishedEnumConstants(pkgs[0].Types) {
+		t.Error(v)
+	}
+	for _, v := range reachableStageTypes(pkgs[0].Types) {
+		t.Error(v)
+	}
+}
+
+// stageTypes are the use cases the façade's drivers compose and must never
+// hand out: reaching one would make the pipeline's orchestration shape public.
+var stageTypes = map[string]bool{
+	"internal/walk/application.ExecuteWalkUseCase": true,
+	"internal/extract/application.ExtractUseCase":  true,
+	"internal/vuln/application.ScanWalkUseCase":    true,
+	"internal/vuln/application.RescanWalkUseCase":  true,
+	"internal/vuln/application.ScanModuleUseCase":  true,
+	"internal/staleness/application.Resolver":      true,
+	"internal/staleness/ports.BatchLatestResolver": true,
+	"internal/staleness/ports.ProgressReporter":    true,
+}
+
+// reachableStageTypes returns one message per stage type a consumer can reach
+// from pkg/kanonarion's exported names, through exported fields, exported
+// methods and signatures.
+func reachableStageTypes(pkg *types.Package) []string {
+	w := surfaceWalk{seen: map[types.Type]bool{}, found: map[string]string{}}
+	scope := pkg.Scope()
+	for _, name := range scope.Names() {
+		if obj := scope.Lookup(name); obj.Exported() {
+			w.visit(obj.Type(), name)
+		}
+	}
+	out := make([]string, 0, len(w.found))
+	for typ, via := range w.found {
+		out = append(out, fmt.Sprintf("%s is reachable from pkg/kanonarion through %s — a stage use case must stay behind the composition root", typ, via))
+	}
+	sort.Strings(out)
+	return out
+}
+
+// surfaceWalk follows everything an external caller can name from one
+// exported identifier.
+type surfaceWalk struct {
+	seen  map[types.Type]bool
+	found map[string]string
+}
+
+// visitNamed records a stage type and follows the exported methods of *T,
+// which a caller holding a T or a *T can both reach.
+func (w *surfaceWalk) visitNamed(n *types.Named, via string) {
+	obj := n.Origin().Obj()
+	if obj.Pkg() != nil {
+		key := strings.TrimPrefix(obj.Pkg().Path(), modulePath+"/") + "." + obj.Name()
+		if stageTypes[key] {
+			w.found[key] = via
+		}
+	}
+	mset := types.NewMethodSet(types.NewPointer(n))
+	for i := 0; i < mset.Len(); i++ {
+		if m := mset.At(i).Obj(); m.Exported() {
+			w.visit(m.Type(), via+"."+m.Name())
+		}
+	}
+	w.visit(n.Underlying(), via)
+}
+
+func (w *surfaceWalk) visit(typ types.Type, via string) {
+	typ = types.Unalias(typ)
+	if w.seen[typ] {
+		return
+	}
+	w.seen[typ] = true
+	switch tt := typ.(type) {
+	case *types.Named:
+		w.visitNamed(tt, via)
+	case *types.Struct:
+		for i := 0; i < tt.NumFields(); i++ {
+			if f := tt.Field(i); f.Exported() {
+				w.visit(f.Type(), via+"."+f.Name())
+			}
+		}
+	case *types.Interface:
+		for i := 0; i < tt.NumMethods(); i++ {
+			w.visit(tt.Method(i).Type(), via+"."+tt.Method(i).Name())
+		}
+	case *types.Signature:
+		for _, tuple := range []*types.Tuple{tt.Params(), tt.Results()} {
+			for i := 0; i < tuple.Len(); i++ {
+				w.visit(tuple.At(i).Type(), via)
+			}
+		}
+	case *types.Map:
+		w.visit(tt.Key(), via)
+		w.visit(tt.Elem(), via)
+	case interface{ Elem() types.Type }: // pointer, slice, array, chan
+		w.visit(tt.Elem(), via)
+	}
+}
+
+// unpublishedEnumConstants returns one message per exported constant of a
+// published basic-kinded type that pkg/kanonarion does not re-export with the
+// same type and value: a consumer decoding into the type needs its values.
+func unpublishedEnumConstants(pkg *types.Package) []string {
+	scope := pkg.Scope()
+	var published []*types.Const
+	for _, name := range scope.Names() {
+		if c, ok := scope.Lookup(name).(*types.Const); ok && c.Exported() {
+			published = append(published, c)
+		}
+	}
+	isPublished := func(c *types.Const) bool {
+		for _, p := range published {
+			if types.Identical(p.Type(), c.Type()) && constant.Compare(p.Val(), token.EQL, c.Val()) {
+				return true
+			}
+		}
+		return false
+	}
+
+	var out []string
+	for _, name := range scope.Names() {
+		tn, ok := scope.Lookup(name).(*types.TypeName)
+		if !ok {
+			continue
+		}
+		named, ok := publishedEnumType(tn)
+		if !ok {
+			continue
+		}
+		origin := named.Obj().Pkg().Scope()
+		for _, cname := range origin.Names() {
+			c, ok := origin.Lookup(cname).(*types.Const)
+			if !ok || !c.Exported() || !types.Identical(c.Type(), named) || isPublished(c) {
+				continue
+			}
+			out = append(out, fmt.Sprintf("%s.%s (%s) is a value of published type %s but is not exported from pkg/kanonarion — alias it there",
+				strings.TrimPrefix(c.Pkg().Path(), modulePath+"/"), c.Name(), c.Val().ExactString(), tn.Name()))
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// unpublishedPortTypes walks the closure of module-owned named types reachable
+// from every interface alias the package exports and returns one message per
+// type the package does not itself export, naming the ports that need it.
+func unpublishedPortTypes(pkg *types.Package) []string {
+	scope := pkg.Scope()
+	published := map[*types.TypeName]bool{}
+	var ports []*types.TypeName
+	for _, name := range scope.Names() {
+		tn, ok := scope.Lookup(name).(*types.TypeName)
+		if !ok || !tn.Exported() {
+			continue
+		}
+		if named, ok := types.Unalias(tn.Type()).(*types.Named); ok {
+			published[named.Origin().Obj()] = true
+		}
+		if tn.IsAlias() && types.IsInterface(tn.Type()) {
+			ports = append(ports, tn)
+		}
+	}
+
+	needed := map[string][]string{}
+	for _, port := range ports {
+		w := portTypeWalk{seen: map[*types.TypeName]bool{}}
+		w.visit(port.Type())
+		for _, obj := range w.order {
+			if !published[obj] {
+				key := strings.TrimPrefix(obj.Pkg().Path(), modulePath+"/") + "." + obj.Name()
+				needed[key] = append(needed[key], port.Name())
+			}
+		}
+	}
+
+	out := make([]string, 0, len(needed))
+	for typ, by := range needed {
+		sort.Strings(by)
+		out = append(out, fmt.Sprintf("%s is named by published port(s) %s but is not exported from pkg/kanonarion — alias it there",
+			typ, strings.Join(by, ", ")))
+	}
+	sort.Strings(out)
+	return out
+}
+
+// publishedEnumType reports the module-owned basic-kinded named type an
+// exported alias stands for.
+func publishedEnumType(tn *types.TypeName) (*types.Named, bool) {
+	if !tn.Exported() || !tn.IsAlias() {
+		return nil, false
+	}
+	named, ok := types.Unalias(tn.Type()).(*types.Named)
+	if !ok || named.Obj().Pkg() == nil || !strings.HasPrefix(named.Obj().Pkg().Path(), modulePath+"/") {
+		return nil, false
+	}
+	_, basic := named.Underlying().(*types.Basic)
+	return named, basic
+}
+
+// portTypeWalk collects the module-owned named types one port reaches, through
+// signatures, composite types, exported struct fields and interface methods.
+type portTypeWalk struct {
+	seen  map[*types.TypeName]bool
+	order []*types.TypeName
+}
+
+func (w *portTypeWalk) visit(typ types.Type) {
+	switch tt := types.Unalias(typ).(type) {
+	case *types.Named:
+		w.visitNamed(tt)
+	case *types.Struct:
+		for i := 0; i < tt.NumFields(); i++ {
+			if f := tt.Field(i); f.Exported() {
+				w.visit(f.Type())
+			}
+		}
+	case *types.Interface:
+		for i := 0; i < tt.NumMethods(); i++ {
+			w.visit(tt.Method(i).Type())
+		}
+	case *types.Signature:
+		w.visitTuple(tt.Params())
+		w.visitTuple(tt.Results())
+	case *types.Map:
+		w.visit(tt.Key())
+		w.visit(tt.Elem())
+	case interface{ Elem() types.Type }: // pointer, slice, array, chan
+		w.visit(tt.Elem())
+	}
+}
+
+func (w *portTypeWalk) visitNamed(n *types.Named) {
+	obj := n.Origin().Obj()
+	if obj.Pkg() == nil || !strings.HasPrefix(obj.Pkg().Path(), modulePath+"/") || w.seen[obj] {
+		return
+	}
+	w.seen[obj] = true
+	w.order = append(w.order, obj)
+	for i := 0; i < n.TypeArgs().Len(); i++ {
+		w.visit(n.TypeArgs().At(i))
+	}
+	w.visit(n.Underlying())
+}
+
+func (w *portTypeWalk) visitTuple(tuple *types.Tuple) {
+	for i := 0; i < tuple.Len(); i++ {
+		w.visit(tuple.At(i).Type())
+	}
+}
+
 func keysOf(m map[string]bool) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {
@@ -1593,4 +1865,36 @@ func calleeName(call *ast.CallExpr) (name, qualified string) {
 		return fn.Sel.Name, fn.Sel.Name
 	}
 	return "", ""
+}
+
+// TestOverrideHostIsTestOnly holds goenv.OverrideHost to test harnesses. In a
+// production package it would let a process record and select a platform it is
+// not running on, which is the very thing the measured host exists to prevent.
+func TestOverrideHostIsTestOnly(t *testing.T) {
+	cfg := &packages.Config{
+		Mode: packages.NeedSyntax | packages.NeedTypes | packages.NeedTypesInfo | packages.NeedName | packages.NeedFiles | packages.NeedDeps | packages.NeedImports,
+		Dir:  "..",
+	}
+	pkgs, err := packages.Load(cfg, "./...")
+	if err != nil {
+		t.Fatalf("packages.Load: %v", err)
+	}
+	const target = modulePath + "/internal/adapters/goenv.OverrideHost"
+	seen := false
+	for _, pkg := range pkgs {
+		if pkg.PkgPath == modulePath+"/internal/adapters/goenv" {
+			seen = true
+		}
+		for id, obj := range pkg.TypesInfo.Uses {
+			fn, ok := obj.(*types.Func)
+			if !ok || fn.FullName() != target {
+				continue
+			}
+			pos := pkg.Fset.Position(id.Pos())
+			t.Errorf("%s:%d: %s calls goenv.OverrideHost, which is for test harnesses only", pos.Filename, pos.Line, pkg.PkgPath)
+		}
+	}
+	if !seen {
+		t.Fatal("goenv was not among the loaded packages: the guard would pass vacuously")
+	}
 }

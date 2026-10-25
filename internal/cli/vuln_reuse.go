@@ -60,9 +60,8 @@ func recordReachabilityVerdicts(rec vulndomain.VulnerabilityRecord) int {
 // The clause is omitted entirely when the run answered no reachability question,
 // because there is then no answer for it to qualify.
 func reusedScanLine(run vulndomain.WalkScanRun, verdicts int) string {
-	line := fmt.Sprintf("vulnerability scan: reused run %s of %s against snapshot %s@%s; nothing was re-scanned",
-		run.ID, ledgerStamp(run.CompletedAt),
-		run.Snapshot.Source(), run.Snapshot.Version())
+	line := fmt.Sprintf("vulnerability scan: reused run %s of %s against snapshot %s; nothing was re-scanned",
+		run.ID, ledgerStamp(run.CompletedAt), snapshotLabel(run.Snapshot))
 	if verdicts > 0 {
 		line += fmt.Sprintf(", and its %d reachability answer%s came from the source that run read, which this run did not re-read",
 			verdicts, pluralise(verdicts, "", "s"))

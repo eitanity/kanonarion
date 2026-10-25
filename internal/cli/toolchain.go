@@ -27,6 +27,17 @@ func toolchainVersionOf(rec walkdomain.WalkRecord) string { return rec.Graph.Bui
 // an unjudged judgment rather than failing the command: the toolchain axis is
 // evidence beside the module evidence, and losing it must not cost the report.
 func judgeWalkToolchain(ctx context.Context, ctr *Container, rec walkdomain.WalkRecord, snapshot vulndomain.DatabaseSnapshot) vulndomain.ToolchainJudgment {
+	j := judgeGoToolchain(ctx, ctr, rec, snapshot)
+	if p, ok := rec.Graph.TinyGoPartition(); ok {
+		j.TinyGo = &vulndomain.TinyGoToolchain{
+			Version: rec.Graph.BuildEnv.TinyGoVersion, TinyGoPackages: len(p.TinyGo), StandardPackages: p.Total(),
+		}
+	}
+	return j
+}
+
+// judgeGoToolchain is the Go half of judgeWalkToolchain.
+func judgeGoToolchain(ctx context.Context, ctr *Container, rec walkdomain.WalkRecord, snapshot vulndomain.DatabaseSnapshot) vulndomain.ToolchainJudgment {
 	version := toolchainVersionOf(rec)
 	if ctr.ScanWalk == nil {
 		return vulndomain.ToolchainJudgment{
@@ -103,7 +114,11 @@ func storedSnapshotFor(ctx context.Context, ctr *Container, run vulndomain.WalkS
 // the unjudged case is printed rather than omitted for the same reason: a
 // silently missing line reads as a clear.
 func writeToolchainJudgment(w io.Writer, j vulndomain.ToolchainJudgment) error {
-	if _, err := fmt.Fprintf(w, "toolchain:\n  %s\n", strings.Join(toolchainLines(j), "\n  ")); err != nil {
+	lines := toolchainLines(j)
+	if j.TinyGo != nil {
+		lines = append(lines, tinygoToolchainLine(*j.TinyGo))
+	}
+	if _, err := fmt.Fprintf(w, "toolchain:\n  %s\n", strings.Join(lines, "\n  ")); err != nil {
 		return fmt.Errorf("writing output: %w", err)
 	}
 	return nil
@@ -142,6 +157,13 @@ func toolchainLines(j vulndomain.ToolchainJudgment) []string {
 		return []string{fmt.Sprintf("%s: none of the %d toolchain advisories in %s covers it",
 			version, j.Judged, snapshot)}
 	}
+}
+
+// tinygoToolchainLine states the TinyGo release beside the Go judgment. It is
+// never a clear and never a cover: nothing kanonarion reads judges TinyGo.
+func tinygoToolchainLine(t vulndomain.TinyGoToolchain) string {
+	return fmt.Sprintf("tinygo %s: %s; %d of %d standard packages in this build are TinyGo's",
+		t.Version, vulndomain.TinyGoToolchainReason, t.TinyGoPackages, t.StandardPackages)
 }
 
 // toolchainAxisNote is printed whenever an advisory matched, because that is
@@ -190,14 +212,19 @@ func pluralHas(n int) string {
 // record surface, where it names the toolchain that produced the RECORD, and one
 // key must not carry two meanings.
 //
-// Every field is emitted, empty included. An empty value is the statement that
-// the walk recorded no build environment, and it is a different statement from
-// the key being absent, which would say this producer does not publish the fact
-// at all.
+// The first three fields are emitted, empty included. An empty value is the
+// statement that the walk recorded no build environment, and it is a different
+// statement from the key being absent, which would say this producer does not
+// publish the fact at all. GOARM and the TinyGo fields exist only on a TinyGo
+// walk, so they are omitted elsewhere and a standard build's object is unchanged.
 type walkBuildJSON struct {
-	GOOS      string `json:"goos"`
-	GOARCH    string `json:"goarch"`
-	GoVersion string `json:"go_version"`
+	GOOS          string   `json:"goos"`
+	GOARCH        string   `json:"goarch"`
+	GOARM         string   `json:"goarm,omitempty"`
+	GoVersion     string   `json:"go_version"`
+	TinyGoTarget  string   `json:"tinygo_target,omitempty"`
+	TinyGoVersion string   `json:"tinygo_version,omitempty"`
+	TinyGoTags    []string `json:"tinygo_tags,omitempty"`
 }
 
 // walkBuildOf projects a walk's recorded build environment.
@@ -209,7 +236,10 @@ type walkBuildJSON struct {
 // already render.
 func walkBuildOf(rec walkdomain.WalkRecord) walkBuildJSON {
 	env := rec.Graph.BuildEnv
-	return walkBuildJSON{GOOS: env.GOOS, GOARCH: env.GOARCH, GoVersion: env.GoVersion}
+	return walkBuildJSON{
+		GOOS: env.GOOS, GOARCH: env.GOARCH, GOARM: env.GOARM, GoVersion: env.GoVersion,
+		TinyGoTarget: env.TinyGoTarget, TinyGoVersion: env.TinyGoVersion, TinyGoTags: env.TinyGoTags,
+	}
 }
 
 // walkBuildToolchainUnrecorded is what a walk that recorded no toolchain says.
@@ -326,7 +356,15 @@ func writeWalkBuild(w io.Writer, rec walkdomain.WalkRecord, readerToolchain stri
 // reaches for when they want a DATED statement, and nothing in the output said
 // which standard library the dated statement was about.
 const rescanRecordedBuildNote = "a re-scan re-evaluates that recorded build against fresh advisories; " +
-	"it does not re-resolve the toolchain, so this run answers for the build above and not for the one a walk taken now would record"
+	rescanToolchainClause
+
+// rescanPinnedBuildNote is the same statement for a re-scan pinned to a stored
+// snapshot, which downloads nothing and so is not against fresh advisories.
+const rescanPinnedBuildNote = "a re-scan re-evaluates that recorded build against the pinned advisory snapshot %s; " +
+	rescanToolchainClause
+
+const rescanToolchainClause = "it does not re-resolve the toolchain, so this run answers for the build above " +
+	"and not for the one a walk taken now would record"
 
 // writeRescanBuildPreflight states the build a re-scan is about to re-evaluate,
 // before the most expensive run the CLI offers starts.
@@ -334,10 +372,14 @@ const rescanRecordedBuildNote = "a re-scan re-evaluates that recorded build agai
 // A walk the store cannot produce writes nothing: the re-scan is about to fail
 // on the same id and say so in its own words, and a second complaint ahead of it
 // buys the reader nothing.
-func writeRescanBuildPreflight(ctx context.Context, w io.Writer, walks QueryWalksUseCase, walkID string) error {
+func writeRescanBuildPreflight(ctx context.Context, w io.Writer, walks QueryWalksUseCase, walkID, pin string) error {
 	rec, ok := storedWalkFor(ctx, walks, walkID, true)
 	if !ok {
 		return nil
 	}
-	return writeWalkBuild(w, rec, readerWalkToolchain(ctx, rec), rescanRecordedBuildNote)
+	note := rescanRecordedBuildNote
+	if pin != "" {
+		note = fmt.Sprintf(rescanPinnedBuildNote, pin)
+	}
+	return writeWalkBuild(w, rec, readerWalkToolchain(ctx, rec), note)
 }

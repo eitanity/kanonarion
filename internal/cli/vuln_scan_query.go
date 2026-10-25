@@ -42,6 +42,7 @@ func newVulnScanListCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use: "vuln-scan-list [walk-id]",
 		Annotations: map[string]string{
+			annotationWalkIDArgs:  "0",
 			annotationStoreIntent: StoreIntentRead,
 			annotationNetworkUse:  NetworkNever,
 		},
@@ -355,9 +356,12 @@ type scanShowJSON struct {
 	// reported a finding and now does not owes the reader the reason, and leaving it
 	// out of the report reads as never-affected.
 	WithdrawnModules []scanAffectedModule `json:"withdrawn_modules,omitempty"`
-	ScanFailures     []scanRecordFault    `json:"scan_failures,omitempty"`
-	ReadErrors       []scanRecordFault    `json:"read_errors,omitempty"`
-	MissingRecords   []string             `json:"missing_records,omitempty"`
+	// InconclusiveModules are modules whose findings were not established under
+	// the walk's TinyGo frame: neither affected nor clean.
+	InconclusiveModules []scanAffectedModule `json:"inconclusive_modules,omitempty"`
+	ScanFailures        []scanRecordFault    `json:"scan_failures,omitempty"`
+	ReadErrors          []scanRecordFault    `json:"read_errors,omitempty"`
+	MissingRecords      []string             `json:"missing_records,omitempty"`
 	// Superseded says whether this run's records were written by a pipeline
 	// generation this build does not read. It is derived — a comparison against
 	// the version this binary serves, which is a fact about the reader and not
@@ -412,13 +416,14 @@ type scanRecordFault struct {
 // section would make the output claim more modules than it accounts for — the
 // "appears in no roll-up" defect fixed one function above this one.
 type scanShowSummary struct {
-	affected    []scanAffectedModule
-	withdrawn   []scanAffectedModule
-	unscannable *unscannableRollup
-	readErrors  []scanRecordFault
-	missing     []string
-	superseded  []supersededRunRecord
-	scanFailed  []scanRecordFault
+	affected     []scanAffectedModule
+	withdrawn    []scanAffectedModule
+	inconclusive []scanAffectedModule
+	unscannable  *unscannableRollup
+	readErrors   []scanRecordFault
+	missing      []string
+	superseded   []supersededRunRecord
+	scanFailed   []scanRecordFault
 }
 
 func runScanShow(ctx context.Context, runID string, jsonOut bool, ucRuns QueryScanRunsUseCase, ucVuln QueryVulnUseCase, graphs QueryCallGraphUseCase, walks QueryWalksUseCase, natives nativeRecordReader, stdout, stderr io.Writer) error {
@@ -511,6 +516,7 @@ func runScanShow(ctx context.Context, runID string, jsonOut bool, ucRuns QuerySc
 	// stopped being listed finds it named here with the retraction date rather than
 	// having to notice its absence.
 	writeScanModuleFindings(stdout, "Withdrawn advisories, not counted as findings", summary.withdrawn)
+	writeScanModuleFindings(stdout, "Not established under the TinyGo frame, counted neither as findings nor as clean", summary.inconclusive)
 	// Last, under the whole report, because it explains the shape of everything
 	// above it rather than one section of it — the same place vuln-show's history
 	// listing puts the same statement.
@@ -528,22 +534,23 @@ func runScanShow(ctx context.Context, runID string, jsonOut bool, ucRuns QuerySc
 // records call for.
 func writeScanShowJSON(stdout io.Writer, run vuldomain.WalkScanRun, scannedWalk walkdomain.WalkRecord, summary scanShowSummary, walkPresent bool, nativeCov *nativeWalkRollup) error {
 	out := scanShowJSON{
-		ID:               run.ID,
-		WalkID:           run.WalkID,
-		Build:            walkBuildOf(scannedWalk),
-		Snapshot:         run.Snapshot,
-		PerModuleResults: run.PerModuleResults,
-		StartedAt:        run.StartedAt,
-		CompletedAt:      run.CompletedAt,
-		OverallStatus:    run.OverallStatus,
-		PipelineVersion:  run.PipelineVersion,
-		Operator:         run.Operator,
-		ContentHash:      run.ContentHash,
-		AffectedModules:  summary.affected,
-		WithdrawnModules: summary.withdrawn,
-		ScanFailures:     summary.scanFailed,
-		ReadErrors:       summary.readErrors,
-		MissingRecords:   summary.missing,
+		ID:                  run.ID,
+		WalkID:              run.WalkID,
+		Build:               walkBuildOf(scannedWalk),
+		Snapshot:            run.Snapshot,
+		PerModuleResults:    run.PerModuleResults,
+		StartedAt:           run.StartedAt,
+		CompletedAt:         run.CompletedAt,
+		OverallStatus:       run.OverallStatus,
+		PipelineVersion:     run.PipelineVersion,
+		Operator:            run.Operator,
+		ContentHash:         run.ContentHash,
+		AffectedModules:     summary.affected,
+		WithdrawnModules:    summary.withdrawn,
+		InconclusiveModules: summary.inconclusive,
+		ScanFailures:        summary.scanFailed,
+		ReadErrors:          summary.readErrors,
+		MissingRecords:      summary.missing,
 
 		Superseded:           run.PipelineVersion != vulnPipelineVersion,
 		ReadsPipelineVersion: vulnPipelineVersion,
@@ -580,7 +587,7 @@ func printScanShowHeader(stdout io.Writer, run vuldomain.WalkScanRun, walkPresen
 	_, _ = fmt.Fprintf(stdout, "Operator:    %s\n", run.Operator)
 	_, _ = fmt.Fprintf(stdout, "Started:     %s\n", ledgerStamp(run.StartedAt))
 	_, _ = fmt.Fprintf(stdout, "Completed:   %s\n", ledgerStamp(run.CompletedAt))
-	_, _ = fmt.Fprintf(stdout, "Snapshot:    %s@%s\n", run.Snapshot.Source(), run.Snapshot.Version())
+	_, _ = fmt.Fprintf(stdout, "Snapshot:    %s\n", snapshotLabel(run.Snapshot))
 	_, _ = fmt.Fprintf(stdout, "Advisories:  %s\n", advisoryCountLine(run.Snapshot))
 	_, _ = fmt.Fprintf(stdout, "Modules:     %d\n", len(run.PerModuleResults))
 	// One line per reason rather than one for the out-of-toolchain set alone, so
@@ -696,6 +703,8 @@ func buildScanAffectedModules(ctx context.Context, run vuldomain.WalkScanRun, uc
 			summary.affected = append(summary.affected, module)
 		case vuldomain.FindingsRecordWithdrawn:
 			summary.withdrawn = append(summary.withdrawn, module)
+		case vuldomain.FindingsRecordInconclusive:
+			summary.inconclusive = append(summary.inconclusive, module)
 		case vuldomain.FindingsRecordClean:
 			// No advisory matched: nothing to name in either findings section.
 		}
@@ -852,6 +861,7 @@ func newVulnScanHistoryCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use: "vuln-scan-history <walk-id>",
 		Annotations: map[string]string{
+			annotationWalkIDArgs:  "0",
 			annotationStoreIntent: StoreIntentRead,
 			annotationNetworkUse:  NetworkNever,
 		},

@@ -73,9 +73,9 @@ const usageSatisfactionNote = "not measured: whether this project's own types sa
 	"The satisfaction relation is computed within a single module, so no stored record holds it " +
 	"across the project/dependency boundary — including the embedding case, which no text search finds either."
 
-// usageEdgeKindCall and usageEdgeKindReference are how a site is labelled. A
-// reference is the function VALUE being taken, which is use of the symbol and is
-// never an invocation.
+// usageEdgeKindCall and usageEdgeKindReference are how a site is labelled, as
+// edgeKindLabel spells them. A reference is the function VALUE being taken,
+// which is use of the symbol and is never an invocation.
 const (
 	usageEdgeKindCall      = "call"
 	usageEdgeKindReference = "reference"
@@ -112,7 +112,7 @@ the module was enumerated and the answer is UNRESOLVED rather than a zero.
 
 A module the named build does not contain is answered, not refused: asking what
 your code already does with a module you have not adopted is what a migration
-needs. 'kanonarion callers' refuses that coordinate, being scoped to the walk.
+needs. 'kanonarion callers <symbol-id>' refuses that coordinate, being scoped to the walk.
 
 It reads the project's stored call graph; run 'kanonarion local .' first, and
 'kanonarion fetch <module>@<version> && kanonarion callgraph <module>@<version>'
@@ -127,7 +127,7 @@ the store already holds and refuses a module it has not fetched.`,
 			if len(args) != 1 {
 				return usageErr(cmd)
 			}
-			if berr := scopeFlags.bind(cmd); berr != nil {
+			if berr := scopeFlags.bindCallGraphRead(cmd); berr != nil {
 				return berr
 			}
 			return runUsage(cmd.Context(), args[0], scopeFlags, stdout, stderr)
@@ -153,6 +153,9 @@ func runUsage(ctx context.Context, arg string, f buildScopeFlags, stdout, stderr
 		return fmt.Errorf("initialising store: %w", err)
 	}
 	defer releaseStore(cleanup)
+	if aerr := adoptNamedWalkFrame(ctx, ctr.QueryWalks, f.walkID); aerr != nil {
+		return aerr
+	}
 
 	return usageWith(ctx, ctr, coord, f, stdout, stderr)
 }
@@ -173,6 +176,9 @@ func usageWith(ctx context.Context, ctr *Container, coord coordinate.ModuleCoord
 		return err
 	}
 	if !bound.CallGraphFound {
+		if miss := frameMiss(ctx, bound.Consumer, ctr.QueryCallGraph); miss != nil {
+			return miss
+		}
 		return &exitError{code: ExitNotFound, msg: fmt.Sprintf(
 			"no stored call graph for %s, so nothing can be measured about what its code uses — "+
 				"run: kanonarion local .", bound.Consumer)}
@@ -348,10 +354,7 @@ func joinUsage(
 			File:   e.CallSite.File,
 			Line:   e.CallSite.Line,
 			IsTest: caller.IsTest,
-			Kind:   usageEdgeKindCall,
-		}
-		if e.Kind.IsReference() {
-			site.Kind = usageEdgeKindReference
+			Kind:   edgeKindLabel(e.Kind),
 		}
 
 		switch {
@@ -440,7 +443,8 @@ func resolveUsageModule(
 	res := &usageModuleResolution{Requested: requested, Measured: requested, Basis: usageVersionUnenumerated}
 	versions := usageStoredVersionsOf(stored, requested.Path())
 
-	for _, cand := range usageVersionCandidates(requested, scope, versions) {
+	candidates := usageVersionCandidates(requested, scope, versions)
+	for _, cand := range candidates {
 		coord, cerr := coordinate.NewModuleCoordinate(requested.Path(), cand.version)
 		if cerr != nil {
 			continue
@@ -455,6 +459,15 @@ func resolveUsageModule(
 		}
 		res.Measured, res.Record, res.Found, res.Basis = coord, rec, true, cand.basis
 		return res, nil
+	}
+	// A module held only under other frames was enumerated, just not for this
+	// read; saying its surface was never enumerated would misstate the store.
+	tried := make([]string, 0, len(candidates))
+	for _, cand := range candidates {
+		tried = append(tried, cand.version)
+	}
+	if miss := moduleFrameMiss(ctx, graphs, requested.Path(), tried); miss != nil {
+		return nil, miss
 	}
 	return res, nil
 }
@@ -968,7 +981,7 @@ func printUsageBuildCaveat(stdout io.Writer, r *usageReport) error {
 				"outside the named build is deliberate here — asking what this project's own code "+
 				"already does with a module it has not adopted is the migration question this command "+
 				"exists for — so this is an answer, not a fallback. A symbol query scoped to the same "+
-				"build (kanonarion callers) refuses that coordinate for the same reason.\n",
+				"build (kanonarion callers <symbol-id>) refuses that coordinate for the same reason.\n",
 			r.Module.Path()); err != nil {
 			return fmt.Errorf("writing build-scope caveat: %w", err)
 		}

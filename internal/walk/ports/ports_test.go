@@ -75,3 +75,19 @@ func TestWalkSummarySliceJSONSnakeCase(t *testing.T) {
 		t.Errorf("JSON slice contains PascalCase OverallStatus\ngot: %s", got)
 	}
 }
+
+// A TinyGo name without a pair is its own filter, rendered by the name alone;
+// with the pair it is the full frame.
+func TestBuildEnvFilter_TinyGoNameOnly(t *testing.T) {
+	nameOnly := ports.BuildEnvFilter{TinyGoTarget: "pico"}
+	if !nameOnly.IsTinyGoNameOnly() || nameOnly.String() != "tinygo/pico" {
+		t.Errorf("name-only filter: %v %q", nameOnly.IsTinyGoNameOnly(), nameOnly.String())
+	}
+	framed := ports.BuildEnvFilter{GOOS: "linux", GOARCH: "arm", TinyGoTarget: "pico"}
+	if framed.IsTinyGoNameOnly() || framed.String() != "tinygo/pico (linux/arm)" {
+		t.Errorf("framed filter: %v %q", framed.IsTinyGoNameOnly(), framed.String())
+	}
+	if (ports.BuildEnvFilter{}).IsTinyGoNameOnly() {
+		t.Error("an empty filter reads as a TinyGo name")
+	}
+}

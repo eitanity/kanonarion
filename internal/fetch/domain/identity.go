@@ -281,6 +281,11 @@ const (
 	// absence (which claims the run declined to look). A record carrying it is
 	// not cache-eligible — see RecordIsCacheable.
 	LegUnavailable LegProvenance = "unavailable"
+
+	// LegPrivateModule means the leg was withheld because the module matches
+	// GOPRIVATE/GONOPROXY: the go command fetched it as the user, and the git
+	// leg is not run. Like an unavailable leg it establishes nothing.
+	LegPrivateModule LegProvenance = "private_module"
 )
 
 // VCSURLBinding says whether the repository a VCS cross-verification leg cloned
@@ -360,7 +365,7 @@ func RecordLegs(r FactRecord) []ValidationLeg {
 			continue
 		case LegInherited:
 			// Left empty: see above. Resolved by Compose.
-		case LegRechecked, LegUnavailable:
+		case LegRechecked, LegUnavailable, LegPrivateModule:
 			// This measurement performed the check, or attempted it and the host
 			// could not run it. Either way the moment is this record's own.
 			l.EstablishedAt = at

@@ -43,3 +43,11 @@ func (uc *QueryFetchUseCase) ComposeFetchRecord(ctx context.Context, coord coord
 	//nolint:wrapcheck // ComposedFetchRecord already names the coordinate it read
 	return ports.ComposedFetchRecord(ctx, uc.store, coord)
 }
+
+// SupersededArtefacts names the artefacts of coord the ledger holds only as
+// local-source measurements under a published coordinate, so a history view
+// can say which of its generations no read composes.
+func (uc *QueryFetchUseCase) SupersededArtefacts(ctx context.Context, coord coordinate.ModuleCoordinate) (map[string]bool, error) {
+	//nolint:wrapcheck // SupersededArtefactsOf already names the coordinate it read
+	return ports.SupersededArtefactsOf(ctx, uc.store, coord)
+}

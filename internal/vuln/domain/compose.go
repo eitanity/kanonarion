@@ -39,8 +39,8 @@ func Compose(records []VulnerabilityRecord) (VulnerabilityRecord, error) {
 	if len(records) == 0 {
 		return VulnerabilityRecord{}, ErrNoRecordsToCompose
 	}
-	if c := findToolchainConflict(records); c != nil {
-		return VulnerabilityRecord{}, *c
+	if err := compositionRefusal(records); err != nil {
+		return VulnerabilityRecord{}, err
 	}
 	return best(records), nil
 }
@@ -73,10 +73,10 @@ func ComposeAt(records []VulnerabilityRecord, rooting Rooting) (VulnerabilityRec
 	if len(candidates) == 0 {
 		return VulnerabilityRecord{}, false, nil
 	}
-	// The frame is selected first and the toolchain checked within it: two
-	// toolchains that scanned one frame are two verdicts about two builds.
-	if c := findToolchainConflict(candidates); c != nil {
-		return VulnerabilityRecord{}, false, *c
+	// The frame is selected first and the refusals checked within it: two
+	// toolchains are two builds, and two finding sets of one build are a dispute.
+	if err := compositionRefusal(candidates); err != nil {
+		return VulnerabilityRecord{}, false, err
 	}
 	// best rather than Compose: the only error Compose has is an empty group, and
 	// the line above has just ruled it out. The error stays in the signature —
@@ -91,7 +91,8 @@ func ComposeAt(records []VulnerabilityRecord, rooting Rooting) (VulnerabilityRec
 // generations scanned under the toolchain of the frame's newest record. A Go
 // upgrade puts two toolchains in one frame, and the newest is the build a
 // walk-anchored read answers for; the unpinned read still refuses. Every other
-// refusal stands, and the store's writer and its index verifier both use this.
+// refusal stands; the store's writer and verifier index a disputed group whole
+// (IndexedAt), and the by-advisory read refuses when that group is served.
 func ComposeForIndex(records []VulnerabilityRecord, rooting Rooting) (VulnerabilityRecord, bool, error) {
 	rec, ok, err := ComposeAt(records, rooting)
 	var conflict ToolchainConflict
@@ -226,16 +227,16 @@ func ComposeForConsumer(records []VulnerabilityRecord, coord coordinate.ModuleCo
 		}
 	}
 	if len(consumer) == 0 {
-		if c := findToolchainConflict(records); c != nil {
-			return VulnerabilityRecord{}, VulnerabilityRecord{}, false, *c
+		if err := compositionRefusal(records); err != nil {
+			return VulnerabilityRecord{}, VulnerabilityRecord{}, false, err
 		}
 		return best(records), VulnerabilityRecord{}, false, nil
 	}
 	// Checked within the consumer frame, which is the group that answers. The
 	// isolated aside is reported alongside rather than competing, so it is not
 	// part of the question two toolchains could disagree about.
-	if c := findToolchainConflict(consumer); c != nil {
-		return VulnerabilityRecord{}, VulnerabilityRecord{}, false, *c
+	if err := compositionRefusal(consumer); err != nil {
+		return VulnerabilityRecord{}, VulnerabilityRecord{}, false, err
 	}
 	if len(isolated) == 0 {
 		return best(consumer), VulnerabilityRecord{}, false, nil
@@ -293,14 +294,14 @@ func ComposeForTree(records []VulnerabilityRecord, modulePath string) (Vulnerabi
 		if len(group) == 0 {
 			continue
 		}
-		if c := findToolchainConflict(group); c != nil {
-			return VulnerabilityRecord{}, false, *c
+		if err := compositionRefusal(group); err != nil {
+			return VulnerabilityRecord{}, false, err
 		}
 		return best(group), true, nil
 	}
 	if !anyStated {
-		if c := findToolchainConflict(records); c != nil {
-			return VulnerabilityRecord{}, false, *c
+		if err := compositionRefusal(records); err != nil {
+			return VulnerabilityRecord{}, false, err
 		}
 		return best(records), true, nil
 	}
@@ -356,7 +357,10 @@ func atRooting(records []VulnerabilityRecord, rooting Rooting) []VulnerabilityRe
 //     database knows about strictly more advisories.
 //  5. The newer scan wins, and finally the content hash decides. The hash is not
 //     authority and is not claimed to be — it is here so the served record does
-//     not depend on the order rows happen to come back in.
+//     not depend on the order rows happen to come back in. Two analysed records
+//     of one snapshot that report different advisories never reach this rung:
+//     composition refuses them (findFindingConflict), since recency cannot say
+//     which matched the database correctly.
 //
 // Rooting is deliberately absent from the ladder. It is a dimension, and
 // laddering it would silently discard the answer to one of the two questions;
@@ -390,9 +394,10 @@ func servesBefore(a, b VulnerabilityRecord) bool {
 }
 
 // reportsAdvisory reports whether a findings axis states that an advisory
-// matched this module — live or retracted — as opposed to reporting none.
+// matched this module — live, retracted or not established — as opposed to
+// reporting none.
 func reportsAdvisory(f RecordFindingsStatus) bool {
-	return f == FindingsRecordAffected || f == FindingsRecordWithdrawn
+	return f == FindingsRecordAffected || f == FindingsRecordWithdrawn || f == FindingsRecordInconclusive
 }
 
 // completenessRung orders the call-graph fidelity a record's reachability

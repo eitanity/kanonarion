@@ -327,8 +327,9 @@ naming the status the run concluded:
 Failed stages (1):
   example.com/mod@v1.2.3  stage=callgraph  cause=environment  error=callgraph stage
     status=OutOfMemory: the analysis was ended by the operating system before it
-    finished, which is usually memory: lower --callgraph-workers, or analyse this
-    module on its own
+    finished, which is usually memory: run fewer at once with: kanonarion extract
+    01KQDBVW092ER1HNXZ60X27CMD --stages callgraph --callgraph-workers 1; or
+    analyse this module on its own
 ```
 
 In `--json` the same fact is the `cause` field on each stage of

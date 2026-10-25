@@ -101,3 +101,27 @@ func TestRequireDisagreement(t *testing.T) {
 		})
 	}
 }
+
+// A local replacement at <path>@local is named by the require it replaces, so
+// a project whose only require is replaced locally can still be compared; a
+// go.work member stands for no require and is not named.
+func TestNamedVersions_LocalReplacementIsNamedByItsRequire(t *testing.T) {
+	root := coordinatetest.MustNew("example.com/a", coordinate.LocalVersion)
+	rec := domain.WalkRecord{ID: "w", Target: root, Graph: domain.Graph{Target: root, Nodes: []domain.GraphNode{
+		{Coordinate: root, ResolutionSource: domain.ResolutionLocalMainModule},
+		{Coordinate: coordinatetest.MustNew("example.com/b", coordinate.LocalVersion), ResolutionSource: domain.ResolutionLocalWorkspaceMember},
+		{
+			Coordinate:         coordinatetest.MustNew("example.com/c", coordinate.LocalVersion),
+			OriginalCoordinate: coordinatetest.MustNew("example.com/c", "v1.2.3"),
+			ResolutionSource:   domain.ResolutionLocalReplace,
+			LocalPath:          "../c",
+		},
+	}}}
+	named := domain.NamedVersions(rec)
+	if len(named) != 1 || named["example.com/c"] != "v1.2.3" {
+		t.Errorf("named = %v, want only example.com/c at v1.2.3", named)
+	}
+	if d, err := domain.RequireDisagreement(map[string]string{"example.com/c": "v1.2.3"}, rec); err != nil || len(d) != 0 {
+		t.Errorf("RequireDisagreement = %v, %v; want agreement over one compared module", d, err)
+	}
+}

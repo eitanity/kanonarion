@@ -2,44 +2,101 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
 	fetchsqlite "github.com/eitanity/kanonarion/internal/adapters/factstore/sqlite"
 	cgapp "github.com/eitanity/kanonarion/internal/callgraph/application"
 	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
+	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	exsqlite "github.com/eitanity/kanonarion/internal/example/adapters/store/sqlite"
 	exapp "github.com/eitanity/kanonarion/internal/example/application"
 	exdomain "github.com/eitanity/kanonarion/internal/example/domain"
+	exampleports "github.com/eitanity/kanonarion/internal/example/ports"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	ifaceapp "github.com/eitanity/kanonarion/internal/iface/application"
 	ifacedomain "github.com/eitanity/kanonarion/internal/iface/domain"
+	ifaceports "github.com/eitanity/kanonarion/internal/iface/ports"
 	licsqlite "github.com/eitanity/kanonarion/internal/license/adapters/store/sqlite"
 	licapp "github.com/eitanity/kanonarion/internal/license/application"
 	licdomain "github.com/eitanity/kanonarion/internal/license/domain"
+	licenceports "github.com/eitanity/kanonarion/internal/license/ports"
 	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
 )
 
-func buildCommandsWithWalk(coord coordinate.ModuleCoordinate, walkID string) contextCommands {
+func buildCommandsWithWalk(coord coordinate.ModuleCoordinate, walkID string, verification contextVerification, basis basisWalk) contextCommands {
 	mod := coord.Path() + "@" + coord.Version()
-	vulnCmd := "kanonarion vuln-show " + mod
-	if walkID != "" {
-		vulnCmd = "kanonarion vuln-scan " + walkID
+	cmds := contextProducers(coord, verification.Status != sectionStatusNotFetched, basisDir(coord, basis))
+	cmds.CallGraphNav = "kanonarion callers <symbol> | kanonarion callees <symbol>"
+	cmds.Vulnerabilities = vulnProducer(coord, walkID, basis)
+	cmds.Dependents = "kanonarion dependents " + mod
+	return cmds
+}
+
+// vulnProducer scans the walk the document reads, or one rooted at coord; with
+// neither, inspect walks and scans the coordinate itself. A working tree or the
+// standard library outside any walk has no single invocation, so it gets none.
+func vulnProducer(coord coordinate.ModuleCoordinate, walkID string, basis basisWalk) string {
+	switch {
+	case walkID != "":
+		return "kanonarion vuln-scan " + walkID
+	case basis.held():
+		return "kanonarion vuln-scan " + basis.rec.ID
+	case cgdomain.IsReFetchable(coord):
+		return "kanonarion inspect " + coord.String()
 	}
-	return contextCommands{
-		Interface:       "kanonarion interface-show " + mod,
-		CallGraph:       "kanonarion callgraph-show " + mod,
-		CallGraphNav:    "kanonarion callers <symbol> | kanonarion callees <symbol>",
-		Examples:        "kanonarion examples-find <symbol> | kanonarion examples-show " + mod + " <name>",
-		Vulnerabilities: vulnCmd,
-		License:         "kanonarion license " + mod,
-		Dependents:      "kanonarion dependents " + mod,
+	return ""
+}
+
+// contextProducers names the invocation that produces each record a section
+// reports not run. Every producer refuses a module the store has not acquired,
+// so the acquisition leads where it is missing; "" where nothing here acquires it.
+func contextProducers(coord coordinate.ModuleCoordinate, fetched bool, dir string) contextCommands {
+	var cmds contextCommands
+	if line, ok := cgdomain.ReanalysisCommand(coord, dir, false); ok {
+		cmds.CallGraph = line + targetFlagHint()
 	}
+	licenseLine := "kanonarion license " + coord.String()
+	var acquire string
+	switch {
+	case fetched:
+	case cgdomain.IsReFetchable(coord):
+		acquire = "kanonarion fetch " + coord.String()
+	case coord.IsLocal() && dir != "":
+		acquire = "kanonarion walk --gomod " + filepath.Join(dir, "go.mod") + " --analyse-root"
+	default:
+		// The standard library's licence comes off its custody chain, not a fetch.
+		cmds.License = licenseLine
+		return cmds
+	}
+	ifaceLine := "kanonarion interface " + coord.String()
+	examplesLine := "kanonarion examples " + coord.String()
+	cmds.Interface, cmds.Examples, cmds.License = andThen(acquire, ifaceLine), andThen(acquire, examplesLine), andThen(acquire, licenseLine)
+	return cmds
+}
+
+// andThen runs then after first, or alone when there is no first.
+func andThen(first, then string) string {
+	if first == "" {
+		return then
+	}
+	return first + " && " + then
+}
+
+// basisDir is the working tree behind a local coordinate when the document's
+// walk was rooted at it, and "" otherwise.
+func basisDir(coord coordinate.ModuleCoordinate, basis basisWalk) string {
+	if !coord.IsLocal() || !basis.held() || basis.rec.Target != coord {
+		return ""
+	}
+	return basis.rec.ProjectDir
 }
 
 func isoTime(t time.Time) string {
@@ -237,9 +294,12 @@ func buildLicense(
 		return contextLicense{Status: sectionStatusSetAside, Error: aside.statement(), SetAside: aside.json()}
 	}
 	if err != nil {
-		return contextLicense{Status: sectionStatusReadError, Error: err.Error()}
+		return contextLicense{Status: failedReadStatus(err, licenceports.ErrLicenceConflict), Error: err.Error()}
 	}
 	if !found {
+		if line := supersededLicenceLine(ctx, uc, coord); line != "" {
+			return contextLicense{Status: sectionStatusSuperseded, Error: line}
+		}
 		return contextLicense{Status: sectionStatusNotRun}
 	}
 	// The section names the licence covering the module's code, read through
@@ -385,7 +445,7 @@ func buildStdlibLicense(ctx context.Context, coord coordinate.ModuleCoordinate, 
 func buildInterface(ctx context.Context, coord coordinate.ModuleCoordinate, uc QueryInterfaceUseCase, compact bool, pkgFilter string) contextInterface {
 	rec, found, err := uc.GetInterfaceRecord(ctx, coord, ifaceapp.PipelineVersion)
 	if err != nil {
-		return contextInterface{Status: sectionStatusReadError, Error: err.Error()}
+		return contextInterface{Status: failedReadStatus(err, ifaceports.ErrInterfaceConflict), Error: err.Error()}
 	}
 	if !found {
 		// "Never extracted" and "extracted under logic this build no longer
@@ -469,13 +529,37 @@ func contextPackageOf(pkg ifacedomain.PackageInterface, compact bool) contextPac
 	return cp
 }
 
-func buildCallGraph(ctx context.Context, coord coordinate.ModuleCoordinate, uc QueryCallGraphUseCase, entryPointsFull bool, pkgFilter string) contextCallGraph {
+// contextCallGraphMiss is the section for a coordinate no graph is served
+// for: held under other frames, held only at superseded pipelines, or not run.
+// Both reads are the coordinate's own key columns.
+func contextCallGraphMiss(ctx context.Context, coord coordinate.ModuleCoordinate, uc QueryCallGraphUseCase) contextCallGraph {
+	unserved, err := uc.UnservedCoordinates(ctx, []coordinate.ModuleCoordinate{coord}, cgapp.PipelineVersion)
+	if err != nil || len(unserved) == 0 {
+		return contextCallGraph{Status: sectionStatusNotRun}
+	}
+	u := unserved[0]
+	if len(u.Frames) > 0 {
+		frames, flags := cgdomain.HeldFrames(frameRecords(u.Frames), cgdomain.BuildFrame{})
+		return contextCallGraph{Status: sectionStatusOtherFrame, HeldFrames: frames, ReadWith: flags}
+	}
+	if len(u.Pipelines) > 0 && !slices.Contains(u.Pipelines, cgapp.PipelineVersion) {
+		return contextCallGraph{Status: sectionStatusSuperseded, Error: supersededRecordLine("call graph", coord,
+			cgapp.PipelineVersion, u.Pipelines, "Re-analyse", frameReanalysis(coord, u.AnalysisRoot))}
+	}
+	return contextCallGraph{Status: sectionStatusNotRun}
+}
+
+// buildCallGraph answers the call-graph section and the capability section
+// derived from the same record, so the graph is loaded once per coordinate.
+func buildCallGraph(ctx context.Context, coord coordinate.ModuleCoordinate, uc QueryCallGraphUseCase, entryPointsFull bool, pkgFilter string) (contextCallGraph, contextCapability) {
 	rec, found, err := uc.GetCallGraphRecord(ctx, coord, cgapp.PipelineVersion)
 	if err != nil {
-		return contextCallGraph{Status: sectionStatusReadError, Error: err.Error()}
+		cg := contextCallGraph{Status: failedReadStatus(err, cgports.ErrCallGraphConflict), Error: err.Error()}
+		return cg, capabilityFollowing(cg)
 	}
 	if !found {
-		return contextCallGraph{Status: sectionStatusNotRun}
+		cg := contextCallGraphMiss(ctx, coord, uc)
+		return cg, capabilityFollowing(cg)
 	}
 	out := contextCallGraph{
 		ExtractedAt: ledgerStamp(rec.ExtractedAt),
@@ -506,7 +590,7 @@ func buildCallGraph(ctx context.Context, coord coordinate.ModuleCoordinate, uc Q
 	} else if len(byPkg) > 0 {
 		out.EntryPointsByPackage = byPkg
 	}
-	return out
+	return out, buildCapability(coord, rec)
 }
 
 // packageGraphCounts is the number of nodes in pkgFilter and of edges leaving
@@ -538,9 +622,12 @@ func buildExamples(ctx context.Context, coord coordinate.ModuleCoordinate, uc Qu
 		return contextExamples{Status: sectionStatusSetAside, Error: aside.statement(), SetAside: aside.json()}
 	}
 	if err != nil {
-		return contextExamples{Status: sectionStatusReadError, Error: err.Error()}
+		return contextExamples{Status: failedReadStatus(err, exampleports.ErrExampleConflict), Error: err.Error()}
 	}
 	if !found {
+		if line := supersededExamplesLine(ctx, uc, coord); line != "" {
+			return contextExamples{Status: sectionStatusSuperseded, Error: line}
+		}
 		return contextExamples{Status: sectionStatusNotRun}
 	}
 	out := contextExamples{
@@ -607,4 +694,15 @@ func stripDocComment(sig string) string {
 		}
 	}
 	return sig
+}
+
+// failedReadStatus is the section status for a record read that failed with
+// err: conflict when it carries the store's disagreement sentinel, so the
+// section states the dispute rather than calling the store unreadable, and
+// read_error otherwise.
+func failedReadStatus(err, conflict error) string {
+	if errors.Is(err, conflict) {
+		return sectionStatusConflict
+	}
+	return sectionStatusReadError
 }

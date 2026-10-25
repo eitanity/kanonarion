@@ -39,6 +39,7 @@ type directivesSection struct {
 	PipelineVersion string            `json:"pipeline_version"`
 	Project         string            `json:"project"`
 	ContentHash     string            `json:"content_hash"`
+	ConfigHash      string            `json:"config_hash,omitempty"`
 	Directives      []directiveResult `json:"directives"`
 }
 
@@ -51,6 +52,7 @@ func toDirectivesSection(rec dirdomain.Record) directivesSection {
 		PipelineVersion: rec.PipelineVersion,
 		Project:         rec.ProjectModulePath,
 		ContentHash:     rec.ContentHash,
+		ConfigHash:      rec.ConfigHash,
 		Directives:      make([]directiveResult, 0, len(rec.Directives)),
 	}
 	for _, d := range rec.Directives {
@@ -127,7 +129,11 @@ func runDirectives(ctx context.Context, gomodFlag string, stdout, stderr io.Writ
 	}
 	defer releaseStore(cleanup)
 
-	rec, err := ctr.ExtractDirectives.Extract(ctx, gomodPath, activeConfig.DirectivePolicy)
+	configHash, err := observeGateConfig(ctr)
+	if err != nil {
+		return err
+	}
+	rec, err := ctr.ExtractDirectives.Extract(ctx, gomodPath, activeConfig.DirectivePolicy, configHash)
 	if err != nil {
 		return fmt.Errorf("scanning directives: %w", err)
 	}
@@ -142,6 +148,9 @@ func runDirectives(ctx context.Context, gomodFlag string, stdout, stderr io.Writ
 		return directivesBlockingErr(section)
 	}
 	if err := printDirectivesTable(stdout, section); err != nil {
+		return err
+	}
+	if err := writeConfigHashLine(stdout, section.ConfigHash, nil); err != nil {
 		return err
 	}
 	return directivesBlockingErr(section)

@@ -197,7 +197,8 @@ func TestNewVCSHostAllowlist_NarrowsAndWidens(t *testing.T) {
 	}
 }
 
-func TestNewVCSHostAllowlist_RejectsEmptyListNamingSkipFlag(t *testing.T) {
+// The flag that skips the git leg is the command's to name, not the domain's.
+func TestNewVCSHostAllowlist_RejectsEmptyListNamingNoFlag(t *testing.T) {
 	_, err := NewVCSHostAllowlist(nil)
 	if err == nil {
 		t.Fatal("an empty allowlist must be rejected")
@@ -205,8 +206,8 @@ func TestNewVCSHostAllowlist_RejectsEmptyListNamingSkipFlag(t *testing.T) {
 	if !errors.Is(err, ErrEmptyVCSHostAllowlist) {
 		t.Fatalf("expected ErrEmptyVCSHostAllowlist, got %v", err)
 	}
-	if !strings.Contains(err.Error(), "--skip-vcs-verify") {
-		t.Errorf("the empty-list error must point at the supported way to disable VCS verification, got %q", err)
+	if strings.Contains(err.Error(), "--") {
+		t.Errorf("the empty-list error names a flag no domain can know the command defines, got %q", err)
 	}
 	if _, err := NewVCSHostAllowlist([]string{}); err == nil {
 		t.Error("an explicitly empty list must be rejected too")

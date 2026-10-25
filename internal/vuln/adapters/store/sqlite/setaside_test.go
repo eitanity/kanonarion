@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"slices"
 	"sort"
 	"testing"
 	"time"
@@ -112,7 +113,9 @@ func TestDriftedGeneration_SetAsideOnWriteAndRead(t *testing.T) {
 	ctx := t.Context()
 	store, readable, driftSeal := groupWithStoredOddRow(t, driftRecordBlob)
 
-	second := groupRecord(t, time.Date(2024, 2, 1, 2, 0, 0, 0, time.UTC), "GO-2024-0003")
+	// It agrees with the first: two readable generations that disagreed would be
+	// a dispute, which is not what this test is about.
+	second := groupRecord(t, time.Date(2024, 2, 1, 2, 0, 0, 0, time.UTC), "GO-2024-0001")
 	err := store.PutVulnerabilityRecord(ctx, second)
 	var aside *recordseal.SetAside
 	if !errors.As(err, &aside) {
@@ -219,15 +222,7 @@ func TestRecordListing_AlteredRowKeepsTheListingAnIntegrityFailure(t *testing.T)
 }
 
 func equalStrings(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
+	return slices.Equal(a, b)
 }
 
 // TestRunRecords_SetAsideOnlyWhereItBoreOnTheAnswer covers the per-run read. A

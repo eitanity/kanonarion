@@ -580,6 +580,22 @@ func (f *fakeVulnStore) ListVulnerabilityRecordsByFindingID(_ context.Context, f
 	return out, nil
 }
 
+func (f *fakeVulnStore) ListCoordinatesByFindingID(ctx context.Context, findingID, walkID string) ([]coordinate.ModuleCoordinate, error) {
+	recs, err := f.ListVulnerabilityRecordsByFindingID(ctx, findingID, walkID)
+	return coordinatesOf(recs), err
+}
+
+// coordinatesOf is the distinct coordinates of recs, in first-seen order.
+func coordinatesOf(recs []domain.VulnerabilityRecord) []coordinate.ModuleCoordinate {
+	var out []coordinate.ModuleCoordinate
+	for _, r := range recs {
+		if !slices.Contains(out, r.Coordinate) {
+			out = append(out, r.Coordinate)
+		}
+	}
+	return out
+}
+
 func (f *fakeVulnStore) ListVulnerabilityRecords(_ context.Context, runID string) ([]domain.VulnerabilityRecord, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -630,6 +646,7 @@ type fakeScanner struct {
 	targetStatus   domain.VulnerabilityStatus
 	targetReason   string
 	targetErr      error
+	targetMode     domain.ScanMode
 	gotTargetCoord coordinate.ModuleCoordinate
 	gotTargetCache string
 	// call counters let tests assert which path a walk took.
@@ -749,7 +766,7 @@ func (f *fakeScanner) ScanTargetModule(_ context.Context, req ports.TargetScanRe
 	if len(f.targetFindings) > 0 {
 		status = domain.StatusAffected
 	}
-	return domain.ProjectScanResult{FindingsByModule: f.targetFindings, Status: status, AdvisoryCount: f.advisoryCount}, nil
+	return domain.ProjectScanResult{FindingsByModule: f.targetFindings, Status: status, AdvisoryCount: f.advisoryCount, ScanMode: f.targetMode}, nil
 }
 
 func (f *fakeScanner) ScannerMetadata() ports.ScannerMetadata {

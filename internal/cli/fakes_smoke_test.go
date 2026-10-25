@@ -515,12 +515,12 @@ func TestFakeExtractFIPS_Execute(t *testing.T) {
 		ToolchainVariant:  "boringcrypto",
 	}
 	f := &testfakes.FakeExtractFIPS{Result: rec}
-	got, err := f.Extract(context.Background(), "go.mod", configdomain.FIPSPolicy{Required: true})
+	got, err := f.Extract(context.Background(), "go.mod", configdomain.FIPSPolicy{Required: true}, "")
 	if err != nil || got.ProjectModulePath != "example.com/proj" {
 		t.Fatalf("unexpected: %v %v", got, err)
 	}
 	f2 := &testfakes.FakeExtractFIPS{Err: errTest}
-	_, err = f2.Extract(context.Background(), "go.mod", configdomain.FIPSPolicy{})
+	_, err = f2.Extract(context.Background(), "go.mod", configdomain.FIPSPolicy{}, "")
 	if err == nil {
 		t.Fatal("expected error")
 	}

@@ -161,14 +161,28 @@ func resolveWorkers(reqWorkers, ucWorkers, nodeCount int) int {
 func unfetchableReason(node walkdomain.GraphNode) (string, bool) {
 	switch node.ResolutionSource {
 	case walkdomain.ResolutionLocalReplace:
+		// At its local identity the walk read it from disk and it is extracted
+		// like the root; under the published coordinate it predates that and
+		// was never read.
+		if node.Coordinate.IsLocal() {
+			return "", false
+		}
 		return "local replace at " + node.LocalPath, true
 	case walkdomain.ResolutionLocalMainModule:
 		return "local main module (project-walk root); has no fetched artefact — analyse its own source with the local call-graph command", true
 	case walkdomain.ResolutionStdlib:
 		return "Go standard library (toolchain-provided); has no fetched module artefact — vulnerabilities are resolved from advisory metadata by coordinate", true
+	case walkdomain.ResolutionTinyGo:
+		return "TinyGo (toolchain-provided); has no fetched module artefact — its source custody is not acquired", true
 	default:
 		return "", false
 	}
+}
+
+// isLocalDependency reports a node read from disk that is not the walk's root:
+// a local replacement or a go.work member.
+func isLocalDependency(node walkdomain.GraphNode, root coordinate.ModuleCoordinate) bool {
+	return node.Coordinate.IsLocal() && node.Coordinate != root
 }
 
 func (uc *ExtractUseCase) Execute(ctx context.Context, req ExtractRequest) (domain.ExtractionRun, error) {
@@ -220,6 +234,7 @@ func (uc *ExtractUseCase) Execute(ctx context.Context, req ExtractRequest) (doma
 	var outMu sync.Mutex
 	var partial, cancelled atomic.Bool
 	var completed atomic.Int64
+	var refused firstError
 
 	// The run is in the store before the first module is touched, and again
 	// every checkpoint interval. Persisting only at the end meant the failure
@@ -250,8 +265,9 @@ func (uc *ExtractUseCase) Execute(ctx context.Context, req ExtractRequest) (doma
 				// never proxy-fetched). Emit a deterministic skip-with-reason for
 				// every requested stage so the run is succeeded, not failed, and
 				// the absence is auditable rather than presented as an error.
-				// Nodes promoted to ResolutionLocalAnalysed have a real FactRecord
-				// and proceed normally through the extraction pipeline.
+				// Nodes promoted to ResolutionLocalAnalysed, and local replacements
+				// and workspace members at their local identity, have a real
+				// FactRecord and proceed normally through the extraction pipeline.
 				if reason, unfetchable := unfetchableReason(j.node); unfetchable {
 					for _, stage := range runStages {
 						modRes.Stages[stage] = domain.StageResult{
@@ -268,7 +284,7 @@ func (uc *ExtractUseCase) Execute(ctx context.Context, req ExtractRequest) (doma
 					continue
 				}
 
-				uc.runModuleStages(ctx, req, j.node.Coordinate, runStages, modRes, &partial, &cancelled)
+				uc.runModuleStages(ctx, req, j.node.Coordinate, isLocalDependency(j.node, walk.Graph.Target), runStages, modRes, &partial, &cancelled, &refused)
 
 				outMu.Lock()
 				outcomes[j.idx] = outcome{coord: j.node.Coordinate, result: modRes, set: true}
@@ -296,7 +312,30 @@ func (uc *ExtractUseCase) Execute(ctx context.Context, req ExtractRequest) (doma
 
 	run.CompletedAt = uc.clock.Now().UTC()
 
-	return uc.sealAndPersist(ctx, run)
+	// The run records which module's stages were refused; the refusal itself is
+	// the command's answer, so a caller exits on it rather than on "partial".
+	sealed, err := uc.sealAndPersist(ctx, run)
+	return sealed, errors.Join(err, refused.load())
+}
+
+// firstError keeps the first error stored in it, for concurrent workers.
+type firstError struct {
+	mu  sync.Mutex
+	err error
+}
+
+func (f *firstError) store(err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.err == nil {
+		f.err = err
+	}
+}
+
+func (f *firstError) load() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.err
 }
 
 // walkToExtract reads the walk the request names, refusing one with no modules.
@@ -333,15 +372,17 @@ func (uc *ExtractUseCase) orderedRunStages(req ExtractRequest) ([]string, error)
 }
 
 // runModuleStages runs each stage over one module, recording its result on
-// modRes; it stops at the run's cancellation.
-func (uc *ExtractUseCase) runModuleStages(ctx context.Context, req ExtractRequest, coord coordinate.ModuleCoordinate, runStages []string, modRes domain.ModuleExtractionResult, partial, cancelled *atomic.Bool) {
-	for _, stage := range runStages {
+// modRes; it stops at the run's cancellation. A stored artefact refused as
+// altered fails the module's remaining stages unrun: each would read the same
+// refused bytes.
+func (uc *ExtractUseCase) runModuleStages(ctx context.Context, req ExtractRequest, coord coordinate.ModuleCoordinate, localDependency bool, runStages []string, modRes domain.ModuleExtractionResult, partial, cancelled *atomic.Bool, refused *firstError) {
+	for i, stage := range runStages {
 		if ctx.Err() != nil {
 			cancelled.Store(true)
 			break
 		}
 		lap := uc.stopwatch.Start()
-		res, extractErr := uc.extractor.Extract(ctx, coord, stage, req.Force, req.WalkID)
+		res, extractErr := uc.extractor.Extract(ctx, coord, stage, req.Force, req.WalkID, localDependency)
 		duration := lap.Elapsed().Milliseconds()
 
 		stageRes := domain.StageResult{
@@ -359,6 +400,13 @@ func (uc *ExtractUseCase) runModuleStages(ctx context.Context, req ExtractReques
 
 		if stageRes.Status == domain.StageFailed {
 			partial.Store(true)
+		}
+		if errors.Is(extractErr, fetchports.ErrBlobTampered) {
+			refused.store(extractErr)
+			for _, rest := range runStages[i+1:] {
+				modRes.Stages[rest] = domain.StageResult{Status: domain.StageFailed, Error: stageRes.Error}
+			}
+			return
 		}
 	}
 }

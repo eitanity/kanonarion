@@ -39,7 +39,7 @@ func TestAdapterExtractor_AnalyserLimitFailsTheStage(t *testing.T) {
 	}
 	for stage, a := range stages {
 		restore := gotoolchain.SetAnalysingGo("go1.26.6")
-		res, err := a.Extract(ctx, coord, stage, false, "")
+		res, err := a.Extract(ctx, coord, stage, false, "", false)
 		restore()
 		if err != nil {
 			t.Fatalf("%s: %v", stage, err)
@@ -52,7 +52,7 @@ func TestAdapterExtractor_AnalyserLimitFailsTheStage(t *testing.T) {
 		}
 
 		restore = gotoolchain.SetAnalysingGo("go1.27.2")
-		res, err = a.Extract(ctx, coord, stage, false, "")
+		res, err = a.Extract(ctx, coord, stage, false, "", false)
 		restore()
 		if err != nil {
 			t.Fatalf("%s: %v", stage, err)

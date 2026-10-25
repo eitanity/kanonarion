@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"sort"
@@ -36,6 +37,7 @@ type callGraphShowFlags struct {
 	diffTo    string
 	source    string
 	toolchain string
+	target    buildTargetFlags
 }
 
 func newCallGraphShowCmd(stdout, stderr io.Writer) *cobra.Command {
@@ -56,20 +58,15 @@ func newCallGraphShowCmd(stdout, stderr io.Writer) *cobra.Command {
   kanonarion callgraph-show github.com/spf13/cobra@v1.8.1 --diff
   kanonarion callgraph-show github.com/spf13/cobra@v1.8.1 --diff --diff-to sha256:d951af94
   kanonarion callgraph-show example.com/mod@local --source worktree
-  kanonarion callgraph-show golang.org/x/tools@v0.49.0 --toolchain go1.26.6`,
+  kanonarion callgraph-show golang.org/x/tools@v0.49.0 --toolchain go1.26.6
+  kanonarion callgraph-show example.com/mod@local --tinygo wasip1`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) != 1 {
 				return usageErr(cmd)
 			}
 			f.limitNodesSet = cmd.Flags().Changed("limit-nodes")
 			f.limitEdgesSet = cmd.Flags().Changed("limit-edges")
-			logger := buildLogger(logLevel, stderr)
-			ctr, cleanup, err := NewContainer(storeRoot, "", "", false, activeConfig, logger)
-			if err != nil {
-				return fmt.Errorf("initialising store: %w", err)
-			}
-			defer releaseStore(cleanup)
-			return runCallGraphShow(cmd.Context(), args[0], f, jsonOut, ctr.QueryCallGraph, stdout)
+			return runCallGraphShowCmd(cmd.Context(), args[0], f, stdout, stderr)
 		},
 	}
 
@@ -82,8 +79,26 @@ func newCallGraphShowCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd.Flags().StringVar(&f.diffTo, "diff-to", "", "with --diff: compare to this stored generation, the newer side of the pair — a record `hash` as --history prints it, or a unique prefix of one")
 	cmd.Flags().StringVar(&f.source, "source", "", "restrict to graphs built from one source: zip or worktree")
 	cmd.Flags().StringVar(&f.toolchain, "toolchain", "", "restrict to graphs built by one Go toolchain, in `go env GOVERSION` form (e.g. go1.26.6)")
+	registerBuildTargetFlags(cmd, &f.target)
 
 	return cmd
+}
+
+// runCallGraphShowCmd settles the frame this read selects, opens the store with
+// it wired in, and answers.
+func runCallGraphShowCmd(ctx context.Context, moduleArg string, f callGraphShowFlags, stdout, stderr io.Writer) error {
+	if err := resolveBuildTarget(ctx, f.target, "", ""); err != nil {
+		return err
+	}
+	logger := buildLogger(logLevel, stderr)
+	ctr, cleanup, err := NewContainer(storeRoot, "", "", false, activeConfig, logger)
+	if err != nil {
+		return fmt.Errorf("initialising store: %w", err)
+	}
+	defer releaseStore(cleanup)
+	r, _ := asSupersededReader(ctr.QueryFetch)
+	uc := callGraphShowUC{ctr.QueryCallGraph, r, localDependencyCheck{fetch: ctr.QueryFetch, walks: ctr.QueryWalks}}
+	return runCallGraphShow(ctx, moduleArg, f, jsonOut, uc, stdout)
 }
 
 // parseAnalysisSource maps the --source flag onto the domain value, refusing a
@@ -207,6 +222,10 @@ func callGraphShowMiss(ctx context.Context, coord coordinate.ModuleCoordinate, r
 			"no %s-sourced callgraph record for %s — the ledger may hold one from another source; try --history",
 			source, coord)}
 	}
+	// The read's frame selected none of the generations held in other frames.
+	if miss := frameMiss(ctx, coord, uc); miss != nil {
+		return miss
+	}
 	// Nothing is served: composition answers not-found only where the reading
 	// leg decoded no generation at all, since neither source nor toolchain is
 	// restricted on this path.
@@ -309,7 +328,8 @@ func analyserDisagreement(
 // the identical graph carry different content hashes.
 func runCallGraphHistory(ctx context.Context, coord coordinate.ModuleCoordinate, uc QueryCallGraphUseCase, stdout io.Writer) error {
 	recs, err := uc.CallGraphHistory(ctx, coord, cgapp.PipelineVersion)
-	if err != nil {
+	superseded, serr := supersededFor(ctx, uc, coord)
+	if err = errors.Join(err, serr); err != nil {
 		return fmt.Errorf("reading callgraph history: %w", err)
 	}
 	if len(recs) == 0 {
@@ -342,11 +362,12 @@ func runCallGraphHistory(ctx context.Context, coord coordinate.ModuleCoordinate,
 			marker = "*"
 		}
 		if _, werr := fmt.Fprintf(stdout,
-			"%s %s  %-16s %-17s %d node(s) / %d edge(s)\n    source:   %s\n    toolchain:%s\n    analyser: %s\n    from:     %s\n%s%s    graph:    %s\n    record:   %s\n",
+			"%s %s  %-16s %-17s %d node(s) / %d edge(s)\n    source:   %s\n    toolchain:%s\n%s    analyser: %s\n    from:     %s\n%s%s    graph:    %s\n    record:   %s\n%s",
 			marker, ledgerStamp(r.ExtractedAt), r.OverallStatus.String(),
 			r.Completeness.String(), r.NodeCount, r.EdgeCount,
-			r.AnalysisSource.String(), " "+domain.RecordToolchain(r).String(), r.Analyser.String(),
-			historyOrigin(r), historyDerivation(r), historyFailure(r), domain.GraphDigest(r), r.ContentHash); werr != nil {
+			r.AnalysisSource.String(), " "+domain.RecordToolchain(r).String(), historyFrame(r), r.Analyser.String(),
+			historyOrigin(r), historyDerivation(r), historyFailure(r), domain.GraphDigest(r), r.ContentHash,
+			supersededNote(superseded, r.ArtefactIdentity)); werr != nil {
 			return fmt.Errorf("writing output: %w", werr)
 		}
 	}
@@ -360,7 +381,7 @@ func runCallGraphHistory(ctx context.Context, coord coordinate.ModuleCoordinate,
 	// itself: a coordinate the store has never held and one whose generations
 	// this build has stopped serving are different facts, and a list that simply
 	// omits the second states neither.
-	note, nerr := supersededGenerationsNote(ctx, coord, uc, recs)
+	note, nerr := supersededGenerationsNote(ctx, coord, uc, recs, nil)
 	if nerr != nil {
 		return nerr
 	}
@@ -376,7 +397,7 @@ func runCallGraphHistory(ctx context.Context, coord coordinate.ModuleCoordinate,
 // writeNoCallGraphHistory says the coordinate has no generation this build
 // serves, and whether the ledger holds ones it has stopped serving.
 func writeNoCallGraphHistory(ctx context.Context, coord coordinate.ModuleCoordinate, uc QueryCallGraphUseCase, recs []domain.CallGraphRecord, stdout io.Writer) error {
-	note, nerr := supersededGenerationsNote(ctx, coord, uc, recs)
+	note, nerr := supersededGenerationsNote(ctx, coord, uc, recs, nil)
 	if nerr != nil {
 		return nerr
 	}
@@ -488,6 +509,14 @@ type callNodeJSON struct {
 	Role          string `json:"role"`
 	// ExportDirective is absent when the function carries none.
 	ExportDirective *callNodeExportJSON `json:"export_directive,omitempty"`
+	// InterruptHandler is absent when nothing installs the function as one.
+	InterruptHandler *callNodeHandlerJSON `json:"interrupt_handler,omitempty"`
+}
+
+type callNodeHandlerJSON struct {
+	Kind     string `json:"kind"`
+	SiteFile string `json:"site_file"`
+	SiteLine int    `json:"site_line"`
 }
 
 type callNodeExportJSON struct {
@@ -531,8 +560,9 @@ type callEdgeJSON struct {
 // edgeKindJSON renders an edge kind for the curated shape, naming the zero
 // value instead of emitting it as the empty string.
 func edgeKindJSON(k domain.EdgeKind) string {
-	if k.IsReference() {
-		return string(domain.EdgeKindReference)
+	switch k {
+	case domain.EdgeKindReference, domain.EdgeKindCompilerInserted, domain.EdgeKindLinkname:
+		return string(k)
 	}
 	return "Call"
 }
@@ -556,6 +586,8 @@ type callGraphRunJSON struct {
 	// Derivations say, one per answer, whether this run measured it or served a
 	// record it already held.
 	Derivations []derivationJSON `json:"derivations,omitempty"`
+	// FrameExcludes names the files only TinyGo builds that this frame left out.
+	FrameExcludes *frameExcludesJSON `json:"frame_excludes,omitempty"`
 }
 
 // derivationJSON is one answer's provenance: measured here, or served.
@@ -616,7 +648,10 @@ type callGraphRecordJSON struct {
 	// toolchain the analysis named from one recovered out of the graph's own
 	// stdlib paths. Null when the record states none.
 	ToolchainStated *string `json:"toolchain_stated"`
-	WorktreeDigest  string  `json:"worktree_digest,omitempty"`
+	// Frame is the build frame the record was extracted under; absent on a
+	// record that states none, which predates the field.
+	Frame          *frameJSON `json:"frame,omitempty"`
+	WorktreeDigest string     `json:"worktree_digest,omitempty"`
 	// WorktreeScanDigest names the tree state this record was taken of, which is
 	// the key a later run reuses it by. It is here so a reader can check a reuse
 	// claim against the record rather than taking the run's word for it; absent on
@@ -878,6 +913,11 @@ func toCallGraphJSON(r domain.CallGraphRecord) callGraphRecordJSON {
 		if !n.ExportDirective.IsZero() {
 			nodes[i].ExportDirective = &callNodeExportJSON{Kind: string(n.ExportDirective.Kind), Name: n.ExportDirective.Name}
 		}
+		if !n.InterruptHandler.IsZero() {
+			nodes[i].InterruptHandler = &callNodeHandlerJSON{
+				Kind: string(n.InterruptHandler.Kind), SiteFile: n.InterruptHandler.Site.File, SiteLine: n.InterruptHandler.Site.Line,
+			}
+		}
 	}
 	edges := make([]callEdgeJSON, len(r.Edges))
 	for i, e := range r.Edges {
@@ -906,6 +946,7 @@ func toCallGraphJSON(r domain.CallGraphRecord) callGraphRecordJSON {
 		ArtifactKind:       r.ArtifactKind.String(),
 		Toolchain:          orNotRecorded(domain.RecordToolchain(r).Key()),
 		ToolchainStated:    statedToolchain(r),
+		Frame:              toFrameJSON(r.Frame),
 		WorktreeDigest:     r.WorktreeDigest,
 		WorktreeScanDigest: r.WorktreeScanDigest,
 
@@ -1340,7 +1381,7 @@ func printCallGraphRecord(r domain.CallGraphRecord, limitNodes, limitEdges int, 
 		return err
 	}
 	if len(r.Interfaces) > 0 {
-		if _, err := fmt.Fprintf(stdout, "  interfaces: %d declared, %d implementations recorded (query with 'kanonarion implementers')\n",
+		if _, err := fmt.Fprintf(stdout, "  interfaces: %d declared, %d implementations recorded (query with 'kanonarion implementers <interface-id>')\n",
 			len(r.Interfaces), len(r.Implementations)); err != nil {
 			return fmt.Errorf("writing interface summary: %w", err)
 		}
@@ -1362,11 +1403,19 @@ func printCallGraphRecord(r domain.CallGraphRecord, limitNodes, limitEdges int, 
 		return fmt.Errorf("writing edges header: %w", err)
 	}
 	for _, e := range edges {
-		if _, err := fmt.Fprintf(stdout, "  %s → %s  [%s]\n", e.FromID, e.ToID, string(e.Confidence)); err != nil {
+		if _, err := fmt.Fprintf(stdout, "  %s → %s  [%s]%s\n", e.FromID, e.ToID, string(e.Confidence), tinyGoKindTag(e.Kind)); err != nil {
 			return fmt.Errorf("writing edge: %w", err)
 		}
 	}
 	return nil
+}
+
+// tinyGoKindTag is the edge line's tag for the two kinds of call TinyGo supplies.
+func tinyGoKindTag(k domain.EdgeKind) string {
+	if k == domain.EdgeKindCompilerInserted || k == domain.EdgeKindLinkname {
+		return " [" + string(k) + "]"
+	}
+	return ""
 }
 
 // writeRecordQualifiers writes the lines that qualify what the record covers:
@@ -1380,6 +1429,9 @@ func writeRecordQualifiers(stdout io.Writer, r domain.CallGraphRecord) error {
 	}
 
 	if err := writeFidelityLine(stdout, r); err != nil {
+		return err
+	}
+	if err := writeFrameLine(stdout, r); err != nil {
 		return err
 	}
 	if err := writeAnalyserLine(stdout, r); err != nil {
@@ -1442,18 +1494,54 @@ func writeCallGraphNodes(stdout io.Writer, r domain.CallGraphRecord, limitNodes 
 // The exit code and the remedy are the same either way — the coordinate has to
 // be analysed by this build — so only the diagnosis differs, and it differs on
 // what the store says rather than on which command asked.
-func missingCallGraphRefusal(ctx context.Context, coord coordinate.ModuleCoordinate, uc ports.CallGraphCoordinateLister) error {
-	note, err := supersededGenerationsNote(ctx, coord, uc, nil)
+func missingCallGraphRefusal(ctx context.Context, coord coordinate.ModuleCoordinate, uc callGraphGenerationReader) error {
+	// The decodable generations say which unserved ones are another frame's and
+	// which tree the remedy names; an unreadable history leaves the listing alone.
+	recs, herr := uc.CallGraphHistory(ctx, coord, cgapp.PipelineVersion)
+	if herr != nil {
+		recs = nil
+	}
+	want := invocationFrame()
+	var otherFrames []domain.CallGraphRecord
+	for _, r := range recs {
+		if !r.Frame.IsZero() && !domain.SameFrame(r.Frame, want) {
+			otherFrames = append(otherFrames, r)
+		}
+	}
+	note, err := supersededGenerationsNote(ctx, coord, uc, otherFrames, otherFrames)
 	if err != nil {
 		return err
 	}
-	if note != "" {
+	ids := make([]string, 0, len(recs))
+	for _, r := range recs {
+		ids = append(ids, r.ArtefactIdentity)
+	}
+	if refusal := supersededOnlyRefusal(ctx, uc, coord, ids, "kanonarion callgraph "+coord.String()+targetFlagHint()); refusal != nil {
+		return refusal
+	}
+	remedy := frameReanalysis(coord, domain.AgreedRoot(recs))
+	if dep, ok := localDependencyRemedy(ctx, uc, coord); ok {
+		remedy = dep
+	}
+	switch {
+	case len(otherFrames) > 0:
+		return &exitError{code: ExitNotFound, msg: fmt.Sprintf(
+			"no callgraph record for %s at pipeline %s extracted under %s — %s. Produce one under %s:\n  %s",
+			coord, cgapp.PipelineVersion, want, note, want, remedy)}
+	case note != "":
 		return &exitError{code: ExitNotFound, msg: fmt.Sprintf(
 			"no callgraph record for %s at pipeline %s — %s. Re-analyse it:\n  %s",
-			coord, cgapp.PipelineVersion, note, domain.ReanalysisInstruction(coord, ""))}
+			coord, cgapp.PipelineVersion, note, remedy)}
 	}
 	return &exitError{code: ExitNotFound, msg: fmt.Sprintf(
-		"no callgraph record for %s — analyse it first:\n  %s", coord, domain.ReanalysisInstruction(coord, ""))}
+		"no callgraph record for %s — analyse it first:\n  %s", coord, remedy)}
+}
+
+// callGraphGenerationReader is what a refusal reads to say what the store holds:
+// the listing's columns, and the generations this build decodes.
+type callGraphGenerationReader interface {
+	ports.CallGraphCoordinateLister
+	CallGraphHistory(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) ([]domain.CallGraphRecord, error)
 }
 
 // supersededGenerationsNote describes the generations the store holds for a
@@ -1486,6 +1574,7 @@ func supersededGenerationsNote(
 	coord coordinate.ModuleCoordinate,
 	uc ports.CallGraphCoordinateLister,
 	servable []domain.CallGraphRecord,
+	otherFrames []domain.CallGraphRecord,
 ) (string, error) {
 	sums, err := uc.ListCallGraphCoordinates(ctx, ports.CallGraphFilter{ModulePath: coord.Path()})
 	if err != nil {
@@ -1520,7 +1609,9 @@ func supersededGenerationsNote(
 			unserved = append(unserved, g)
 		}
 	}
-	var clauses []string
+	// Ahead of every other clause: a generation of another frame decoded fine, and
+	// the reader's flag, not a re-analysis, is what reads it.
+	clauses := otherFramesClause(otherFrames)
 	// The pipeline clause answers "why is there no answer at all", so it is
 	// stated only where there is none. Every caller that displays generations
 	// names the pipeline version it is displaying them at, so a generation under
@@ -1545,6 +1636,20 @@ func supersededGenerationsNote(
 		return "", nil
 	}
 	return strings.Join(clauses, "; "), nil
+}
+
+// otherFramesClause names the generations held under frames other than the
+// read's and the flag that reads each, as one clause, or none when there are none.
+func otherFramesClause(recs []domain.CallGraphRecord) []string {
+	if len(recs) == 0 {
+		return nil
+	}
+	frames, flags := domain.HeldFrames(recs, domain.BuildFrame{})
+	clause := fmt.Sprintf("%d generation(s) extracted under %s", len(recs), strings.Join(frames, ", "))
+	if len(flags) > 0 {
+		clause += "; read one with " + strings.Join(flags, " or ")
+	}
+	return []string{clause}
 }
 
 // statedAnalysers renders the distinct analysers a set of listed generations

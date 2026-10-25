@@ -11,8 +11,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
@@ -27,11 +29,12 @@ import (
 	"github.com/eitanity/kanonarion/internal/adapters/goenv"
 	proxyadapter "github.com/eitanity/kanonarion/internal/adapters/proxy/direct"
 	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
+	"github.com/eitanity/kanonarion/internal/composition"
+	"github.com/eitanity/kanonarion/internal/composition/storage"
 	configstore "github.com/eitanity/kanonarion/internal/config/adapters/store/yaml"
 	"github.com/eitanity/kanonarion/internal/config/domain"
 	fetchapp "github.com/eitanity/kanonarion/internal/fetch/application"
 
-	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
 	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
 	exampleports "github.com/eitanity/kanonarion/internal/example/ports"
 	extractports "github.com/eitanity/kanonarion/internal/extract/ports"
@@ -234,6 +237,11 @@ func findPolicyFile() string {
 	}
 }
 
+// readPackageModulesFmt names a non-standard package's module. A package the
+// go command could not find has no module, and is skipped rather than failing
+// the template beside go's own error.
+const readPackageModulesFmt = "{{if and (not .Standard) .Module}}{{.Module.Path}}@{{.Module.Version}}{{end}}"
+
 // readPackageModules runs "go list -deps" over pattern and returns the module
 // coordinates ("path@version") of every non-standard-library package reachable
 // from that pattern. This gives the exact set of modules linked into the binary
@@ -249,13 +257,13 @@ func findPolicyFile() string {
 // dies without warning does not leave it resolving a build nobody is waiting
 // for.
 func readPackageModules(ctx context.Context, pattern string) ([]string, error) {
-	cmd := childproc.CommandContext(ctx, "go", "list", "-deps", "-f", // #nosec G204 -- pattern is a Go package path from a developer CLI flag
-		"{{if not .Standard}}{{.Module.Path}}@{{.Module.Version}}{{end}}", pattern)
+	cmd := childproc.CommandContext(ctx, "go", withTinyGoTags([]string{"list", "-deps", "-f", // #nosec G204 -- pattern is a Go package path from a developer CLI flag
+		readPackageModulesFmt + goListIgnoredFmt, pattern})...)
 	// The allow-list is the import closure of one package, and the Go toolchain
 	// resolves that against the build target. It is stated here rather than
 	// inherited so the closure and the walk it is filtered against agree on the
 	// platform by construction.
-	cmd.Env = declaredTarget.Apply(os.Environ())
+	cmd.Env = resolvingEnv(os.Environ())
 	out, err := cmd.Output()
 	if err != nil {
 		if errors.Is(err, exec.ErrNotFound) {
@@ -263,10 +271,12 @@ func readPackageModules(ctx context.Context, pattern string) ([]string, error) {
 		}
 		var ee *exec.ExitError
 		if errors.As(err, &ee) && len(ee.Stderr) > 0 {
-			return nil, fmt.Errorf("go list %s%s: %s", pattern, targetClause(), strings.TrimSpace(string(ee.Stderr)))
+			return nil, fmt.Errorf("go list %s%s: %s", pattern, targetClause(), withTinyGoRemedy(ctx, strings.TrimSpace(string(ee.Stderr))))
 		}
 		return nil, fmt.Errorf("go list %s%s: %w", pattern, targetClause(), err)
 	}
+	out, ignored := splitIgnoredRecords(out)
+	frameExcludes.report(".", ignored)
 	seen := make(map[string]bool)
 	var coords []string
 	for line := range strings.SplitSeq(string(out), "\n") {
@@ -341,7 +351,9 @@ const goListModuleRecordFmt = `{{if .Replace}}` +
 // goListModuleFmt is the record for a PACKAGE's module (`go list -deps`).
 // Standard-library packages and the main module emit an all-empty record and are
 // dropped on parse.
-const goListModuleFmt = `{{if and .Module (not .Standard)}}{{with .Module}}` + goListModuleRecordFmt + `{{end}}{{end}}`
+// A second line names the package's ignored Go files; see goListIgnoredFmt.
+const goListModuleFmt = `{{if and .Module (not .Standard)}}{{with .Module}}` + goListModuleRecordFmt + `{{end}}{{end}}` +
+	goListIgnoredFmt
 
 // goListBuildListFmt is the record for a BUILD-LIST module (`go list -m`), which
 // is the module itself rather than a package's. The main module is dropped: it
@@ -499,6 +511,8 @@ func resolveScopeModules(ctx context.Context, gomodPath string, scope depScope, 
 	if err != nil {
 		return nil, res, err
 	}
+	out, ignored := splitIgnoredRecords(out)
+	frameExcludes.report(filepath.Dir(gomodPath), ignored)
 	mods, err := parseGoListModuleRecords(out)
 	if err != nil {
 		return nil, res, err
@@ -562,7 +576,7 @@ func goListDepsArgs(patterns []string, ts testScope) []string {
 // that was killed rather than asked to stop, and went on holding the memory
 // that got it killed.
 func runGoList(ctx context.Context, dir string, args []string) ([]byte, error) {
-	cmd := childproc.CommandContext(ctx, "go", args...) // #nosec G204 -- args are ./..., a Go package pattern from a developer CLI flag, go.mod tool directive package paths, or the fixed `list -m all`
+	cmd := childproc.CommandContext(ctx, "go", withTinyGoTags(args)...) // #nosec G204 -- args are ./..., a Go package pattern from a developer CLI flag, go.mod tool directive package paths, or the fixed `list -m all`
 	cmd.Dir = dir
 	// The scope is platform-specific: build constraints select files per target,
 	// so `go list -deps` over one tree answers differently for each. The pair is
@@ -572,7 +586,7 @@ func runGoList(ctx context.Context, dir string, args []string) ([]byte, error) {
 	// writes one), so it gets a temp root removed once it has exited.
 	scratch, removeScratch := childproc.Scratch()
 	defer removeScratch()
-	cmd.Env = append(declaredTarget.Apply(os.Environ()), scratch...)
+	cmd.Env = append(resolvingEnv(os.Environ()), scratch...)
 	out, err := cmd.Output()
 	if err != nil {
 		if errors.Is(err, exec.ErrNotFound) {
@@ -580,9 +594,9 @@ func runGoList(ctx context.Context, dir string, args []string) ([]byte, error) {
 		}
 		var ee *exec.ExitError
 		if errors.As(err, &ee) && len(ee.Stderr) > 0 {
-			return nil, fmt.Errorf("go %s%s: %s", strings.Join(args, " "), targetClause(), strings.TrimSpace(string(ee.Stderr)))
+			return nil, fmt.Errorf("go %s%s: %s", shownGoListArgs(args), targetClause(), withTinyGoRemedy(ctx, strings.TrimSpace(string(ee.Stderr))))
 		}
-		return nil, fmt.Errorf("go %s%s: %w", strings.Join(args, " "), targetClause(), err)
+		return nil, fmt.Errorf("go %s%s: %w", shownGoListArgs(args), targetClause(), err)
 	}
 	return out, nil
 }
@@ -599,7 +613,7 @@ func parseGoListModuleRecords(out []byte) ([]scopeModule, error) {
 	var records []string
 	for line := range strings.SplitSeq(string(out), "\n") {
 		line = strings.TrimRight(line, "\r")
-		if strings.TrimSpace(strings.ReplaceAll(line, "\t", "")) == "" || seen[line] {
+		if strings.HasPrefix(line, ignoredRecordMarker) || strings.TrimSpace(strings.ReplaceAll(line, "\t", "")) == "" || seen[line] {
 			continue
 		}
 		seen[line] = true
@@ -856,17 +870,25 @@ func resolveToolModule(toolPath string, reqVersions map[string]string) (modPath,
 func resetInvocationState() {
 	storeSetAside.reset()
 	storeNotSearched.reset()
+	recordseal.SetStoreLocation("")
 	modcacheMode, modcacheDir, goSumPath = false, "", ""
 	projectGoSumPath = ""
 	// The built-in defaults, which is what a store with no config file loads —
 	// never the previous store's policy.
 	activeConfig, activeConfigErr = domain.DefaultConfig(), nil
+	// The next invocation names its own configuration file, or none.
+	configFlag = ""
 	// The safe default, so an invocation that never reaches PersistentPreRunE
 	// cannot inherit the last one's permission to create a store.
 	storeIntent = StoreIntentRead
 	// No remedy, so a refusal raised before a command was resolved names none
 	// rather than the last command's.
 	offlineRemedy = ""
+	invokedCommand = ""
+	invokedCmd, invokedArgs = nil, nil
+	walkIDLookup = walkIDCheck{}
+	frameExcludes.reset()
+	blobRefusals.reset()
 	if restoreGoproxy != nil {
 		if err := restoreGoproxy(); err != nil {
 			slog.Default().Error("restoring GOPROXY after --goproxy", slog.String("error", err.Error()))
@@ -896,6 +918,7 @@ func resetInvocationState() {
 	// next reader in this process filter on a platform nobody asked for, and
 	// record one nobody declared.
 	declaredTarget = goenv.Target{}
+	declaredTinyGo = goenv.TinyGo{}
 }
 
 // callgraphCeiling is the wall-clock backstop for one call-graph subprocess.
@@ -1130,6 +1153,80 @@ func offlineAlternativeOf(cmd *cobra.Command) string {
 // none of them knows which command is running.
 var offlineRemedy string
 
+// invokedCommand is this invocation's command path, which a refused stored
+// artefact names in the assurance log as the reader that refused it.
+var invokedCommand string
+
+// blobRefusals collects every stored artefact this invocation's blob store
+// refused and did not later replace, so a refusal a reader absorbed still
+// decides the exit while one a re-fetch repaired does not.
+var blobRefusals refusalLog
+
+// refusalLog is the invocation's standing refusals, in the order they happened.
+type refusalLog struct {
+	mu   sync.Mutex
+	seen []*fetchports.BlobTamperedError
+}
+
+// observe records a refusal, or with a nil refusal withdraws identity's.
+func (l *refusalLog) observe(identity fetchports.BlobIdentity, r *fetchports.BlobTamperedError) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.seen = slices.DeleteFunc(l.seen, func(s *fetchports.BlobTamperedError) bool { return s.Identity == identity })
+	if r != nil {
+		l.seen = append(l.seen, r)
+	}
+}
+
+func (l *refusalLog) first() *fetchports.BlobTamperedError {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if len(l.seen) == 0 {
+		return nil
+	}
+	return l.seen[0]
+}
+
+func (l *refusalLog) reset() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.seen = nil
+}
+
+// blobRefusalError is a run that refused a stored artefact. It prints the
+// refusal's own sentence, and unwraps to both the command's error and the
+// refusal so the exit and every errors.Is still see the chain.
+type blobRefusalError struct {
+	err     error
+	refusal *fetchports.BlobTamperedError
+}
+
+func (e *blobRefusalError) Error() string { return e.refusal.Error() }
+
+func (e *blobRefusalError) Unwrap() []error {
+	if e.err == nil {
+		return []error{e.refusal}
+	}
+	return []error{e.err, e.refusal}
+}
+
+// surfaceBlobRefusal makes a refused stored artefact the run's answer: the one
+// in err's chain, or else the first the store recorded. A refusal a child
+// process made reaches here as its text alone and is left as it is.
+func surfaceBlobRefusal(err error) error {
+	var refusal *fetchports.BlobTamperedError
+	if errors.As(err, &refusal) {
+		return &blobRefusalError{err: err, refusal: refusal}
+	}
+	if errors.Is(err, fetchports.ErrBlobTampered) {
+		return err
+	}
+	if refusal = blobRefusals.first(); refusal != nil {
+		return &blobRefusalError{err: err, refusal: refusal}
+	}
+	return err
+}
+
 // restoreGoproxy undoes the invocation's --goproxy declaration; nil when the
 // command was given none.
 var restoreGoproxy func() error
@@ -1143,7 +1240,7 @@ func declareGoproxyFlag(cmd *cobra.Command) error {
 	}
 	restore, err := goenv.Declare(fl.Value.String())
 	if err != nil {
-		return &exitError{code: ExitConfig, msg: err.Error()}
+		return &exitError{code: ExitConfig, msg: "--goproxy: " + err.Error()}
 	}
 	restoreGoproxy = restore
 	return nil
@@ -1228,13 +1325,13 @@ func storeIntentOf(cmd *cobra.Command) string {
 // disagree with itself.
 var storeIntent = StoreIntentRead
 
-// storeOpenIntent maps this invocation's declared intent onto what the sqlite
-// layer is allowed to do about a missing directory.
-func storeOpenIntent() sqlitestore.Intent {
+// storeOpenIntent maps this invocation's declared intent onto what the storage
+// backend is allowed to do about a missing store.
+func storeOpenIntent() storage.Intent {
 	if storeIntent == StoreIntentCreate {
-		return sqlitestore.IntentCreate
+		return storage.IntentCreate
 	}
-	return sqlitestore.IntentRead
+	return storage.IntentRead
 }
 
 // missingStoreError is a read aimed at a store root that is not there. It names
@@ -1543,8 +1640,9 @@ func goEnvGOMODCACHE(ctx context.Context) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
-// loadStoreConfig loads and returns the parsed Config from
-// <storeRoot>/config.yaml. It never creates or modifies that file: an absent
+// loadStoreConfig loads and returns the parsed Config from the file
+// configFilePath names: <storeRoot>/config.yaml unless --config or
+// KANONARION_CONFIG names another. It never creates or modifies that file: an absent
 // file resolves to DefaultConfig, and any key the user has not explicitly
 // written resolves to its live built-in default at parse time. This keeps
 // read-only commands side-effect-free and ensures built-in default changes
@@ -1558,13 +1656,40 @@ func goEnvGOMODCACHE(ctx context.Context) (string, error) {
 // absent file is not a rejection: the store adapter resolves it to
 // DefaultConfig with no error, and that path is unchanged.
 func loadStoreConfig(root string) (domain.Config, error) {
-	configPath := filepath.Join(root, "config.yaml")
-	store := configstore.New(configPath)
+	configPath := configFilePath(root)
+	store := configstore.New(configPath, composition.BackendSections()...)
 	cfg, err := store.LoadConfig(context.Background())
 	if err != nil {
 		return domain.DefaultConfig(), &rejectedConfigError{path: configPath, cause: err}
 	}
 	return cfg, nil
+}
+
+// configFlag is --config.
+var configFlag string
+
+// configEnv names the configuration file when --config is not given.
+const configEnv = "KANONARION_CONFIG"
+
+// configFilePath is the configuration file in force: --config, else
+// KANONARION_CONFIG, else <root>/config.yaml.
+func configFilePath(root string) string {
+	if path, ok := explicitConfigPath(); ok {
+		return path
+	}
+	return filepath.Join(root, "config.yaml")
+}
+
+// explicitConfigPath is the configuration file named by --config or
+// KANONARION_CONFIG, if either names one.
+func explicitConfigPath() (string, bool) {
+	if configFlag != "" {
+		return configFlag, true
+	}
+	if env := os.Getenv(configEnv); env != "" {
+		return env, true
+	}
+	return "", false
 }
 
 // defaultStoreRoot returns the default store root path (~/.kanonarion).
@@ -1728,7 +1853,7 @@ var evidenceInDoubt = []error{
 	licenceports.ErrLicenceIntegrity, licenceports.ErrLicenceConflict,
 	exampleports.ErrExampleIntegrity, exampleports.ErrExampleConflict,
 	extractports.ErrExtractionRunIntegrity,
-	vulnports.ErrVulnIntegrity, vulnports.ErrSnapshotIntegrity,
+	vulnports.ErrVulnIntegrity, vulnports.ErrVulnConflict, vulnports.ErrSnapshotIntegrity,
 	stdlibports.ErrFactsIntegrity, stdlibports.ErrFactsConflict,
 	fetchports.ErrFetchRecordIntegrity,
 	nativeports.ErrNativeConflict,
@@ -1760,6 +1885,11 @@ func ExitCodeForError(err error) int {
 	if err == nil {
 		return ExitOK
 	}
+	// A stored artefact refused as altered outranks whatever the command made of
+	// the gap it left: every answer the run gave stands on the store's bytes.
+	if errors.Is(err, fetchports.ErrBlobTampered) {
+		return ExitIntegrity
+	}
 	if code, ok := ExitCodeFromError(err); ok {
 		return code
 	}
@@ -1768,10 +1898,20 @@ func ExitCodeForError(err error) int {
 			return ExitIntegrity
 		}
 	}
+	// A genuine record filed under a key its seal does not carry, raised by a
+	// store with no integrity sentinel of its own.
+	if recordseal.IsMisfiled(err) {
+		return ExitIntegrity
+	}
 	for _, sentinel := range moduleNotFetched {
 		if errors.Is(err, sentinel) {
 			return ExitNotFound
 		}
+	}
+	// A walk id that reached a use case without the up-front lookup is still an
+	// absent record, not a malformed invocation; so is a walk never scanned.
+	if isWalkNotFound(err) || errors.Is(err, vulnports.ErrWalkNotScanned) {
+		return ExitNotFound
 	}
 	// Every stored generation was set aside, or a refusal was decided without
 	// one: nothing this build can serve to answer, which is an absence. A

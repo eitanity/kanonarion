@@ -59,6 +59,10 @@ var ErrNotFound = errors.New("not found")
 // what the enclave itself can see.
 var ErrProxyOff = fmt.Errorf("%w: the environment declares no module fetching", goenv.ErrNetworkForbidden)
 
+// ErrPlainHTTP refuses a proxy URL over plain HTTP. The flag that allows one
+// belongs to the commands that define it, so the adapter names none.
+var ErrPlainHTTP = errors.New("plain HTTP is refused unless the command allows it")
+
 // ErrProxyDirectUnsupported reports that GOPROXY selects direct VCS-origin
 // fetching, which this adapter does not implement.
 //
@@ -124,7 +128,7 @@ func New(baseURL string, insecure bool) (*Proxy, error) {
 	}
 	baseURL = strings.TrimRight(baseURL, "/")
 	if !insecure && strings.HasPrefix(strings.ToLower(baseURL), "http://") {
-		return nil, fmt.Errorf("proxy URL %q uses plain HTTP; pass --insecure to allow (forces unverified status)", baseURL)
+		return nil, fmt.Errorf("proxy URL %q: %w", baseURL, ErrPlainHTTP)
 	}
 	return &Proxy{
 		baseURL:         baseURL,
@@ -202,10 +206,11 @@ func (p *Proxy) Info(ctx context.Context, coord coordinate.ModuleCoordinate) (_ 
 		Version string    `json:"Version"`
 		Time    time.Time `json:"Time"`
 		Origin  *struct {
-			VCS  string `json:"VCS"`
-			URL  string `json:"URL"`
-			Ref  string `json:"Ref"`
-			Hash string `json:"Hash"`
+			VCS    string `json:"VCS"`
+			URL    string `json:"URL"`
+			Ref    string `json:"Ref"`
+			Hash   string `json:"Hash"`
+			Subdir string `json:"Subdir"`
 		} `json:"Origin"`
 	}
 	if err := json.NewDecoder(body).Decode(&raw); err != nil {
@@ -218,10 +223,11 @@ func (p *Proxy) Info(ctx context.Context, coord coordinate.ModuleCoordinate) (_ 
 	}
 	if raw.Origin != nil {
 		info.Origin = &ports.ModuleOrigin{
-			VCS:  raw.Origin.VCS,
-			URL:  raw.Origin.URL,
-			Ref:  raw.Origin.Ref,
-			Hash: raw.Origin.Hash,
+			VCS:    raw.Origin.VCS,
+			URL:    raw.Origin.URL,
+			Ref:    raw.Origin.Ref,
+			Hash:   raw.Origin.Hash,
+			Subdir: raw.Origin.Subdir,
 		}
 	}
 	return info, nil

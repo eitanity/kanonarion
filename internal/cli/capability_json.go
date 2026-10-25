@@ -101,7 +101,10 @@ type capabilityReportJSON struct {
 	// TestRoots is "excluded" or "included": which root set produced the
 	// answer. It is always populated, so a consumer cannot mistake an unstated
 	// axis for a missing one.
-	TestRoots    string                  `json:"test_roots"`
+	TestRoots string `json:"test_roots"`
+	// Frame is the build frame the record read was extracted under, in
+	// callgraph-show's shape; absent for a record that states none.
+	Frame        *frameJSON              `json:"frame,omitempty"`
 	Partial      bool                    `json:"partial"`
 	Caveat       string                  `json:"caveat,omitempty"`
 	Capabilities []string                `json:"capabilities"`

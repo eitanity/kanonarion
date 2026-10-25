@@ -2,6 +2,7 @@ package application
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/eitanity/kanonarion/internal/adapters/interrupt"
@@ -79,8 +80,8 @@ func (uc *ScanWalkUseCase) scanTargetRooted(
 		return false, nil
 	}
 	blob, err := uc.moduleScanner.blobs.Get(ctx, zipIdentity)
-	if interrupt.Cancelled(ctx, err) {
-		return false, fmt.Errorf("retrieving the content of %s: %w", target, err)
+	if interrupt.Cancelled(ctx, err) || errors.Is(err, fetchports.ErrBlobTampered) {
+		return false, fmt.Errorf("retrieving the content of %s: %w", target, fetchports.AttributeBlobTamper(err, target))
 	}
 	if err != nil {
 		uc.logger.Warn("target-rooted scan: could not retrieve the target's module content, falling back to isolated scans",
@@ -187,7 +188,7 @@ func (uc *ScanWalkUseCase) recordTargetRootedAnswers(ctx context.Context, root, 
 		// not reached. The target itself was the versionless main module, which
 		// OSV matching structurally cannot reach a verdict on, so its coordinate
 		// matches carry no reachability rather than a fabricated not-reachable.
-		findings, err := uc.mergeCoordinateFindings(ctx, coord, findings, coord != target, *snapshot)
+		findings, err := uc.mergeCoordinateFindings(ctx, coord, findings, coord != target, result.ScanMode, *snapshot)
 		if interrupt.Cancelled(ctx, err) {
 			return fmt.Errorf("matching advisories for %s: %w", coord, err)
 		}

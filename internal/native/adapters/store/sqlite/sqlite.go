@@ -11,9 +11,11 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/adapters/blobcodec"
+	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
 	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
 	"github.com/eitanity/kanonarion/internal/native/domain"
 	"github.com/eitanity/kanonarion/internal/native/ports"
 )
@@ -21,6 +23,17 @@ import (
 // Store is the SQLite-backed native-component store.
 type Store struct {
 	db sqlitestore.DB
+	// superseded names the artefacts a published coordinate's read leaves out;
+	// nil leaves every record in. See WithSupersededArtefacts.
+	superseded fetchports.SupersededArtefacts
+}
+
+// WithSupersededArtefacts makes the store's reads of a published coordinate
+// leave out records of a directory read under it before local code had its own
+// identity. The records stay in the store.
+func (s *Store) WithSupersededArtefacts(fn fetchports.SupersededArtefacts) *Store {
+	s.superseded = fn
+	return s
 }
 
 // New returns a Store using the provided shared database handle.
@@ -147,11 +160,18 @@ ORDER BY artefact_identity`
 		if rec.Ecosystem != domain.EcosystemGo {
 			return domain.Record{}, false, fmt.Errorf("%w: got %q, want %q", domain.ErrUnsupportedEcosystem, rec.Ecosystem, domain.EcosystemGo)
 		}
+		if merr := checkFiled(coord.Path(), coord.Version(), domain.PipelineFingerprint(), identity, rec); merr != nil {
+			return domain.Record{}, false, merr
+		}
 		identities = append(identities, identity)
 		records = append(records, rec)
 	}
 	if rerr := rows.Err(); rerr != nil {
 		return domain.Record{}, false, fmt.Errorf("reading native records: %w", rerr)
+	}
+	identities, records, err = s.withoutSuperseded(ctx, coord, identities, records)
+	if err != nil {
+		return domain.Record{}, false, err
 	}
 
 	switch len(records) {
@@ -163,6 +183,19 @@ ORDER BY artefact_identity`
 		return domain.Record{}, false, fmt.Errorf("%w: %s is described by %d artefacts %v",
 			ports.ErrNativeConflict, coord, len(identities), identities)
 	}
+}
+
+// checkFiled compares the key a native row is filed under with the values its
+// record states. The store keeps one row per key, so re-measuring the row's own
+// coordinate overwrites it.
+func checkFiled(path, version, generation, identity string, rec domain.Record) error {
+	remedy := "re-measure it with kanonarion native " + path + "@" + version + " --force, which overwrites the row"
+	//nolint:wrapcheck // the refusal names the row, the table and the remedy itself
+	return recordseal.CheckFiled("native record", "native_records", remedy,
+		recordseal.Key(path+"@"+version, rec.Coordinate.String()),
+		recordseal.Column("pipeline_fingerprint", "pipeline_version+recipe_catalogue_version", generation,
+			rec.PipelineVersion+"+recipes."+rec.RecipeCatalogueVersion),
+		recordseal.Column("artefact_identity", "artefact_identity", identity, rec.ArtefactIdentity))
 }
 
 // listNativeColumns is the projection every listed row is built from. The
@@ -216,21 +249,115 @@ ORDER BY extracted_at DESC, module_path, module_version, pipeline_fingerprint, a
 		return nil, fmt.Errorf("reading native records: %w", rerr)
 	}
 
+	out, supersededPer, serr := s.markSuperseded(ctx, out, filter.AllGenerations)
+	if serr != nil {
+		return nil, serr
+	}
 	disputed, derr := s.disputedNativeCoordinates(ctx, filter)
 	if derr != nil {
 		return nil, derr
 	}
 	for i := range out {
+		if out[i].SupersededByIdentity {
+			continue
+		}
 		key := nativeDisputeKey{
 			path: out[i].Coordinate.Path(), version: out[i].Coordinate.Version(),
 			generation: out[i].Generation,
 		}
-		if n := disputed[key]; n > 1 {
+		if n := disputed[key] - supersededPer[key]; n > 1 {
 			out[i].Conflict = fmt.Errorf("%w: %s at generation %s is described by %d artefacts",
 				ports.ErrNativeConflict, out[i].Coordinate, out[i].Generation, n)
 		}
 	}
 	return out, nil
+}
+
+// withoutSuperseded drops the records of artefacts a published coordinate's
+// read leaves out, keeping identities and records aligned.
+func (s *Store) withoutSuperseded(ctx context.Context, coord coordinate.ModuleCoordinate, identities []string, records []domain.Record) ([]string, []domain.Record, error) {
+	kept, err := fetchports.DropSuperseded(ctx, s.superseded, coord, identities, func(id string) string { return id })
+	if err != nil {
+		return nil, nil, fmt.Errorf("reading native records of %s: %w", coord, err)
+	}
+	if len(kept) == len(identities) {
+		return identities, records, nil
+	}
+	keep := make(map[string]bool, len(kept))
+	for _, id := range kept {
+		keep[id] = true
+	}
+	var recs []domain.Record
+	for i, id := range identities {
+		if keep[id] {
+			recs = append(recs, records[i])
+		}
+	}
+	return kept, recs, nil
+}
+
+// markSuperseded flags the rows of a directory read under a published
+// coordinate before local code had its own identity. They answer no read, so
+// they are dropped unless every generation was asked for, and are counted per
+// key over the whole store, as the dispute count is, so they never make a
+// published record read as disputed.
+func (s *Store) markSuperseded(ctx context.Context, rows []ports.NativeSummary, keep bool) ([]ports.NativeSummary, map[nativeDisputeKey]int, error) {
+	if s.superseded == nil {
+		return rows, nil, nil
+	}
+	ids := map[coordinate.ModuleCoordinate]map[string]bool{}
+	counted := map[nativeDisputeKey]int{}
+	out := rows[:0]
+	for _, r := range rows {
+		set, seen := ids[r.Coordinate]
+		if !seen && !r.Coordinate.IsLocal() {
+			got, err := s.superseded(ctx, r.Coordinate)
+			if err != nil {
+				return nil, nil, fmt.Errorf("reading superseded local generations of %s: %w", r.Coordinate, err)
+			}
+			set, ids[r.Coordinate] = got, got
+		}
+		key := nativeDisputeKey{path: r.Coordinate.Path(), version: r.Coordinate.Version(), generation: r.Generation}
+		if _, done := counted[key]; !done && len(set) > 0 {
+			n, err := s.countIdentities(ctx, key, set)
+			if err != nil {
+				return nil, nil, err
+			}
+			counted[key] = n
+		}
+		if set[r.ArtefactIdentity] {
+			if !keep {
+				continue
+			}
+			r.SupersededByIdentity = true
+		}
+		out = append(out, r)
+	}
+	return out, counted, nil
+}
+
+// countIdentities counts the records held for key whose artefact is in set.
+func (s *Store) countIdentities(ctx context.Context, key nativeDisputeKey, set map[string]bool) (int, error) {
+	rows, err := s.db.DB().QueryContext(ctx, `SELECT artefact_identity FROM native_records
+WHERE module_path = ? AND module_version = ? AND pipeline_fingerprint = ?`, key.path, key.version, key.generation)
+	if err != nil {
+		return 0, fmt.Errorf("counting superseded native records of %s@%s: %w", key.path, key.version, err)
+	}
+	defer func() { _ = rows.Close() }()
+	n := 0
+	for rows.Next() {
+		var id string
+		if serr := rows.Scan(&id); serr != nil {
+			return 0, fmt.Errorf("scanning native record identity: %w", serr)
+		}
+		if set[id] {
+			n++
+		}
+	}
+	if rerr := rows.Err(); rerr != nil {
+		return 0, fmt.Errorf("reading native record identities: %w", rerr)
+	}
+	return n, nil
 }
 
 // nativeListPredicate renders the filter's WHERE clause and its arguments.
@@ -294,11 +421,10 @@ func scanNativeSummary(row nativeSummaryScanner) (ports.NativeSummary, error) {
 	// and the columns are the index over it. A record whose coordinate does not
 	// match the row it was stored under is refused rather than listed under a
 	// name it does not claim.
-	coord := rec.Coordinate
-	if coord.Path() != modulePath || coord.Version() != moduleVersion {
-		return ports.NativeSummary{}, fmt.Errorf("native record stored under %s@%s describes %s",
-			modulePath, moduleVersion, coord)
+	if merr := checkFiled(modulePath, moduleVersion, generation, identity, rec); merr != nil {
+		return ports.NativeSummary{}, merr
 	}
+	coord := rec.Coordinate
 	// The timestamp is read from the column rather than the record: it is the
 	// value the ordering was applied to, so a row that sorted here cannot then
 	// report a different instant.

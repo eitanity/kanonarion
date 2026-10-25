@@ -71,6 +71,10 @@ type nativeListEntry struct {
 	SourceCount int    `json:"source_count"`
 	ExtractedAt string `json:"extracted_at"`
 	ContentHash string `json:"content_hash"`
+	// SupersededBy is "identity" for a record of a directory read under this
+	// published coordinate before local code had its own identity: kept in the
+	// store, answering no read. Absent on every other row.
+	SupersededBy string `json:"superseded_by,omitempty"`
 	// Conflict is set only when the store holds another record describing a
 	// different artefact for this coordinate at this generation. The two
 	// disagree about what the version's bytes are, and the single-module command
@@ -92,7 +96,7 @@ func newNativeListCmd(stdout, stderr io.Writer) *cobra.Command {
 			annotationNetworkUse:  NetworkNever,
 		},
 		Short: "List the modules examined for native code, filterable by what was found",
-		Long: `native-list reads back the records 'kanonarion native' writes, so the question
+		Long: `native-list reads back the records the native command writes, so the question
 the fact exists to answer can be asked of a whole store at once: which of my
 dependencies ship or link a third-party C library.
 
@@ -370,6 +374,9 @@ func toNativeListEntry(s nativeports.NativeSummary, gen listGeneration) nativeLi
 	if s.Conflict != nil {
 		entry.Conflict = s.Conflict.Error()
 	}
+	if s.SupersededByIdentity {
+		entry.SupersededBy = "identity"
+	}
 	return entry
 }
 
@@ -455,6 +462,9 @@ func printNativeListRows(stdout io.Writer, gen listGeneration, entries []nativeL
 		}
 		if e.Conflict != "" {
 			mark += "  [CONFLICT: " + e.Conflict + "]"
+		}
+		if e.SupersededBy != "" {
+			mark += "  [superseded by identity]"
 		}
 		if _, err := fmt.Fprintf(stdout, "%-55s %-22s %s%s\n",
 			e.Module+"@"+e.Version, e.Presence, nativeListDetail(e), mark); err != nil {

@@ -1,0 +1,500 @@
+=== other/callers/--target wasip1/wasm (exit 0)
+1 caller of example.com/app.(Dog).Speak:
+  example.com/app.main  [Direct]  (example.com/app@local)
+=== other/callers/--walk-id wasip1/wasm (exit 0)
+notice: results restricted to the 2 module versions resolved by walk "01JS0NFRAMEM1SS0000000WASM1" (code scope, frame wasip1/wasm)
+1 caller of example.com/app.(Dog).Speak:
+  example.com/app.main  [Direct]  (example.com/app@local)
+=== other/callees/--target wasip1/wasm (exit 0)
+2 callees of example.com/app.main:
+  example.com/app.(Dog).Speak  [Direct]  (example.com/app@local)
+  example.com/dep.Use  [Direct]  (example.com/app@local)
+=== other/callees/--walk-id wasip1/wasm (exit 0)
+notice: results restricted to the 2 module versions resolved by walk "01JS0NFRAMEM1SS0000000WASM1" (code scope, frame wasip1/wasm)
+2 callees of example.com/app.main:
+  example.com/app.(Dog).Speak  [Direct]  (example.com/app@local)
+  example.com/dep.Use  [Direct]  (example.com/app@local)
+=== other/implementers/--target wasip1/wasm (exit 0)
+1 implementer of example.com/app.Speaker:
+  example.com/app.(Dog)  (example.com/app@local)
+scope: concrete types declared in example.com/app; types in other modules that satisfy this interface are not measured
+answer: RESOLVED-PRESENT — 1 concrete type satisfies example.com/app.Speaker
+=== other/implementers/--walk-id wasip1/wasm (exit 0)
+notice: results restricted to the 2 module versions resolved by walk "01JS0NFRAMEM1SS0000000WASM1" (code scope, frame wasip1/wasm)
+1 implementer of example.com/app.Speaker:
+  example.com/app.(Dog)  (example.com/app@local)
+scope: concrete types declared in example.com/app; types in other modules that satisfy this interface are not measured
+answer: RESOLVED-PRESENT — 1 concrete type satisfies example.com/app.Speaker
+=== other/usage/--target wasip1/wasm (exit 0)
+usage of example.com/dep@v1.0.0 by example.com/app@local
+notice: results restricted to the 2 module versions resolved by walk "01JS0NFRAMEM1SS0000000WASM1" (code scope, frame wasip1/wasm); ./go.mod was not re-resolved for this read, so an edit made to it since that walk is not reflected — kanonarion walk --gomod ./go.mod --target wasip1/wasm records the current resolution
+graph: <digest>, Extracted, BUILT_WITH_BODIES, 3 node(s), 2 edge(s)
+
+Used — reached by a Direct edge from example.com/app own code (1 symbol, 1 site: 1 production, 0 test):
+  established use is a Direct call edge: one that names a unique concrete callee. An edge of any other confidence is an unresolved dispatch the analysis over-approximated, so it names every type-compatible function in the module rather than the one that runs. Those are reported below as their own class and are in no count above.
+  example.com/dep.Use — 1 site (1 production, 0 test)
+      production main.go:10  [call]  example.com/app.main
+
+Reached only through unresolved dispatch — not established use (0 symbols, 0 edges from 0 sites: 0 production, 0 test):
+
+Linked but not called (0 packages of this project import the module):
+
+Unreached — unmeasured: the store holds no call graph for any version of example.com/dep, so its public API was never enumerated and nothing about the module was measured; check the module path, then run: kanonarion fetch example.com/dep@v1.0.0 && kanonarion callgraph example.com/dep@v1.0.0
+
+unmeasured: types, constants and variables have no call-graph node, so no use of one appears anywhere in this report. List them with: kanonarion fetch example.com/dep@v1.0.0 && kanonarion interface example.com/dep@v1.0.0 && kanonarion interface-show example.com/dep@v1.0.0
+coverage: reached/not-reached is measured over recorded CALL EDGES in the stored call graph. Method values (a method referenced as a value rather than called) are not recorded as edges, so a symbol shown as not reached may still be referenced that way. Types, constants and variables have no call-graph node at all and are reported as unmeasured rather than as unreached.
+answer: RESOLVED-PRESENT — example.com/app own code reaches 1 symbol of example.com/dep@v1.0.0 at 1 site (1 production, 0 test)
+=== other/usage/--walk-id wasip1/wasm (exit 0)
+usage of example.com/dep@v1.0.0 by example.com/app@local
+notice: results restricted to the 2 module versions resolved by walk "01JS0NFRAMEM1SS0000000WASM1" (code scope, frame wasip1/wasm)
+graph: <digest>, Extracted, BUILT_WITH_BODIES, 3 node(s), 2 edge(s)
+
+Used — reached by a Direct edge from example.com/app own code (1 symbol, 1 site: 1 production, 0 test):
+  established use is a Direct call edge: one that names a unique concrete callee. An edge of any other confidence is an unresolved dispatch the analysis over-approximated, so it names every type-compatible function in the module rather than the one that runs. Those are reported below as their own class and are in no count above.
+  example.com/dep.Use — 1 site (1 production, 0 test)
+      production main.go:10  [call]  example.com/app.main
+
+Reached only through unresolved dispatch — not established use (0 symbols, 0 edges from 0 sites: 0 production, 0 test):
+
+Linked but not called (0 packages of this project import the module):
+
+Unreached — unmeasured: the store holds no call graph for any version of example.com/dep, so its public API was never enumerated and nothing about the module was measured; check the module path, then run: kanonarion fetch example.com/dep@v1.0.0 && kanonarion callgraph example.com/dep@v1.0.0
+
+unmeasured: types, constants and variables have no call-graph node, so no use of one appears anywhere in this report. List them with: kanonarion fetch example.com/dep@v1.0.0 && kanonarion interface example.com/dep@v1.0.0 && kanonarion interface-show example.com/dep@v1.0.0
+coverage: reached/not-reached is measured over recorded CALL EDGES in the stored call graph. Method values (a method referenced as a value rather than called) are not recorded as edges, so a symbol shown as not reached may still be referenced that way. Types, constants and variables have no call-graph node at all and are reported as unmeasured rather than as unreached.
+answer: RESOLVED-PRESENT — example.com/app own code reaches 1 symbol of example.com/dep@v1.0.0 at 1 site (1 production, 0 test)
+=== other/capability/--target wasip1/wasm (exit 0)
+example.com/app@local capabilities:
+  frame: wasip1/wasm
+  roots: all of this module's own code; test functions excluded (widen with --include-tests)
+  (no sensitive capabilities witnessed)
+  sensitive calls: none (no exported sensitive function called over a Direct edge)
+  co-location: no function collects and egresses, and no initialiser reaches both
+=== other/capability/--walk-id wasip1/wasm (exit 0)
+example.com/app@local capabilities:
+  frame: wasip1/wasm
+  roots: all of this module's own code; test functions excluded (widen with --include-tests)
+  (no sensitive capabilities witnessed)
+  sensitive calls: none (no exported sensitive function called over a Direct edge)
+  co-location: no function collects and egresses, and no initialiser reaches both
+=== other/callgraph-show/--target wasip1/wasm (exit 0)
+example.com/app@local  [CHA]  Extracted
+  fidelity: BUILT_WITH_BODIES   source: worktree   kind: Library   toolchain: not recorded  (tree analysed-sha256:t)
+  frame: wasip1/wasm
+  analyser: not recorded — this record does not name the library that type-checked it and built its SSA
+  test scope: analysed — 0 of 3 nodes are test declarations
+  reference scope: analysed — 0 of 2 edges record a function value being taken, not called
+  interfaces: 1 declared, 1 implementations recorded (query with 'kanonarion implementers <interface-id>')
+Legend: [api] exported symbol  [external] outside this module  [test] declared in a _test.go file  (no tag) unexported
+
+Nodes (3 total, showing 3):
+  example.com/app.(Dog).Speak [api]
+  example.com/app.main
+  example.com/dep.Use [external] [api]
+
+Edges (2 total, showing 2):
+  example.com/app.main → example.com/app.(Dog).Speak  [Direct]
+  example.com/app.main → example.com/dep.Use  [Direct]
+=== host/callers/no flag (exit 0)
+1 caller of example.com/app.(Dog).Speak:
+  example.com/app.main  [Direct]  (example.com/app@local)
+=== host/callers/--target host (exit 0)
+1 caller of example.com/app.(Dog).Speak:
+  example.com/app.main  [Direct]  (example.com/app@local)
+=== host/callers/--walk-id host (exit 0)
+notice: results restricted to the 2 module versions resolved by walk "01JS0NFRAMEM1SS0000000HOST1" (code scope, frame linux/amd64)
+1 caller of example.com/app.(Dog).Speak:
+  example.com/app.main  [Direct]  (example.com/app@local)
+=== host/callees/no flag (exit 0)
+2 callees of example.com/app.main:
+  example.com/app.(Dog).Speak  [Direct]  (example.com/app@local)
+  example.com/dep.Use  [Direct]  (example.com/app@local)
+=== host/callees/--target host (exit 0)
+2 callees of example.com/app.main:
+  example.com/app.(Dog).Speak  [Direct]  (example.com/app@local)
+  example.com/dep.Use  [Direct]  (example.com/app@local)
+=== host/callees/--walk-id host (exit 0)
+notice: results restricted to the 2 module versions resolved by walk "01JS0NFRAMEM1SS0000000HOST1" (code scope, frame linux/amd64)
+2 callees of example.com/app.main:
+  example.com/app.(Dog).Speak  [Direct]  (example.com/app@local)
+  example.com/dep.Use  [Direct]  (example.com/app@local)
+=== host/implementers/no flag (exit 0)
+1 implementer of example.com/app.Speaker:
+  example.com/app.(Dog)  (example.com/app@local)
+scope: concrete types declared in example.com/app; types in other modules that satisfy this interface are not measured
+answer: RESOLVED-PRESENT — 1 concrete type satisfies example.com/app.Speaker
+=== host/implementers/--target host (exit 0)
+1 implementer of example.com/app.Speaker:
+  example.com/app.(Dog)  (example.com/app@local)
+scope: concrete types declared in example.com/app; types in other modules that satisfy this interface are not measured
+answer: RESOLVED-PRESENT — 1 concrete type satisfies example.com/app.Speaker
+=== host/implementers/--walk-id host (exit 0)
+notice: results restricted to the 2 module versions resolved by walk "01JS0NFRAMEM1SS0000000HOST1" (code scope, frame linux/amd64)
+1 implementer of example.com/app.Speaker:
+  example.com/app.(Dog)  (example.com/app@local)
+scope: concrete types declared in example.com/app; types in other modules that satisfy this interface are not measured
+answer: RESOLVED-PRESENT — 1 concrete type satisfies example.com/app.Speaker
+=== host/usage/no flag (exit 0)
+usage of example.com/dep@v1.0.0 by example.com/app@local
+notice: results restricted to the 2 module versions resolved by walk "01JS0NFRAMEM1SS0000000HOST1" (code scope, frame linux/amd64); ./go.mod was not re-resolved for this read, so an edit made to it since that walk is not reflected — kanonarion walk --gomod ./go.mod records the current resolution
+graph: <digest>, Extracted, BUILT_WITH_BODIES, 3 node(s), 2 edge(s)
+
+Used — reached by a Direct edge from example.com/app own code (1 symbol, 1 site: 1 production, 0 test):
+  established use is a Direct call edge: one that names a unique concrete callee. An edge of any other confidence is an unresolved dispatch the analysis over-approximated, so it names every type-compatible function in the module rather than the one that runs. Those are reported below as their own class and are in no count above.
+  example.com/dep.Use — 1 site (1 production, 0 test)
+      production main.go:10  [call]  example.com/app.main
+
+Reached only through unresolved dispatch — not established use (0 symbols, 0 edges from 0 sites: 0 production, 0 test):
+
+Linked but not called (0 packages of this project import the module):
+
+Unreached — unmeasured: the store holds no call graph for any version of example.com/dep, so its public API was never enumerated and nothing about the module was measured; check the module path, then run: kanonarion fetch example.com/dep@v1.0.0 && kanonarion callgraph example.com/dep@v1.0.0
+
+unmeasured: types, constants and variables have no call-graph node, so no use of one appears anywhere in this report. List them with: kanonarion fetch example.com/dep@v1.0.0 && kanonarion interface example.com/dep@v1.0.0 && kanonarion interface-show example.com/dep@v1.0.0
+coverage: reached/not-reached is measured over recorded CALL EDGES in the stored call graph. Method values (a method referenced as a value rather than called) are not recorded as edges, so a symbol shown as not reached may still be referenced that way. Types, constants and variables have no call-graph node at all and are reported as unmeasured rather than as unreached.
+answer: RESOLVED-PRESENT — example.com/app own code reaches 1 symbol of example.com/dep@v1.0.0 at 1 site (1 production, 0 test)
+=== host/usage/--target host (exit 0)
+usage of example.com/dep@v1.0.0 by example.com/app@local
+notice: results restricted to the 2 module versions resolved by walk "01JS0NFRAMEM1SS0000000HOST1" (code scope, frame linux/amd64); ./go.mod was not re-resolved for this read, so an edit made to it since that walk is not reflected — kanonarion walk --gomod ./go.mod --target linux/amd64 records the current resolution
+graph: <digest>, Extracted, BUILT_WITH_BODIES, 3 node(s), 2 edge(s)
+
+Used — reached by a Direct edge from example.com/app own code (1 symbol, 1 site: 1 production, 0 test):
+  established use is a Direct call edge: one that names a unique concrete callee. An edge of any other confidence is an unresolved dispatch the analysis over-approximated, so it names every type-compatible function in the module rather than the one that runs. Those are reported below as their own class and are in no count above.
+  example.com/dep.Use — 1 site (1 production, 0 test)
+      production main.go:10  [call]  example.com/app.main
+
+Reached only through unresolved dispatch — not established use (0 symbols, 0 edges from 0 sites: 0 production, 0 test):
+
+Linked but not called (0 packages of this project import the module):
+
+Unreached — unmeasured: the store holds no call graph for any version of example.com/dep, so its public API was never enumerated and nothing about the module was measured; check the module path, then run: kanonarion fetch example.com/dep@v1.0.0 && kanonarion callgraph example.com/dep@v1.0.0
+
+unmeasured: types, constants and variables have no call-graph node, so no use of one appears anywhere in this report. List them with: kanonarion fetch example.com/dep@v1.0.0 && kanonarion interface example.com/dep@v1.0.0 && kanonarion interface-show example.com/dep@v1.0.0
+coverage: reached/not-reached is measured over recorded CALL EDGES in the stored call graph. Method values (a method referenced as a value rather than called) are not recorded as edges, so a symbol shown as not reached may still be referenced that way. Types, constants and variables have no call-graph node at all and are reported as unmeasured rather than as unreached.
+answer: RESOLVED-PRESENT — example.com/app own code reaches 1 symbol of example.com/dep@v1.0.0 at 1 site (1 production, 0 test)
+=== host/usage/--walk-id host (exit 0)
+usage of example.com/dep@v1.0.0 by example.com/app@local
+notice: results restricted to the 2 module versions resolved by walk "01JS0NFRAMEM1SS0000000HOST1" (code scope, frame linux/amd64)
+graph: <digest>, Extracted, BUILT_WITH_BODIES, 3 node(s), 2 edge(s)
+
+Used — reached by a Direct edge from example.com/app own code (1 symbol, 1 site: 1 production, 0 test):
+  established use is a Direct call edge: one that names a unique concrete callee. An edge of any other confidence is an unresolved dispatch the analysis over-approximated, so it names every type-compatible function in the module rather than the one that runs. Those are reported below as their own class and are in no count above.
+  example.com/dep.Use — 1 site (1 production, 0 test)
+      production main.go:10  [call]  example.com/app.main
+
+Reached only through unresolved dispatch — not established use (0 symbols, 0 edges from 0 sites: 0 production, 0 test):
+
+Linked but not called (0 packages of this project import the module):
+
+Unreached — unmeasured: the store holds no call graph for any version of example.com/dep, so its public API was never enumerated and nothing about the module was measured; check the module path, then run: kanonarion fetch example.com/dep@v1.0.0 && kanonarion callgraph example.com/dep@v1.0.0
+
+unmeasured: types, constants and variables have no call-graph node, so no use of one appears anywhere in this report. List them with: kanonarion fetch example.com/dep@v1.0.0 && kanonarion interface example.com/dep@v1.0.0 && kanonarion interface-show example.com/dep@v1.0.0
+coverage: reached/not-reached is measured over recorded CALL EDGES in the stored call graph. Method values (a method referenced as a value rather than called) are not recorded as edges, so a symbol shown as not reached may still be referenced that way. Types, constants and variables have no call-graph node at all and are reported as unmeasured rather than as unreached.
+answer: RESOLVED-PRESENT — example.com/app own code reaches 1 symbol of example.com/dep@v1.0.0 at 1 site (1 production, 0 test)
+=== host/capability/no flag (exit 0)
+example.com/app@local capabilities:
+  frame: linux/amd64
+  roots: all of this module's own code; test functions excluded (widen with --include-tests)
+  (no sensitive capabilities witnessed)
+  sensitive calls: none (no exported sensitive function called over a Direct edge)
+  co-location: no function collects and egresses, and no initialiser reaches both
+=== host/capability/--target host (exit 0)
+example.com/app@local capabilities:
+  frame: linux/amd64
+  roots: all of this module's own code; test functions excluded (widen with --include-tests)
+  (no sensitive capabilities witnessed)
+  sensitive calls: none (no exported sensitive function called over a Direct edge)
+  co-location: no function collects and egresses, and no initialiser reaches both
+=== host/capability/--walk-id host (exit 0)
+example.com/app@local capabilities:
+  frame: linux/amd64
+  roots: all of this module's own code; test functions excluded (widen with --include-tests)
+  (no sensitive capabilities witnessed)
+  sensitive calls: none (no exported sensitive function called over a Direct edge)
+  co-location: no function collects and egresses, and no initialiser reaches both
+=== host/callgraph-show/no flag (exit 0)
+example.com/app@local  [CHA]  Extracted
+  fidelity: BUILT_WITH_BODIES   source: worktree   kind: Library   toolchain: not recorded  (tree analysed-sha256:t)
+  frame: linux/amd64
+  analyser: not recorded — this record does not name the library that type-checked it and built its SSA
+  test scope: analysed — 0 of 3 nodes are test declarations
+  reference scope: analysed — 0 of 2 edges record a function value being taken, not called
+  interfaces: 1 declared, 1 implementations recorded (query with 'kanonarion implementers <interface-id>')
+Legend: [api] exported symbol  [external] outside this module  [test] declared in a _test.go file  (no tag) unexported
+
+Nodes (3 total, showing 3):
+  example.com/app.(Dog).Speak [api]
+  example.com/app.main
+  example.com/dep.Use [external] [api]
+
+Edges (2 total, showing 2):
+  example.com/app.main → example.com/app.(Dog).Speak  [Direct]
+  example.com/app.main → example.com/dep.Use  [Direct]
+=== host/callgraph-show/--target host (exit 0)
+example.com/app@local  [CHA]  Extracted
+  fidelity: BUILT_WITH_BODIES   source: worktree   kind: Library   toolchain: not recorded  (tree analysed-sha256:t)
+  frame: linux/amd64
+  analyser: not recorded — this record does not name the library that type-checked it and built its SSA
+  test scope: analysed — 0 of 3 nodes are test declarations
+  reference scope: analysed — 0 of 2 edges record a function value being taken, not called
+  interfaces: 1 declared, 1 implementations recorded (query with 'kanonarion implementers <interface-id>')
+Legend: [api] exported symbol  [external] outside this module  [test] declared in a _test.go file  (no tag) unexported
+
+Nodes (3 total, showing 3):
+  example.com/app.(Dog).Speak [api]
+  example.com/app.main
+  example.com/dep.Use [external] [api]
+
+Edges (2 total, showing 2):
+  example.com/app.main → example.com/app.(Dog).Speak  [Direct]
+  example.com/app.main → example.com/dep.Use  [Direct]
+=== both/callers/no flag (exit 0)
+1 caller of example.com/app.(Dog).Speak:
+  example.com/app.main  [Direct]  (example.com/app@local)
+=== both/callers/--target wasip1/wasm (exit 0)
+1 caller of example.com/app.(Dog).Speak:
+  example.com/app.main  [Direct]  (example.com/app@local)
+=== both/callers/--target host (exit 0)
+1 caller of example.com/app.(Dog).Speak:
+  example.com/app.main  [Direct]  (example.com/app@local)
+=== both/callers/--walk-id host (exit 0)
+notice: results restricted to the 2 module versions resolved by walk "01JS0NFRAMEM1SS0000000HOST1" (code scope, frame linux/amd64)
+1 caller of example.com/app.(Dog).Speak:
+  example.com/app.main  [Direct]  (example.com/app@local)
+=== both/callers/--walk-id wasip1/wasm (exit 0)
+notice: results restricted to the 2 module versions resolved by walk "01JS0NFRAMEM1SS0000000WASM1" (code scope, frame wasip1/wasm)
+1 caller of example.com/app.(Dog).Speak:
+  example.com/app.main  [Direct]  (example.com/app@local)
+=== both/callees/no flag (exit 0)
+2 callees of example.com/app.main:
+  example.com/app.(Dog).Speak  [Direct]  (example.com/app@local)
+  example.com/dep.Use  [Direct]  (example.com/app@local)
+=== both/callees/--target wasip1/wasm (exit 0)
+2 callees of example.com/app.main:
+  example.com/app.(Dog).Speak  [Direct]  (example.com/app@local)
+  example.com/dep.Use  [Direct]  (example.com/app@local)
+=== both/callees/--target host (exit 0)
+2 callees of example.com/app.main:
+  example.com/app.(Dog).Speak  [Direct]  (example.com/app@local)
+  example.com/dep.Use  [Direct]  (example.com/app@local)
+=== both/callees/--walk-id host (exit 0)
+notice: results restricted to the 2 module versions resolved by walk "01JS0NFRAMEM1SS0000000HOST1" (code scope, frame linux/amd64)
+2 callees of example.com/app.main:
+  example.com/app.(Dog).Speak  [Direct]  (example.com/app@local)
+  example.com/dep.Use  [Direct]  (example.com/app@local)
+=== both/callees/--walk-id wasip1/wasm (exit 0)
+notice: results restricted to the 2 module versions resolved by walk "01JS0NFRAMEM1SS0000000WASM1" (code scope, frame wasip1/wasm)
+2 callees of example.com/app.main:
+  example.com/app.(Dog).Speak  [Direct]  (example.com/app@local)
+  example.com/dep.Use  [Direct]  (example.com/app@local)
+=== both/implementers/no flag (exit 0)
+1 implementer of example.com/app.Speaker:
+  example.com/app.(Dog)  (example.com/app@local)
+scope: concrete types declared in example.com/app; types in other modules that satisfy this interface are not measured
+answer: RESOLVED-PRESENT — 1 concrete type satisfies example.com/app.Speaker
+=== both/implementers/--target wasip1/wasm (exit 0)
+1 implementer of example.com/app.Speaker:
+  example.com/app.(Dog)  (example.com/app@local)
+scope: concrete types declared in example.com/app; types in other modules that satisfy this interface are not measured
+answer: RESOLVED-PRESENT — 1 concrete type satisfies example.com/app.Speaker
+=== both/implementers/--target host (exit 0)
+1 implementer of example.com/app.Speaker:
+  example.com/app.(Dog)  (example.com/app@local)
+scope: concrete types declared in example.com/app; types in other modules that satisfy this interface are not measured
+answer: RESOLVED-PRESENT — 1 concrete type satisfies example.com/app.Speaker
+=== both/implementers/--walk-id host (exit 0)
+notice: results restricted to the 2 module versions resolved by walk "01JS0NFRAMEM1SS0000000HOST1" (code scope, frame linux/amd64)
+1 implementer of example.com/app.Speaker:
+  example.com/app.(Dog)  (example.com/app@local)
+scope: concrete types declared in example.com/app; types in other modules that satisfy this interface are not measured
+answer: RESOLVED-PRESENT — 1 concrete type satisfies example.com/app.Speaker
+=== both/implementers/--walk-id wasip1/wasm (exit 0)
+notice: results restricted to the 2 module versions resolved by walk "01JS0NFRAMEM1SS0000000WASM1" (code scope, frame wasip1/wasm)
+1 implementer of example.com/app.Speaker:
+  example.com/app.(Dog)  (example.com/app@local)
+scope: concrete types declared in example.com/app; types in other modules that satisfy this interface are not measured
+answer: RESOLVED-PRESENT — 1 concrete type satisfies example.com/app.Speaker
+=== both/usage/no flag (exit 0)
+usage of example.com/dep@v1.0.0 by example.com/app@local
+notice: results restricted to the 2 module versions resolved by walk "01JS0NFRAMEM1SS0000000HOST1" (code scope, frame linux/amd64); ./go.mod was not re-resolved for this read, so an edit made to it since that walk is not reflected — kanonarion walk --gomod ./go.mod records the current resolution
+graph: <digest>, Extracted, BUILT_WITH_BODIES, 3 node(s), 2 edge(s)
+
+Used — reached by a Direct edge from example.com/app own code (1 symbol, 1 site: 1 production, 0 test):
+  established use is a Direct call edge: one that names a unique concrete callee. An edge of any other confidence is an unresolved dispatch the analysis over-approximated, so it names every type-compatible function in the module rather than the one that runs. Those are reported below as their own class and are in no count above.
+  example.com/dep.Use — 1 site (1 production, 0 test)
+      production main.go:10  [call]  example.com/app.main
+
+Reached only through unresolved dispatch — not established use (0 symbols, 0 edges from 0 sites: 0 production, 0 test):
+
+Linked but not called (0 packages of this project import the module):
+
+Unreached — unmeasured: the store holds no call graph for any version of example.com/dep, so its public API was never enumerated and nothing about the module was measured; check the module path, then run: kanonarion fetch example.com/dep@v1.0.0 && kanonarion callgraph example.com/dep@v1.0.0
+
+unmeasured: types, constants and variables have no call-graph node, so no use of one appears anywhere in this report. List them with: kanonarion fetch example.com/dep@v1.0.0 && kanonarion interface example.com/dep@v1.0.0 && kanonarion interface-show example.com/dep@v1.0.0
+coverage: reached/not-reached is measured over recorded CALL EDGES in the stored call graph. Method values (a method referenced as a value rather than called) are not recorded as edges, so a symbol shown as not reached may still be referenced that way. Types, constants and variables have no call-graph node at all and are reported as unmeasured rather than as unreached.
+answer: RESOLVED-PRESENT — example.com/app own code reaches 1 symbol of example.com/dep@v1.0.0 at 1 site (1 production, 0 test)
+=== both/usage/--target wasip1/wasm (exit 0)
+usage of example.com/dep@v1.0.0 by example.com/app@local
+notice: results restricted to the 2 module versions resolved by walk "01JS0NFRAMEM1SS0000000WASM1" (code scope, frame wasip1/wasm); ./go.mod was not re-resolved for this read, so an edit made to it since that walk is not reflected — kanonarion walk --gomod ./go.mod --target wasip1/wasm records the current resolution
+graph: <digest>, Extracted, BUILT_WITH_BODIES, 3 node(s), 2 edge(s)
+
+Used — reached by a Direct edge from example.com/app own code (1 symbol, 1 site: 1 production, 0 test):
+  established use is a Direct call edge: one that names a unique concrete callee. An edge of any other confidence is an unresolved dispatch the analysis over-approximated, so it names every type-compatible function in the module rather than the one that runs. Those are reported below as their own class and are in no count above.
+  example.com/dep.Use — 1 site (1 production, 0 test)
+      production main.go:10  [call]  example.com/app.main
+
+Reached only through unresolved dispatch — not established use (0 symbols, 0 edges from 0 sites: 0 production, 0 test):
+
+Linked but not called (0 packages of this project import the module):
+
+Unreached — unmeasured: the store holds no call graph for any version of example.com/dep, so its public API was never enumerated and nothing about the module was measured; check the module path, then run: kanonarion fetch example.com/dep@v1.0.0 && kanonarion callgraph example.com/dep@v1.0.0
+
+unmeasured: types, constants and variables have no call-graph node, so no use of one appears anywhere in this report. List them with: kanonarion fetch example.com/dep@v1.0.0 && kanonarion interface example.com/dep@v1.0.0 && kanonarion interface-show example.com/dep@v1.0.0
+coverage: reached/not-reached is measured over recorded CALL EDGES in the stored call graph. Method values (a method referenced as a value rather than called) are not recorded as edges, so a symbol shown as not reached may still be referenced that way. Types, constants and variables have no call-graph node at all and are reported as unmeasured rather than as unreached.
+answer: RESOLVED-PRESENT — example.com/app own code reaches 1 symbol of example.com/dep@v1.0.0 at 1 site (1 production, 0 test)
+=== both/usage/--target host (exit 0)
+usage of example.com/dep@v1.0.0 by example.com/app@local
+notice: results restricted to the 2 module versions resolved by walk "01JS0NFRAMEM1SS0000000HOST1" (code scope, frame linux/amd64); ./go.mod was not re-resolved for this read, so an edit made to it since that walk is not reflected — kanonarion walk --gomod ./go.mod --target linux/amd64 records the current resolution
+graph: <digest>, Extracted, BUILT_WITH_BODIES, 3 node(s), 2 edge(s)
+
+Used — reached by a Direct edge from example.com/app own code (1 symbol, 1 site: 1 production, 0 test):
+  established use is a Direct call edge: one that names a unique concrete callee. An edge of any other confidence is an unresolved dispatch the analysis over-approximated, so it names every type-compatible function in the module rather than the one that runs. Those are reported below as their own class and are in no count above.
+  example.com/dep.Use — 1 site (1 production, 0 test)
+      production main.go:10  [call]  example.com/app.main
+
+Reached only through unresolved dispatch — not established use (0 symbols, 0 edges from 0 sites: 0 production, 0 test):
+
+Linked but not called (0 packages of this project import the module):
+
+Unreached — unmeasured: the store holds no call graph for any version of example.com/dep, so its public API was never enumerated and nothing about the module was measured; check the module path, then run: kanonarion fetch example.com/dep@v1.0.0 && kanonarion callgraph example.com/dep@v1.0.0
+
+unmeasured: types, constants and variables have no call-graph node, so no use of one appears anywhere in this report. List them with: kanonarion fetch example.com/dep@v1.0.0 && kanonarion interface example.com/dep@v1.0.0 && kanonarion interface-show example.com/dep@v1.0.0
+coverage: reached/not-reached is measured over recorded CALL EDGES in the stored call graph. Method values (a method referenced as a value rather than called) are not recorded as edges, so a symbol shown as not reached may still be referenced that way. Types, constants and variables have no call-graph node at all and are reported as unmeasured rather than as unreached.
+answer: RESOLVED-PRESENT — example.com/app own code reaches 1 symbol of example.com/dep@v1.0.0 at 1 site (1 production, 0 test)
+=== both/usage/--walk-id host (exit 0)
+usage of example.com/dep@v1.0.0 by example.com/app@local
+notice: results restricted to the 2 module versions resolved by walk "01JS0NFRAMEM1SS0000000HOST1" (code scope, frame linux/amd64)
+graph: <digest>, Extracted, BUILT_WITH_BODIES, 3 node(s), 2 edge(s)
+
+Used — reached by a Direct edge from example.com/app own code (1 symbol, 1 site: 1 production, 0 test):
+  established use is a Direct call edge: one that names a unique concrete callee. An edge of any other confidence is an unresolved dispatch the analysis over-approximated, so it names every type-compatible function in the module rather than the one that runs. Those are reported below as their own class and are in no count above.
+  example.com/dep.Use — 1 site (1 production, 0 test)
+      production main.go:10  [call]  example.com/app.main
+
+Reached only through unresolved dispatch — not established use (0 symbols, 0 edges from 0 sites: 0 production, 0 test):
+
+Linked but not called (0 packages of this project import the module):
+
+Unreached — unmeasured: the store holds no call graph for any version of example.com/dep, so its public API was never enumerated and nothing about the module was measured; check the module path, then run: kanonarion fetch example.com/dep@v1.0.0 && kanonarion callgraph example.com/dep@v1.0.0
+
+unmeasured: types, constants and variables have no call-graph node, so no use of one appears anywhere in this report. List them with: kanonarion fetch example.com/dep@v1.0.0 && kanonarion interface example.com/dep@v1.0.0 && kanonarion interface-show example.com/dep@v1.0.0
+coverage: reached/not-reached is measured over recorded CALL EDGES in the stored call graph. Method values (a method referenced as a value rather than called) are not recorded as edges, so a symbol shown as not reached may still be referenced that way. Types, constants and variables have no call-graph node at all and are reported as unmeasured rather than as unreached.
+answer: RESOLVED-PRESENT — example.com/app own code reaches 1 symbol of example.com/dep@v1.0.0 at 1 site (1 production, 0 test)
+=== both/usage/--walk-id wasip1/wasm (exit 0)
+usage of example.com/dep@v1.0.0 by example.com/app@local
+notice: results restricted to the 2 module versions resolved by walk "01JS0NFRAMEM1SS0000000WASM1" (code scope, frame wasip1/wasm)
+graph: <digest>, Extracted, BUILT_WITH_BODIES, 3 node(s), 2 edge(s)
+
+Used — reached by a Direct edge from example.com/app own code (1 symbol, 1 site: 1 production, 0 test):
+  established use is a Direct call edge: one that names a unique concrete callee. An edge of any other confidence is an unresolved dispatch the analysis over-approximated, so it names every type-compatible function in the module rather than the one that runs. Those are reported below as their own class and are in no count above.
+  example.com/dep.Use — 1 site (1 production, 0 test)
+      production main.go:10  [call]  example.com/app.main
+
+Reached only through unresolved dispatch — not established use (0 symbols, 0 edges from 0 sites: 0 production, 0 test):
+
+Linked but not called (0 packages of this project import the module):
+
+Unreached — unmeasured: the store holds no call graph for any version of example.com/dep, so its public API was never enumerated and nothing about the module was measured; check the module path, then run: kanonarion fetch example.com/dep@v1.0.0 && kanonarion callgraph example.com/dep@v1.0.0
+
+unmeasured: types, constants and variables have no call-graph node, so no use of one appears anywhere in this report. List them with: kanonarion fetch example.com/dep@v1.0.0 && kanonarion interface example.com/dep@v1.0.0 && kanonarion interface-show example.com/dep@v1.0.0
+coverage: reached/not-reached is measured over recorded CALL EDGES in the stored call graph. Method values (a method referenced as a value rather than called) are not recorded as edges, so a symbol shown as not reached may still be referenced that way. Types, constants and variables have no call-graph node at all and are reported as unmeasured rather than as unreached.
+answer: RESOLVED-PRESENT — example.com/app own code reaches 1 symbol of example.com/dep@v1.0.0 at 1 site (1 production, 0 test)
+=== both/capability/no flag (exit 0)
+example.com/app@local capabilities:
+  frame: linux/amd64
+  roots: all of this module's own code; test functions excluded (widen with --include-tests)
+  (no sensitive capabilities witnessed)
+  sensitive calls: none (no exported sensitive function called over a Direct edge)
+  co-location: no function collects and egresses, and no initialiser reaches both
+=== both/capability/--target wasip1/wasm (exit 0)
+example.com/app@local capabilities:
+  frame: wasip1/wasm
+  roots: all of this module's own code; test functions excluded (widen with --include-tests)
+  (no sensitive capabilities witnessed)
+  sensitive calls: none (no exported sensitive function called over a Direct edge)
+  co-location: no function collects and egresses, and no initialiser reaches both
+=== both/capability/--target host (exit 0)
+example.com/app@local capabilities:
+  frame: linux/amd64
+  roots: all of this module's own code; test functions excluded (widen with --include-tests)
+  (no sensitive capabilities witnessed)
+  sensitive calls: none (no exported sensitive function called over a Direct edge)
+  co-location: no function collects and egresses, and no initialiser reaches both
+=== both/capability/--walk-id host (exit 0)
+example.com/app@local capabilities:
+  frame: linux/amd64
+  roots: all of this module's own code; test functions excluded (widen with --include-tests)
+  (no sensitive capabilities witnessed)
+  sensitive calls: none (no exported sensitive function called over a Direct edge)
+  co-location: no function collects and egresses, and no initialiser reaches both
+=== both/capability/--walk-id wasip1/wasm (exit 0)
+example.com/app@local capabilities:
+  frame: wasip1/wasm
+  roots: all of this module's own code; test functions excluded (widen with --include-tests)
+  (no sensitive capabilities witnessed)
+  sensitive calls: none (no exported sensitive function called over a Direct edge)
+  co-location: no function collects and egresses, and no initialiser reaches both
+=== both/callgraph-show/no flag (exit 0)
+example.com/app@local  [CHA]  Extracted
+  fidelity: BUILT_WITH_BODIES   source: worktree   kind: Library   toolchain: not recorded  (tree analysed-sha256:t)
+  frame: linux/amd64
+  analyser: not recorded — this record does not name the library that type-checked it and built its SSA
+  test scope: analysed — 0 of 3 nodes are test declarations
+  reference scope: analysed — 0 of 2 edges record a function value being taken, not called
+  interfaces: 1 declared, 1 implementations recorded (query with 'kanonarion implementers <interface-id>')
+Legend: [api] exported symbol  [external] outside this module  [test] declared in a _test.go file  (no tag) unexported
+
+Nodes (3 total, showing 3):
+  example.com/app.(Dog).Speak [api]
+  example.com/app.main
+  example.com/dep.Use [external] [api]
+
+Edges (2 total, showing 2):
+  example.com/app.main → example.com/app.(Dog).Speak  [Direct]
+  example.com/app.main → example.com/dep.Use  [Direct]
+=== both/callgraph-show/--target wasip1/wasm (exit 0)
+example.com/app@local  [CHA]  Extracted
+  fidelity: BUILT_WITH_BODIES   source: worktree   kind: Library   toolchain: not recorded  (tree analysed-sha256:t)
+  frame: wasip1/wasm
+  analyser: not recorded — this record does not name the library that type-checked it and built its SSA
+  test scope: analysed — 0 of 3 nodes are test declarations
+  reference scope: analysed — 0 of 2 edges record a function value being taken, not called
+  interfaces: 1 declared, 1 implementations recorded (query with 'kanonarion implementers <interface-id>')
+Legend: [api] exported symbol  [external] outside this module  [test] declared in a _test.go file  (no tag) unexported
+
+Nodes (3 total, showing 3):
+  example.com/app.(Dog).Speak [api]
+  example.com/app.main
+  example.com/dep.Use [external] [api]
+
+Edges (2 total, showing 2):
+  example.com/app.main → example.com/app.(Dog).Speak  [Direct]
+  example.com/app.main → example.com/dep.Use  [Direct]
+=== both/callgraph-show/--target host (exit 0)
+example.com/app@local  [CHA]  Extracted
+  fidelity: BUILT_WITH_BODIES   source: worktree   kind: Library   toolchain: not recorded  (tree analysed-sha256:t)
+  frame: linux/amd64
+  analyser: not recorded — this record does not name the library that type-checked it and built its SSA
+  test scope: analysed — 0 of 3 nodes are test declarations
+  reference scope: analysed — 0 of 2 edges record a function value being taken, not called
+  interfaces: 1 declared, 1 implementations recorded (query with 'kanonarion implementers <interface-id>')
+Legend: [api] exported symbol  [external] outside this module  [test] declared in a _test.go file  (no tag) unexported
+
+Nodes (3 total, showing 3):
+  example.com/app.(Dog).Speak [api]
+  example.com/app.main
+  example.com/dep.Use [external] [api]
+
+Edges (2 total, showing 2):
+  example.com/app.main → example.com/app.(Dog).Speak  [Direct]
+  example.com/app.main → example.com/dep.Use  [Direct]

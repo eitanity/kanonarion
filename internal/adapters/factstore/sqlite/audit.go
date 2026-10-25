@@ -34,23 +34,50 @@ const auditTimeFormat = "2006-01-02T15:04:05.000000000Z07:00"
 // verifier. The JSONL is line-oriented so it can be grepped or shipped to
 // external tooling.
 type AuditLog struct {
-	mu   sync.Mutex
-	path string
+	mu      sync.Mutex
+	path    string
+	created bool
 }
 
-// NewAuditLog creates an AuditLog writing to path. On Linux, a best-effort
-// attempt is made to set the append-only attribute via chattr +a (T9).
-func NewAuditLog(path string) (*AuditLog, error) {
+// NewAuditLog returns an AuditLog writing to path. Nothing touches the disk
+// until Ensure or the first entry: a read or a refused open must leave no log
+// behind.
+func NewAuditLog(path string) *AuditLog {
+	return &AuditLog{path: path}
+}
+
+// Ensure creates the log now if it does not exist yet. A writable open calls
+// it so a store that exists has a ledger; entries call it implicitly.
+func (a *AuditLog) Ensure() error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.ensureLocked()
+}
+
+func (a *AuditLog) ensureLocked() error {
+	if a.created {
+		return nil
+	}
+	if err := createAuditLog(a.path); err != nil {
+		return err
+	}
+	a.created = true
+	return nil
+}
+
+// createAuditLog makes the file the first entry goes into. On Linux, a
+// best-effort attempt is made to set the append-only attribute via chattr +a.
+func createAuditLog(path string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
-		return nil, fmt.Errorf("creating audit log dir: %w", err)
+		return fmt.Errorf("creating audit log dir: %w", err)
 	}
 	// Create the file if it does not exist so chattr has a target.
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600) // #nosec G304 -- path constructed from operator-controlled store root
 	if err != nil {
-		return nil, fmt.Errorf("creating audit log: %w", err)
+		return fmt.Errorf("creating audit log: %w", err)
 	}
 	if err := f.Close(); err != nil {
-		return nil, fmt.Errorf("closing audit log after create: %w", err)
+		return fmt.Errorf("closing audit log after create: %w", err)
 	}
 	// Best-effort: set append-only filesystem attribute on Linux. Fails on non-ext4 and in CI.
 	//
@@ -59,7 +86,7 @@ func NewAuditLog(path string) (*AuditLog, error) {
 	// is one ioctl on a path this process just created, with no context in
 	// scope, no grandchildren and nothing to strand.
 	_ = exec.Command("chattr", "+a", path).Run() /* #nosec G204 -- chattr path is a fixed string */ //nolint:errcheck // best-effort, as above
-	return &AuditLog{path: path}, nil
+	return nil
 }
 
 // auditEntry is the envelope for a fact-record write. The EventType field is
@@ -160,6 +187,9 @@ func (a *AuditLog) appendLine(line []byte) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
+	if err := a.ensureLocked(); err != nil {
+		return err
+	}
 	f, err := os.OpenFile(a.path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600) // #nosec G304 -- path constructed from operator-controlled store root
 	if err != nil {
 		return fmt.Errorf("opening audit log: %w", err)
@@ -184,13 +214,12 @@ type AuditingStore struct {
 }
 
 // NewAuditingStore constructs an AuditingStore. auditPath is the JSONL log path.
-func NewAuditingStore(inner *Store, auditPath string) (*AuditingStore, error) {
-	al, err := NewAuditLog(auditPath)
-	if err != nil {
-		return nil, err
-	}
-	return &AuditingStore{inner: inner, audit: al}, nil
+func NewAuditingStore(inner *Store, auditPath string) *AuditingStore {
+	return &AuditingStore{inner: inner, audit: NewAuditLog(auditPath)}
 }
+
+// EnsureAuditLog creates the store's audit log now; see AuditLog.Ensure.
+func (s *AuditingStore) EnsureAuditLog() error { return s.audit.Ensure() }
 
 // Close closes the underlying database.
 func (s *AuditingStore) Close() error { return s.inner.Close() }
@@ -229,6 +258,11 @@ func (s *AuditingStore) ListFetchRecords(ctx context.Context, coord coordinate.M
 	return s.inner.ListFetchRecords(ctx, coord, pv)
 }
 
+// SupersededLocalArtefacts delegates to the inner store.
+func (s *AuditingStore) SupersededLocalArtefacts(ctx context.Context, coord coordinate.ModuleCoordinate) (map[string]bool, error) {
+	return s.inner.SupersededLocalArtefacts(ctx, coord) //nolint:wrapcheck // the inner store names the coordinate it read
+}
+
 // ComposeFetchRecord delegates to the inner store, carrying the optional
 // ports.FactRecordComposer capability through the audit decorator. A decorator
 // that dropped it would make every extraction stage refuse with
@@ -251,8 +285,9 @@ func (s *AuditingStore) ListAttestations(ctx context.Context, coord coordinate.M
 }
 
 var (
-	_ ports.FactStore          = (*AuditingStore)(nil)
-	_ ports.FactRecordLister   = (*AuditingStore)(nil)
-	_ ports.FactRecordComposer = (*AuditingStore)(nil)
-	_ ports.AttestationStore   = (*AuditingStore)(nil)
+	_ ports.FactStore                = (*AuditingStore)(nil)
+	_ ports.FactRecordLister         = (*AuditingStore)(nil)
+	_ ports.FactRecordComposer       = (*AuditingStore)(nil)
+	_ ports.SupersededArtefactLister = (*AuditingStore)(nil)
+	_ ports.AttestationStore         = (*AuditingStore)(nil)
 )

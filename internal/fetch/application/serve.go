@@ -2,6 +2,7 @@ package application
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/eitanity/kanonarion/internal/audit"
@@ -78,9 +79,10 @@ type ServeResult struct {
 // verifying on a miss. On a cache hit it confirms the referenced blob is still
 // present; if it has been evicted, it re-fetches (forcing past the cache) so the
 // returned Handle always names a blob that exists in the store. It returns an
-// error only on infrastructure failure (proxy, VCS, storage) — a module that
-// fails integrity verification still returns successfully with the failing
-// VerificationStatus set, so the caller, not Serve, decides whether to serve it.
+// error on infrastructure failure (proxy, VCS, storage) and on held bytes the
+// store refuses as altered — a module that fails integrity verification still
+// returns successfully with the failing VerificationStatus set, so the caller,
+// not Serve, decides whether to serve it.
 func (uc *ServeModuleUseCase) Serve(ctx context.Context, req ServeRequest) (ServeResult, error) {
 	res, err := uc.fetch.Execute(ctx, FetchRequest{
 		Coordinate:    req.Coordinate,
@@ -133,6 +135,9 @@ func (uc *ServeModuleUseCase) Serve(ctx context.Context, req ServeRequest) (Serv
 	if !present {
 		return ServeResult{}, fmt.Errorf("fetched %s but its content blob %q is absent from the store", req.Coordinate, identity)
 	}
+	if err := uc.confirmServable(ctx, res.Record.FactRecord, identity); err != nil {
+		return ServeResult{}, err
+	}
 
 	status := domain2.VerificationStatus(res.Record.VerificationStatus)
 	if err := uc.recordServeOutcome(res.Record.FactRecord, status); err != nil {
@@ -145,6 +150,36 @@ func (uc *ServeModuleUseCase) Serve(ctx context.Context, req ServeRequest) (Serv
 		Record:             res.Record,
 		FromCache:          res.FromCache,
 	}, nil
+}
+
+// confirmServable reads the zip through the verifying store before its identity
+// is handed out. Held bytes the store refuses as altered are audited as
+// verification_failed and refused here: a caller streaming the identity would
+// otherwise serve them.
+func (uc *ServeModuleUseCase) confirmServable(ctx context.Context, rec domain2.FactRecord, identity ports.BlobIdentity) error {
+	rc, err := uc.blobs.Get(ctx, identity)
+	if err == nil {
+		_ = rc.Close() //nolint:errcheck // opened only to verify; nothing was read
+		return nil
+	}
+	if !errors.Is(err, ports.ErrBlobTampered) {
+		return fmt.Errorf("opening content blob of %s: %w", rec.Coordinate(), err)
+	}
+	refusal := fmt.Errorf("serving %s: %w", rec.Coordinate(), ports.AttributeBlobTamper(err, rec.Coordinate()))
+	if uc.audit == nil {
+		return refusal
+	}
+	event := audit.Event{Type: audit.EventVerificationFailed, Payload: map[string]any{
+		"module":              rec.ModulePath,
+		"version":             rec.ModuleVersion,
+		"pipeline_version":    rec.PipelineVersion,
+		"verification_status": rec.VerificationStatus,
+		"reason":              err.Error(),
+	}}
+	if aerr := uc.audit.RecordEvent(event); aerr != nil {
+		return errors.Join(refusal, fmt.Errorf("recording serve refusal for %s: %w", rec.Coordinate(), aerr))
+	}
+	return refusal
 }
 
 // recordServeOutcome appends the assurance-log event for a resolved coordinate:

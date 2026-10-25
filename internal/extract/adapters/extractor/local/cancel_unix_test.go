@@ -31,7 +31,7 @@ func TestCallgraph_ChildKilledByTheCancellationIsNotOutOfMemory(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(t.Context())
 	time.AfterFunc(200*time.Millisecond, cancel)
-	res, eerr := adapter.Extract(ctx, coord, "callgraph", false, "")
+	res, eerr := adapter.Extract(ctx, coord, "callgraph", false, "", false)
 	if eerr != nil {
 		t.Fatalf("Extract failed: %v", eerr)
 	}

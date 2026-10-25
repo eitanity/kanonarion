@@ -3,6 +3,7 @@ package application_test
 import (
 	"context"
 	"errors"
+	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
 	"strings"
 	"testing"
 	"time"
@@ -1124,5 +1125,40 @@ func TestLocalReachability_SupersededOnlyModuleNamesItsOwnReason(t *testing.T) {
 	}
 	if got := reasons["example.com/unknown"]; got != domain.UncoveredNoStoredRecord {
 		t.Errorf("reason for the unknown module = %q, want UncoveredNoStoredRecord", got)
+	}
+}
+
+// The result names the frame it was wired for and the builder behind each
+// artefact, on the skipped path and the probed one alike.
+func TestLocalReachability_ResultStatesFrameAndBuilder(t *testing.T) {
+	frame := cgdomain.BuildFrame{GOOS: "linux", GOARCH: "arm", GOARM: "6", TinyGoTarget: "pico", TinyGoVersion: "0.42.0"}
+	skipped, err := makeUC(&fakeSnapshotBuilder{snap: makeSnap("example.com/app")}, &fakeBuildLister{},
+		&fakeVulnLoader{}, &fakeProber{}).WithFrame(frame).Execute(context.Background(), "/ws")
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !cgdomain.SameFrame(skipped.Frame, frame) || skipped.ProbeBuilder != "" {
+		t.Errorf("skipped probe: frame %+v builder %q", skipped.Frame, skipped.ProbeBuilder)
+	}
+
+	coord := mustCoord(t, "example.com/dep", "v1.0.0")
+	probed, err := makeUC(
+		&fakeSnapshotBuilder{snap: makeSnap("example.com/app")},
+		&fakeBuildLister{modules: []domain.BuildModule{{Path: "example.com/dep", Version: "v1.0.0"}}},
+		&fakeVulnLoader{findings: map[coordinate.ModuleCoordinate][]ports.VulnFinding{
+			coord: {{ID: "GHSA-0001", AffectedSymbols: []string{"Vulnerable"}}},
+		}},
+		&fakeProber{result: ports.SymbolProbeResult{
+			Kind: domain.ProbeKindBinary, Builder: domain.ProbeBuilderTinyGo,
+			BinarySymbols: map[string]struct{}{"example.com/dep.Vulnerable": {}},
+			Binaries:      []ports.ProbedBinary{{ImportPath: "example.com/app", Builder: domain.ProbeBuilderTinyGo}},
+		}},
+	).WithFrame(frame).Execute(context.Background(), "/ws")
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !cgdomain.SameFrame(probed.Frame, frame) || probed.ProbeBuilder != domain.ProbeBuilderTinyGo ||
+		len(probed.Coverage.Binaries) != 1 || probed.Coverage.Binaries[0].Builder != domain.ProbeBuilderTinyGo {
+		t.Errorf("probed: frame %+v builder %q binaries %+v", probed.Frame, probed.ProbeBuilder, probed.Coverage.Binaries)
 	}
 }

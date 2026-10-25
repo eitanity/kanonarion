@@ -72,10 +72,11 @@ stages:
       - github.com
 ```
 
-Stage fields other than `allowed_vcs_hosts` are whole-struct replacement: a
-stage present in the file is taken as authored, and an omitted boolean is
-`false`. That is why the shipped `default.yaml` writes `follow_replace: true`
-and `follow_indirect: true` explicitly.
+Stages are `fetch`, `license`, `interface`, `callgraph` and `example`. A key the
+schema does not define, stage names included, is a load error naming its path
+and the nearest known key. A stage in the file is taken as authored: an omitted
+boolean is `false`, so the shipped `default.yaml` sets `follow_replace` and
+`follow_indirect` explicitly.
 
 ## Trusted VCS forges (`allowed_vcs_hosts`)
 
@@ -130,8 +131,7 @@ The field belongs to the `fetch` stage and nowhere else - that is where VCS
 cross-verification runs. Putting it under `license`, `callgraph` or any other
 stage is a load error naming the stage, not a no-op: a policy that appears to
 narrow trust while every forge stays trusted is the exact silent weakening this
-field exists to prevent. Unknown stage *names* are still accepted for forward
-compatibility; it is the misplaced trust list that is refused.
+field exists to prevent.
 
 ### Entry format
 

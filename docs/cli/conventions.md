@@ -8,7 +8,7 @@ Per-command pages link back here instead of restating these rules.
 
 - All commands write logs to **stderr** and data to **stdout**.
 - Pass `--json` to get machine-readable output on stdout. Log lines remain on stderr.
-- `--store-root` defaults to `~/.kanonarion`. It holds the SQLite database, blob store, sumdb cache, audit log, and `config.yaml`.
+- `--store-root` defaults to `~/.kanonarion`. With the default (SQLite) backend it holds the SQLite database, blob store, sumdb cache, audit log, and `config.yaml`.
 - The `<module@version>` argument follows standard Go module coordinate syntax, e.g. `github.com/spf13/cobra@v1.8.1`.
 - `--gomod` takes the path of an existing `go.mod`. A path that is not there is refused before any work is done - see [A `--gomod` path that does not exist](#a---gomod-path-that-does-not-exist).
 
@@ -19,6 +19,19 @@ Flag values take precedence over store config, which in turn takes precedence ov
 ```
 flag > <store-root>/config.yaml > built-in default
 ```
+
+Where the store and its configuration are found is resolved first, in this order:
+
+| What | Resolved from |
+|---|---|
+| Store root | `--store-root`, else `KANONARION_STORE`, else `~/.kanonarion` |
+| Configuration file | `--config`, else `KANONARION_CONFIG`, else `<store-root>/config.yaml` |
+| Storage backend | `storage.backend` in that file, else `sqlite` |
+
+The backend has no flag and no environment variable: it is chosen only in the
+configuration file, together with any settings of its own, and a backend the
+binary did not register is refused with exit `20`. See
+[`config`](config.md#choosing-the-storage-backend).
 
 On first run kanonarion writes a fully commented `config.yaml` to your store root with all defaults populated. Edit it to set sticky preferences. When a new binary version adds sections, they are appended non-destructively on the next invocation - existing content and comments are preserved.
 
@@ -91,7 +104,7 @@ stages:
     follow_indirect: true
 ```
 
-The `stages` map is keyed by stage name. Only `fetch` is used in Phase 1; additional stages (`licence`, `interface`) will be consumed in later phases and are preserved for forward compatibility.
+The `stages` map is keyed by stage name (`fetch`, `license`, `interface`, `callgraph`, `example`); any other key is refused.
 
 Example policies are available in `docs/examples/policies/`.
 
@@ -108,15 +121,25 @@ which one a walk records. The two kinds of command behave differently:
 
 The platform comes from the invocation, never from the environment. The
 commands that RESOLVE a build — `walk`, `audit`, `sbom`, `vuln-scan`, `inspect`
-— and the commands that READ one by manifest — `context`, `callers`, `callees`,
-`implementers`, `examples-find`, `symbol-context`, `symbol-find`, `usage`,
-`vuln-show`, `reachability`, `dependents` — all take `--target GOOS/GOARCH` (or
-`--goos`/`--goarch`), and with no flag the platform is the measured host —
+— the commands that extract or show one call graph — `local`, `callgraph`,
+`callgraph-show` — the live probe `reachability --local`, which lists, seeds and
+builds in the declared frame — and the commands that READ one by manifest — `context`,
+`callers`, `callees`, `implementers`, `examples-find`, `symbol-context`,
+`symbol-find`, `usage`, `vuln-show`, `reachability`, `dependents` — all take
+`--target GOOS/GOARCH` (or `--goos`/`--goarch`), and with no flag the platform is the measured host —
 `GOOS` and `GOARCH` exported in the calling shell reach no resolution. See
 [Declaring the build target](walk.md#declaring-the-build-target---target). The
 toolchain is not declarable: it comes from the project's own directory, because
 only the go command knows how the `toolchain` directive and any `GOTOOLCHAIN`
 switch settled.
+
+Call-graph records carry their frame from pipeline `0.11.0`, and every call-graph
+read selects the frame its invocation declares, or this host's. From pipeline
+`0.12.0` a record under `--tinygo` holds TinyGo's own packages with bodies, and from `0.13.0`
+it also holds the calls TinyGo's compiler inserts (edge kind `compiler-inserted`), the bodies
+`//go:linkname` supplies (edge kind `linkname`) and the interrupt handlers installed by
+`interrupt.New`. Interface records
+are measured in the host frame, and examples records apply no build constraint.
 
 `--target` means the build target on every command that shows it. Two commands
 used it for something else and now spell those flags differently: `walk-list
@@ -528,17 +551,15 @@ The same statement answers a **single-record selector** that matched nothing —
 a command given one name that is not in the store. Those exit `4` and carry the
 statement on the error rather than on stdout, on one line, so the data channel
 stays the data channel; under `--json` the object is emitted on stderr as well.
-The selectors are `walk-list --walk-id`, `walk-list --latest-success`,
-`directives show`, `vuln-snapshot-show`, `walk-show`, `verification-coverage`,
-`dependents --walk-id`, `context --walk-id`, `walk-diff`, `vuln-scan-show`,
-`vuln-scan-diff`, `examples-show`, `examples-list <module>`, `interface-show`,
+The selectors are a walk id on any command, `walk-list --latest-success`,
+`directives show`, `vuln-snapshot-show`, `vuln-scan-show`, `vuln-scan-diff`, `examples-show`, `examples-list <module>`, `interface-show`,
 `interface-list <module>`, `use`, `license --recursive` and `license-compat`.
 `symbol-find` and `symbol-context` exit `4` the same way when the interface
 store is empty, or when a module that could answer is held only at a superseded
 pipeline (see [`symbol-find`](interface.md#symbol-find)).
 
-Every command that reads a walk by ID answers a missing one with the identical
-sentence, whichever command it was.
+Every command answers a walk id the store does not hold with the identical
+sentence, unless scan runs or SBOMs recorded under it remain.
 
 `walk-diff` and `vuln-scan-diff` take two IDs, so they name **which** of them
 is missing — or both when both are. The corpus counted is the store's, not the
@@ -707,7 +728,8 @@ the offset stepped over.
 
 ## Store layout
 
-All state lives under `--store-root` (default `~/.kanonarion`):
+With the default (SQLite) backend, all state lives under `--store-root`
+(default `~/.kanonarion`):
 
 ```
 ~/.kanonarion/
@@ -780,7 +802,7 @@ and repeated in that command's `--help`.
 | 3 | Cancelled | The context was cancelled before the work completed, including a run interrupted by `SIGINT` (Ctrl-C), `SIGTERM` or `SIGHUP` |
 | 4 | NotFound | A record requested by ID or coordinate does not exist. The message names the command that produces it |
 | 5 | Policy | A governance or publication gate fired on real findings. The scan succeeded and the finding is genuine |
-| 10 | Integrity | Recorded evidence is in doubt: a record failed its content-hash check, or two records for one coordinate diverge. Every domain that stores records raises it — walk, fetch, extraction run, call graph, interface, licence, example, vulnerability, advisory snapshot, stdlib facts — and the code does not depend on which one did |
+| 10 | Integrity | Recorded evidence is in doubt: a record failed its content-hash check, two records for one coordinate diverge, or a stored artefact does not hash to its identity. Every domain that stores records raises it — walk, fetch, extraction run, call graph, interface, licence, example, vulnerability, advisory snapshot, stdlib facts — and the code does not depend on which one did |
 | 20 | Config | The command never got as far as an answer: malformed argument, unparseable coordinate, missing toolchain, absent policy *file*, a store root that does not exist under a command that only reads, a `config.yaml` the loader rejected, or a store whose schema is newer than this binary |
 
 The distinction that matters to an automation caller is **4 vs 5 vs 20**. A 4
@@ -814,13 +836,13 @@ code says the invocation is what has to change.
 
 | Code | Commands |
 |---|---|
-| 1 | `walk`, `inspect` (partial closure); `extract` (the run is recorded partial — the stages that ran ARE stored, and the failed-stage breakdown names the rest); `callgraph`, `local` (a `Partial` graph — it IS still an answer, and the failed packages line scopes what it does not cover); `sbom` (a component with no licence identity — the document IS still written and names it); `license-compat` (confirmed incompatible pairs); `use` (some modules with a stored artefact did not reach the module cache); `vuln-scan` (some modules in the walk were not analysed) |
+| 1 | `walk`, `inspect` (partial closure); `extract` (the run is recorded partial — the stages that ran ARE stored, and the failed-stage breakdown names the rest); `callgraph`, `local` (a `Partial` graph, still an answer; the failed packages line scopes it); `sbom` (a component with no licence identity — the document IS still written and names it); `license-compat` (confirmed incompatible pairs); `use` (some modules with a stored artefact did not reach the module cache); `vuln-scan` (some modules in the walk were not analysed); `audit` (its vulnerability scan failed or was partial) |
 | 2 | `walk`, `inspect` (target unfetchable); `callgraph`, `local` (no graph at all: `LoadFailed`, or a `Partial` that measured no function); `extract` (the run itself failed and produced no usable stage); `license-compat` (unknown pairs, never silently "compatible"); `license-compat` (root has a licence record but no SPDX identity); `use` (no module reached the module cache); `vuln-scan` (no module in the walk was analysed) |
 | 3 | every command, when interrupted by `SIGINT`, `SIGTERM` or `SIGHUP` - whatever the interrupted step would otherwise have exited with (see [Interrupting a run](#interrupting-a-run)) |
-| 4 | `callgraph`, `interface`, `examples`, `license`, `native` (a module the store has not fetched: the message names `kanonarion fetch <module>@<version>`, which supplies the bytes; for a project's own module it names the walk instead); `walk-show`, `walk-list --walk-id`, `walk-diff`, `dependents`, `context --walk-id`, `verification-coverage`, `vuln-show`, `vuln --history`, `scan-show`, `vuln-scan-diff`, `snapshot-show`, `vuln-scan --snapshot`, `reachability --vuln`, `reachability --local` (the build has modules and the probe covered none of them; the answer is still printed), `callgraph-show`, `interface-show`, `interface-list`, `symbol-find`, `symbol-context` (the interface store is empty, or a module that could answer is held only at a superseded pipeline version; stdout is empty), `examples-show`, `examples-list`, `license`, `license-compat`, `license-diff`, `directives-show`, `directives-diff`, `use`; `vuln-scan-show` (a run the store holds, some of whose modules produced no record this build serves — the report is still printed); `capability` (no call graph is stored for the coordinate, at this build's pipeline version, and the message names the invocation that produces it with the coordinate filled in); `usage`, `callers`, `callees`, `implementers` (the call-graph record that would answer is one this build does not serve — the store holds the module only at a superseded pipeline version, or the build resolves it to a version nothing has analysed — and the message names the invocation that produces it with the coordinate filled in, `kanonarion fetch example.com/mod@v1.2.0 && kanonarion callgraph example.com/mod@v1.2.0`, or `kanonarion local` for a worktree) |
+| 4 | any command given a walk id the store does not hold; `callgraph`, `interface`, `examples`, `license`, `native` (a module the store has not fetched: the message names `kanonarion fetch <module>@<version>`, which supplies the bytes; for a project's own module it names the walk instead); `vuln-show`, `vuln --history`, `scan-show`, `vuln-scan-diff`, `snapshot-show`, `vuln-scan --snapshot`, `reachability --vuln`, `reachability --local` (the build has modules and the probe covered none of them; the answer is still printed), `callgraph-show`, `interface-show`, `interface-list`, `symbol-find`, `symbol-context` (the interface store is empty, or a module that could answer is held only at a superseded pipeline version; stdout is empty), `examples-show`, `examples-list`, `license`, `license-compat`, `license-diff`, `directives-show`, `directives-diff`, `use`; `vuln-scan-show` (a run the store holds, some of whose modules produced no record this build serves — the report is still printed); `capability` (no call graph is stored for the coordinate, at this build's pipeline version and the read's build frame, and the message names the invocation that produces it with the coordinate filled in); `usage`, `callers`, `callees`, `implementers` (the call-graph record that would answer is one this build does not serve — the store holds the module only at a superseded pipeline version, or the build resolves it to a version nothing has analysed — and the message names the invocation that produces it with the coordinate filled in, `kanonarion fetch example.com/mod@v1.2.0 && kanonarion callgraph example.com/mod@v1.2.0`, or `kanonarion local` for a worktree); `callers`, `callees`, `implementers`, `usage`, `capability` (a frame miss: the store holds the module's call graph only under build frames other than the read's, and the message names the frames held, the flag that reads each — `--target GOOS/GOARCH` or `--tinygo <target>` — and the invocation that produces the read's frame) |
 | 5 | `audit` (unknown licence blocked by policy), `directives`, `godebug`, `vendor`, `fips`, `notice` (modules require human review); `interface-diff --used-by` (the consumer's own code calls a declaration the bump removes or changes) |
-| 10 | any command consuming a record whose content hash does not verify, or that meets two records for one coordinate which disagree — a walk node, a fetched artefact, an extraction run, a call graph, an interface, a licence, an example, a vulnerability record, an advisory snapshot or the stdlib facts. A store-inspection command reports the same condition and exits 0 (see [Store layout](#store-layout)); a consuming command fails closed |
-| 20 | `callgraph`, `local`, `context <dir> --symbol`, `interface`, `examples`, `extract` (this kanonarion was built with a Go older than the code requires, so it could not read the source: the remedy is a kanonarion built with a new enough Go, which no invocation of this binary can run. `callgraph`, `local`, `interface`, `examples` and `extract` still store the record they made); every command, for a malformed invocation, or for a `config.yaml` the loader rejected (except `config init`/`show`/`get`/`set` and `store config show`, which are how the file is seen and repaired — see [`config`](config.md#when-the-config-file-is-rejected)); `callers`, `callees`, `implementers` (a symbol or interface that is in no served graph at all — a typo, unexported or unreachable code, or a module never analysed: the invocation named something that is not there. A module nothing has analysed cannot be named as a coordinate either — the store knows no version for it — so the refusal shows the form of the producing command, `kanonarion fetch <module>@<version> && kanonarion callgraph <module>@<version>`, rather than one that can be run; that is why it is a 20 and not a 4) |
+| 10 | any command consuming a record whose content hash does not verify, or that meets two records for one coordinate which disagree — a walk node, a fetched artefact, an extraction run, a call graph, an interface, a licence, an example, a vulnerability record, an advisory snapshot or the stdlib facts — or a record whose seal verifies but which is filed under a key or a column value its seal does not state (`record filed under <key> is sealed as <key>`, or `<column> <value> does not match the sealed <field> <value>`, naming the table and the store). A store-inspection command reports the same condition and exits 0 (see [Store layout](#store-layout)); a consuming command fails closed. `extract`, `license`, `interface`, `callgraph`, `native`, `examples`, `vuln-scan`, `audit`, `inspect`, `vendor`, `notice` and `use` (a stored artefact that does not hash to its identity: the module zip or go.mod in the store was altered after it was verified. The message is `stored artefact <identity> does not hash to its identity (observed <h1>): the store's copy was altered after it was verified; re-fetch it with kanonarion fetch <module>@<version> --force`; nothing is derived from the bytes and nothing is copied out of the store, and the refusal is appended to the assurance log as `verification_failed`. `kanonarion fetch <module>@<version> --force` downloads a clean copy and replaces the altered one) |
+| 20 | `fetch`, `walk`, `inspect` (a module matching `GOPRIVATE`/`GONOPROXY` named on its own, with no project `go.sum` to verify it against - see [`fetch`: private modules](fetch.md#private-modules-goprivate-gonoproxy)); `callgraph`, `local`, `context <dir> --symbol`, `interface`, `examples`, `extract` (this kanonarion was built with a Go older than the code requires, so it could not read the source: the remedy is a kanonarion built with a new enough Go, which no invocation of this binary can run. `callgraph`, `local`, `interface`, `examples` and `extract` still store the record they made); every command, for a malformed invocation, or for a `config.yaml` the loader rejected (except `config init`/`show`/`get`/`set` and `store config show`, which are how the file is seen and repaired — see [`config`](config.md#when-the-config-file-is-rejected)); `callers`, `callees`, `implementers` (a symbol or interface that is in no served graph of the read's build frame — a typo, unexported or unreachable code, or a module never analysed: the invocation named something that is not there. A module nothing has analysed cannot be named as a coordinate either — the store knows no version for it — so the refusal shows the form of the producing command, `kanonarion fetch <module>@<version> && kanonarion callgraph <module>@<version>`, rather than one that can be run; that is why it is a 20 and not a 4) |
 
 A policy gate is only a 5 when it *fired on findings*. A policy **file** that
 cannot be found or parsed is a 20 — that is a broken invocation, not a verdict.

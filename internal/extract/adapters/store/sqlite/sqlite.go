@@ -123,9 +123,10 @@ func (s *Store) PutExtractionRun(ctx context.Context, run domain.ExtractionRun) 
 // cannot reproduce is *recordseal.NothingServable.
 func (s *Store) GetExtractionRun(ctx context.Context, id string) (domain.ExtractionRun, error) {
 	var data []byte
+	var walkID string
 	err := s.db.DB().QueryRowContext(ctx,
-		`SELECT raw_record FROM extraction_runs WHERE id = ?`, id,
-	).Scan(&data)
+		`SELECT walk_id, raw_record FROM extraction_runs WHERE id = ?`, id,
+	).Scan(&walkID, &data)
 
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.ExtractionRun{}, ports.ErrExtractionRunNotFound
@@ -151,8 +152,26 @@ func (s *Store) GetExtractionRun(ctx context.Context, id string) (domain.Extract
 		return domain.ExtractionRun{}, &recordseal.NothingServable{Kind: RecordKind, ID: id,
 			Aside: &recordseal.SetAside{Rows: []recordseal.SetAsideRow{row}}}
 	}
-
+	if merr := checkFiled(id, walkID, run); merr != nil {
+		return domain.ExtractionRun{}, merr
+	}
 	return run, nil
+}
+
+// misfiledRemedy is what clears a misfiled extraction run row. A run row is
+// rewritten only by the run that owns it, so nothing clears another run's bytes.
+const misfiledRemedy = "no kanonarion command clears it: every read of this run id meets the row; " +
+	"restore the store from a copy taken before the row was moved, or run kanonarion extract again for a new run id"
+
+// checkFiled compares the row's id and walk id with the values sealed in run.
+// Its seal proves the bytes and not where they were filed.
+func checkFiled(id, walkID string, run domain.ExtractionRun) error {
+	if err := recordseal.CheckFiled(RecordKind, "extraction_runs", misfiledRemedy,
+		recordseal.Key(id, run.ID),
+		recordseal.Column("walk_id", "walk_id", walkID, run.WalkID)); err != nil {
+		return fmt.Errorf("%w: %w", ports.ErrExtractionRunIntegrity, err)
+	}
+	return nil
 }
 
 func (s *Store) ListExtractionRuns(ctx context.Context, filter ports.ExtractionRunFilter) ([]ports.ExtractionRunSummary, error) {
@@ -202,6 +221,9 @@ func (s *Store) ListExtractionRuns(ctx context.Context, filter ports.ExtractionR
 		run, err := s.hasher.Unmarshal(row.RawRecord)
 		if err != nil {
 			return nil, fmt.Errorf("decoding raw_record of extraction run %s: %w", row.ID, err)
+		}
+		if merr := checkFiled(row.ID, row.WalkID, run); merr != nil {
+			return nil, merr
 		}
 		summary.ModuleCount = len(run.PerModuleResults)
 

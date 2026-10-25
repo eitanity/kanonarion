@@ -8,7 +8,8 @@ exit 0
     "present": false,
     "rejected": false
   },
-  "version": "2",
+  "config_hash": "sha256:a37af31e289032660d55309642f99f5ed7112a1715b72fdda9716a29cc7eb7cd",
+  "version": "3",
   "preferences": {
     "json": false,
     "log_level": "warn",
@@ -109,10 +110,17 @@ exit 0
     "allowed_vcs_hosts": null,
     "enforcing": false
   },
+  "storage": {
+    "backend": "sqlite",
+    "sumdb_cache": ""
+  },
+  "vulndb": {
+    "url": ""
+  },
   "settings": [
     {
       "key": "version",
-      "value": "2",
+      "value": "3",
       "source": "default"
     },
     {
@@ -293,6 +301,21 @@ exit 0
     {
       "key": "fetch_policy.allowed_vcs_hosts",
       "value": "(unset: built-in host set, advisory)",
+      "source": "default"
+    },
+    {
+      "key": "storage.backend",
+      "value": "sqlite",
+      "source": "default"
+    },
+    {
+      "key": "storage.sumdb_cache",
+      "value": "(unset: sumdb under the store root)",
+      "source": "default"
+    },
+    {
+      "key": "vulndb.url",
+      "value": "(unset: https://vuln.go.dev)",
       "source": "default"
     }
   ]

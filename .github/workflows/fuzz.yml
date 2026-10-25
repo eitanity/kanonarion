@@ -88,6 +88,21 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      # The restored module cache can miss a module, and the proxy has refused
+      # connections under the egress block; retry before anything compiles.
+      - name: Download the package's modules
+        env:
+          PKG: ${{ matrix.pkg }}
+        run: |
+          set -euo pipefail
+          for i in 1 2 3 4 5; do
+            if go list -deps -test "$PKG" > /dev/null; then exit 0; fi
+            echo "::warning::module download failed (attempt $i of 5)"
+            sleep $((i * 10))
+          done
+          echo "::error::module download failed after 5 attempts in $PKG"
+          exit 1
+
       - name: Run every fuzz target in the package
         env:
           FUZZTIME: ${{ github.event.inputs.fuzztime || '5m' }}

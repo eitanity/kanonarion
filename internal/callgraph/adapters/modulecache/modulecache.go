@@ -10,6 +10,8 @@ package modulecache
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 
@@ -106,9 +108,17 @@ func (c *Cache) Materialise(ctx context.Context, dir string, main cgports.MainMo
 		Requested: source.Requested,
 		Written:   source.Written,
 		Failures:  prefixed("source", source.FailureSummary(failureLogLimit)),
+		Tampered:  source.Tampered(),
+	}
+	if report.Tampered != nil {
+		return report
 	}
 
-	seeds := c.unprunedRoots(ctx, main)
+	seeds, err := c.unprunedRoots(ctx, main)
+	if err != nil {
+		report.Tampered = err
+		return report
+	}
 	if len(seeds) == 0 {
 		return report
 	}
@@ -121,6 +131,9 @@ func (c *Cache) Materialise(ctx context.Context, dir string, main cgports.MainMo
 	report.Written += graph.Written
 	report.Failures = joinFailures(report.Failures,
 		prefixed("module-graph go.mod", graph.FailureSummary(failureLogLimit)))
+	if report.Tampered = graph.Tampered(); report.Tampered != nil {
+		return report
+	}
 
 	if !walkdomain.PrePruning(main.GoVersion) {
 		return report
@@ -143,6 +156,7 @@ func (c *Cache) Materialise(ctx context.Context, dir string, main cgports.MainMo
 	report.Written += build.Written
 	report.Failures = joinFailures(report.Failures,
 		prefixed("unpruned build list", build.FailureSummary(failureLogLimit)))
+	report.Tampered = build.Tampered()
 	return report
 }
 
@@ -184,56 +198,64 @@ func selectedVersions(coords []coordinate.ModuleCoordinate) []coordinate.ModuleC
 // cannot be read is treated as pre-pruning, on the walk's rule: a module that
 // does not state its version does not record its full requirements either, and
 // under-populating is the failure that leaves a load with no explanation.
-func (c *Cache) unprunedRoots(ctx context.Context, main cgports.MainModule) []coordinate.ModuleCoordinate {
+func (c *Cache) unprunedRoots(ctx context.Context, main cgports.MainModule) ([]coordinate.ModuleCoordinate, error) {
 	if walkdomain.PrePruning(main.GoVersion) {
-		return main.Requires
+		return main.Requires, nil
 	}
 	var roots []coordinate.ModuleCoordinate
 	for _, req := range main.Requires {
-		if walkdomain.PrePruning(c.goVersionOf(ctx, req)) {
+		v, err := c.goVersionOf(ctx, req)
+		if err != nil {
+			return nil, err
+		}
+		if walkdomain.PrePruning(v) {
 			roots = append(roots, req)
 		}
 	}
-	return roots
+	return roots, nil
 }
 
 // goVersionOf reads a requirement's declared go directive out of the go.mod the
 // store holds for it. An unreadable one answers the empty string, which
-// PrePruning reads as pre-pruning.
-func (c *Cache) goVersionOf(ctx context.Context, coord coordinate.ModuleCoordinate) string {
+// PrePruning reads as pre-pruning; a go.mod the store refuses as altered is the
+// error, because guessing past it would analyse without the bytes.
+func (c *Cache) goVersionOf(ctx context.Context, coord coordinate.ModuleCoordinate) (string, error) {
 	// A coordinate whose every measurement was set aside holds no record here,
 	// on the same terms as one never fetched.
 	record, ok, err := fetchports.AbsentIfNothingServable(fetchports.ComposedFetchRecord(ctx, c.facts, coord))
 	if err != nil {
-		return c.goModUnreadable(ctx, coord, "reading the fetch record", err)
+		return c.goModUnreadable(ctx, coord, "reading the fetch record", err), nil
 	}
 	if !ok {
-		return ""
+		return "", nil
 	}
 	identity, hasGoMod, err := fetchports.GoModIdentity(record.FactRecord)
 	if err != nil {
-		return c.goModUnreadable(ctx, coord, "deriving the go.mod address", err)
+		return c.goModUnreadable(ctx, coord, "deriving the go.mod address", err), nil
 	}
 	if !hasGoMod {
-		return ""
+		return "", nil
 	}
 	rc, err := c.blobs.Get(ctx, identity)
+	if errors.Is(err, fetchports.ErrBlobTampered) {
+		return "", fmt.Errorf("reading the go.mod of %s: %w", coord, fetchports.AttributeBlobTamper(err, coord))
+	}
 	if err != nil {
-		return c.goModUnreadable(ctx, coord, "opening the go.mod blob", err)
+		return c.goModUnreadable(ctx, coord, "opening the go.mod blob", err), nil
 	}
 	defer func() { _ = rc.Close() }()
 	data, err := io.ReadAll(rc)
 	if err != nil {
-		return c.goModUnreadable(ctx, coord, "reading the go.mod blob", err)
+		return c.goModUnreadable(ctx, coord, "reading the go.mod blob", err), nil
 	}
 	f, err := modfile.Parse("go.mod", data, nil)
 	if err != nil {
-		return c.goModUnreadable(ctx, coord, "parsing the go.mod", err)
+		return c.goModUnreadable(ctx, coord, "parsing the go.mod", err), nil
 	}
 	if f.Go == nil {
-		return ""
+		return "", nil
 	}
-	return f.Go.Version
+	return f.Go.Version, nil
 }
 
 // goModUnreadable logs why a recorded go.mod could not be produced, since the

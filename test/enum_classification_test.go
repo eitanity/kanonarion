@@ -220,6 +220,9 @@ func TestResolutionSourceArtefactClassification(t *testing.T) {
 		{"ResolutionMVS", walkdomain.ResolutionMVS, true, ""},
 		{"ResolutionReplace", walkdomain.ResolutionReplace, true, ""},
 		{"ResolutionLocalReplace", walkdomain.ResolutionLocalReplace, false, "local replace"},
+		// A go.work member is read from its directory, as a local replace is;
+		// nothing published it, so there is no artefact to copy.
+		{"ResolutionLocalWorkspaceMember", walkdomain.ResolutionLocalWorkspaceMember, false, "workspace member"},
 		// A fetch that failed still named bytes that should be in the store, which
 		// is what distinguishes it from a node that never owed any.
 		{"ResolutionFetchFailed", walkdomain.ResolutionFetchFailed, true, ""},
@@ -227,6 +230,8 @@ func TestResolutionSourceArtefactClassification(t *testing.T) {
 		// Ingested from disk into the blob store, so it does have a zip.
 		{"ResolutionLocalAnalysed", walkdomain.ResolutionLocalAnalysed, true, ""},
 		{"ResolutionStdlib", walkdomain.ResolutionStdlib, false, "Go standard library"},
+		// TinyGo ships with its toolchain, as the standard library does.
+		{"ResolutionTinyGo", walkdomain.ResolutionTinyGo, false, "TinyGo toolchain"},
 		// The depth policy stopped the walk before this requirement. Its bytes are
 		// published and another walk may hold them, so the classification is not
 		// "no artefact exists" but "this walk was told not to acquire one": the

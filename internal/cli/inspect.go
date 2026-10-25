@@ -7,10 +7,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/driver"
+	extstages "github.com/eitanity/kanonarion/internal/extract/adapters/stages/local"
 
 	"github.com/spf13/cobra"
 
@@ -116,9 +119,9 @@ that is tight on memory.`,
 					return rerr
 				}
 				f.gomodPath = resolved
-				return runInspectGoMod(cmd.Context(), f, scope, stdout, stderr)
+				return withAdvisoryRemedy(cmd.Context(), runInspectGoMod(cmd.Context(), f, scope, stdout, stderr), scanOffline(f.fresh))
 			}
-			return runInspect(cmd.Context(), args[0], f, stdout, stderr)
+			return withAdvisoryRemedy(cmd.Context(), runInspect(cmd.Context(), args[0], f, stdout, stderr), scanOffline(f.fresh))
 		},
 	}
 
@@ -164,10 +167,6 @@ func runInspect(ctx context.Context, arg string, f inspectFlags, stdout, stderr 
 		return rerr
 	}
 
-	wf := commonWalkFlags{
-		goproxy: f.goproxy,
-	}
-
 	logger := buildLogger(logLevel, stderr)
 	callgraphNarration = callgraphNarrationFor(stderr, f.noProgress, activeConfig.Preferences.Progress)
 	ctr, cleanup, err := NewContainer(storeRoot, f.goproxy, f.goBinary, f.skipVCS, activeConfig, logger)
@@ -180,8 +179,7 @@ func runInspect(ctx context.Context, arg string, f inspectFlags, stdout, stderr 
 	if _, werr := fmt.Fprintf(stderr, "==> inspect: walking %s\n", arg); werr != nil {
 		return fmt.Errorf("writing output: %w", werr)
 	}
-	progress := newWalkProgressReporter(stderr, f.noProgress, activeConfig, logLevel)
-	walkResult, err := runWalk(ctx, arg, wf, f.force, true, 0, "", f.policyPath, f.skipVCS, domain.WalkScopeCode, domain.WalkDepthFull, "", progress, ctr.ExecuteWalk, nil, io.Discard, stderr)
+	walkResult, req, err := walkInspectCoordinate(ctx, arg, f, ctr.ExecuteWalk, logger, stderr)
 	if err != nil {
 		return fmt.Errorf("walk: %w", err)
 	}
@@ -208,10 +206,11 @@ func runInspect(ctx context.Context, arg string, f inspectFlags, stdout, stderr 
 	if _, werr := fmt.Fprintf(stderr, "==> inspect: extracting walk %s (frame %s)\n", walkID, walkRec.Graph.Frame()); werr != nil {
 		return fmt.Errorf("writing output: %w", werr)
 	}
+	xreq := driver.CoordinateExtractRequest(walkID, req, extstages.New().Stages())
 	ef := extractFlags{
 		goBinary:   f.goBinary,
-		stages:     []string{"license", "interface", "callgraph", "example"},
-		force:      f.force,
+		stages:     xreq.Stages,
+		force:      xreq.Force,
 		noProgress: f.noProgress,
 	}
 	extractRun, err := extractWalk(ctx, walkID, ef, stderr)
@@ -233,7 +232,8 @@ func runInspect(ctx context.Context, arg string, f inspectFlags, stdout, stderr 
 	// reader with the repetitive half of the presentation and threw away the
 	// concise half. stdout stays the clean data channel because inspect always
 	// scans with jsonOut=false, so nothing machine-readable is written here.
-	scan, serr := runVulnScanReporting(ctx, walkID, f.force, f.fresh, f.reachable, 1, false, false, f.goBinary, os.Getenv("USER"), "", f.policyPath, vulnapp.ServeSurfaceInspect, false, f.noProgress, true, true, stderr, stderr)
+	sreq := driver.CoordinateScanRequest(walkID, req)
+	scan, serr := runVulnScanReporting(ctx, walkID, sreq.Force, sreq.Fresh, sreq.Reachability, sreq.CallGraphWorkers, sreq.BinaryModePrePass, false, f.goBinary, sreq.Operator, sreq.ProjectDir, f.policyPath, sreq.Surface, sreq.NoVendor, f.noProgress, true, true, stderr, stderr)
 	if serr != nil {
 		return fmt.Errorf("vuln-scan: %w", serr)
 	}
@@ -260,11 +260,45 @@ func runInspect(ctx context.Context, arg string, f inspectFlags, stdout, stderr 
 	}, stdout, stderr)
 }
 
+// walkInspectCoordinate runs the coordinate analysis's walk stage: the walk
+// request is the driver's, and only the progress, the loaded depth policy and
+// the VCS choice are added here. It returns the analysis request the later
+// stages are built from.
+func walkInspectCoordinate(ctx context.Context, arg string, f inspectFlags, uc ExecuteWalkUseCase, logger *slog.Logger, stderr io.Writer) (application.ExecuteWalkResult, driver.CoordinateAnalysisRequest, error) {
+	coord, err := resolveWalkCoordinate(ctx, arg, f.goproxy, stderr)
+	if err != nil {
+		return application.ExecuteWalkResult{}, driver.CoordinateAnalysisRequest{}, err
+	}
+	req := driver.CoordinateAnalysisRequest{
+		Coordinate:      coord,
+		Force:           f.force,
+		Reachability:    f.reachable,
+		FreshAdvisories: f.fresh,
+		Operator:        os.Getenv("USER"),
+	}
+	policy, policyHash, err := loadPolicy(ctx, f.policyPath, logger)
+	if err != nil {
+		return application.ExecuteWalkResult{}, req, fmt.Errorf("loading policy: %w", err)
+	}
+	wreq := driver.CoordinateWalkRequest(req)
+	wreq.SkipVCSVerify = f.skipVCS
+	wreq.Policy, wreq.PolicyHash = &policy, policyHash
+	wreq.Progress = newWalkProgressReporter(stderr, f.noProgress, activeConfig, logLevel)
+	result, err := uc.Execute(ctx, wreq)
+	if err != nil {
+		return application.ExecuteWalkResult{}, req, fmt.Errorf("executing walk: %w", err)
+	}
+	return result, req, reportCoordinateWalk(ctx, result, true, nil, io.Discard, stderr)
+}
+
 // resolveCoordForInspect parses the module arg, resolving @latest if needed.
 func resolveCoordForInspect(ctx context.Context, arg, _, goproxy string, stderr io.Writer) (coordinate.ModuleCoordinate, error) {
 	path, version, err := parseModuleArg(arg)
 	if err != nil {
 		return coordinate.ModuleCoordinate{}, fmt.Errorf("invalid argument %q: %w", arg, err)
+	}
+	if perr := refusePrivateCoordinate(path, true); perr != nil {
+		return coordinate.ModuleCoordinate{}, perr
 	}
 	if version == "latest" {
 		proxy, proxyErr := proxyadapter.New(goproxy, false)
@@ -283,6 +317,8 @@ func resolveCoordForInspect(ctx context.Context, arg, _, goproxy string, stderr 
 // inspectSummary is the aggregate result of an inspect --gomod run.
 type inspectSummary struct {
 	ModuleCount int `json:"module_count"`
+	// FrameExcludes names the files only TinyGo builds that this frame left out.
+	FrameExcludes *frameExcludesJSON `json:"frame_excludes,omitempty"`
 	// The three failure tallies are counted by every run and emitted at zero. A
 	// run in which nothing failed is the result a reader most needs stated, and
 	// omitting the zeros made a clean run's summary the same document as one
@@ -535,6 +571,8 @@ func inspectSummaryStatus(nodeFails, extractFails, scanFails int, scanStatus vul
 		return string(vuldomain.WalkStatusAffected)
 	case scanStatus == vuldomain.WalkStatusAllClean:
 		return string(vuldomain.WalkStatusAllClean)
+	case scanStatus == vuldomain.WalkStatusInconclusive:
+		return string(vuldomain.WalkStatusInconclusive)
 	default:
 		return string(vuldomain.WalkStatusPartial)
 	}
@@ -580,6 +618,7 @@ func writeEmptyInspectScope(scope depScope, gomodPath string, stdout io.Writer) 
 			WalkIDs:         []string{},
 			DependencyScope: newScopeJSON(newScopeResolution(scope, false)),
 			Run:             inspectRunNotStarted(),
+			FrameExcludes:   frameExcludes.take(),
 		}); err != nil {
 			return fmt.Errorf("encoding summary: %w", err)
 		}
@@ -649,7 +688,7 @@ func runInspectGoMod(ctx context.Context, f inspectFlags, scope depScope, stdout
 	var nodeFails int
 	progress := newWalkProgressReporter(stderr, f.noProgress, activeConfig, logLevel)
 	walkResult, werr := runWalkProject(ctx, f.gomodPath, f.force, true, 0, "", f.policyPath, f.skipVCS, scope,
-		domain.WalkDepthFull, "", false, f.stdlibFromGoMod, progress, ctr.ExecuteWalk, nil, io.Discard, stderr)
+		domain.WalkDepthFull, false, f.stdlibFromGoMod, progress, ctr.ExecuteWalk, nil, io.Discard, stderr)
 	if werr != nil {
 		_, _ = fmt.Fprintf(stderr, "walk: %v\n", werr)
 		nodeFails = 1
@@ -780,22 +819,27 @@ func printInspectText(stdout io.Writer, f inspectFlags, scope depScope, overallS
 // inspectPolicySections runs the directive, godebug and vendor scans for the
 // JSON summary; a scan that cannot run is reported and its section omitted.
 func inspectPolicySections(ctx context.Context, ctr *Container, gomodPath string, stderr io.Writer) (*directivesSection, *godebugSection, *vendorSection) {
+	configHash, herr := observeGateConfig(ctr)
+	if herr != nil {
+		_, _ = fmt.Fprintf(stderr, "==> inspect: directive, godebug and vendor scans skipped: %v\n", herr)
+		return nil, nil, nil
+	}
 	var directives *directivesSection
-	if rec, derr := ctr.ExtractDirectives.Extract(ctx, gomodPath, activeConfig.DirectivePolicy); derr == nil {
+	if rec, derr := ctr.ExtractDirectives.Extract(ctx, gomodPath, activeConfig.DirectivePolicy, configHash); derr == nil {
 		s := toDirectivesSection(rec)
 		directives = &s
 	} else {
 		_, _ = fmt.Fprintf(stderr, "==> inspect: directive scan skipped: %v\n", derr)
 	}
 	var godebug *godebugSection
-	if rec, derr := ctr.ExtractGoDebug.Extract(ctx, gomodPath, activeConfig.GoDebugPolicy); derr == nil {
+	if rec, derr := ctr.ExtractGoDebug.Extract(ctx, gomodPath, activeConfig.GoDebugPolicy, configHash); derr == nil {
 		s := toGoDebugSection(rec)
 		godebug = &s
 	} else {
 		_, _ = fmt.Fprintf(stderr, "==> inspect: godebug scan skipped: %v\n", derr)
 	}
 	var vendor *vendorSection
-	if rec, derr := ctr.ExtractVendor.Extract(ctx, gomodPath, activeConfig.VendorPolicy.VendorOnly, activeConfig.VendorPolicy); derr == nil {
+	if rec, derr := ctr.ExtractVendor.Extract(ctx, gomodPath, activeConfig.VendorPolicy.VendorOnly, activeConfig.VendorPolicy, configHash); derr == nil {
 		s := toVendorSection(rec)
 		vendor = &s
 	} else if !errors.Is(derr, vendports.ErrNotVendored) {
@@ -809,6 +853,7 @@ func inspectPolicySections(ctx context.Context, ctr *Container, gomodPath string
 func writeInspectJSON(stdout io.Writer, summary inspectSummary, overallStatus string) error {
 	enc := json.NewEncoder(stdout)
 	enc.SetIndent("", "  ")
+	summary.FrameExcludes = frameExcludes.take()
 	if err := enc.Encode(summary); err != nil {
 		return fmt.Errorf("encoding summary: %w", err)
 	}
@@ -900,6 +945,8 @@ func walkSummaryOf(rec domain.WalkRecord) walkports.WalkSummary {
 		FailureCount:  domain.CountNodeFailures(rec),
 		GOOS:          rec.Graph.BuildEnv.GOOS,
 		GOARCH:        rec.Graph.BuildEnv.GOARCH,
+		TinyGoTarget:  rec.Graph.BuildEnv.TinyGoTarget,
+		TinyGoVersion: rec.Graph.BuildEnv.TinyGoVersion,
 	}
 }
 
@@ -1001,6 +1048,7 @@ func runInspectGoModStages(ctx context.Context, f inspectFlags, walkID, frame st
 	if ierr := stopIfInterrupted(ctx, "vuln-scan", verr); ierr != nil {
 		return st, ierr
 	}
+	verr = withAdvisoryRemedy(ctx, verr, scanOffline(f.fresh))
 	st.scanFacts, st.scanState = scanFacts, inspectScanState(scanFacts, verr)
 	if verr != nil {
 		_, _ = fmt.Fprintf(stderr, "vuln-scan: %v\n", verr)

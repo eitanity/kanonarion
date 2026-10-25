@@ -86,17 +86,18 @@ func TestQueryCommands_EmptyIsArrayNotNull(t *testing.T) {
 	// invariant for callers/callees now only applies to the genuine-zero
 	// case (module analysed, no edges); covered at unit level by
 	// TestRunCallers_GenuineZeroJSON_IsEmptyArrayNotNull.
+	seeded := seedOneWalkStore(t)
 	for _, args := range [][]string{
 		{"vuln-by-id", "GO-9999-0000"},
 		// Both of these once returned a human sentence from their
 		// empty-result branch before reaching the JSON encoder, so --json
 		// emitted unparseable prose on the data channel.
 		{"vuln-snapshot-list"},
-		{"vuln-scan-history", "absent-walk-id"},
+		{"vuln-scan-history", nsWalkID},
 	} {
 		t.Run(args[0], func(t *testing.T) {
 			var stdout, stderr bytes.Buffer
-			full := append(append([]string{}, args...), "--json", "--store-root", t.TempDir())
+			full := append(append([]string{}, args...), "--json", "--store-root", copyOfStore(t, seeded))
 			if err := Run(full, &stdout, &stderr); err != nil {
 				t.Fatalf("%v: unexpected error: %v", args, err)
 			}

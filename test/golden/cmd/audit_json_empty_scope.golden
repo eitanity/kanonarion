@@ -23,6 +23,10 @@ exit 0
       "version": ""
     }
   },
+  "vulnerability_scan": {
+    "status": "not_run",
+    "reason": "no dependency was audited"
+  },
   "reachability_basis": {
     "answers": 0,
     "source_read_by_this_run": false

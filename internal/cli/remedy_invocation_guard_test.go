@@ -8,6 +8,7 @@ import (
 	"go/types"
 	"io"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -17,7 +18,9 @@ import (
 	"github.com/spf13/pflag"
 	"golang.org/x/tools/go/packages"
 
+	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/gotoolchain"
 )
 
 // The rule this guard holds the whole tree to is in docs/cli/conventions.md:
@@ -231,12 +234,10 @@ func TestEveryPrintedInvocationIsAcceptedByTheParser(t *testing.T) {
 // is pure so the control below can plant lines the tree does not contain.
 //
 // presented says whether the line was printed as a line — starting the message
-// or its own line within it — rather than named inside a sentence. A line is
-// something a reader copies, so it owes the whole contract; a sentence that
-// names a command is an instruction about it, and holding "answers come from
-// 'kanonarion vuln-show'" to an argument count would report English as a
-// defect. What a mention still owes is the argument it DOES print: naming a
-// bare path where the command takes a coordinate misdirects either way.
+// or its own line within it — rather than named inside a sentence. A line owes
+// the whole parse. A mention owes the arguments the command requires and the
+// coordinate shape of those it prints: "run 'kanonarion license' first" sends
+// the reader to a command that refuses the empty argument list.
 func invocationViolations(t *testing.T, slots map[string]coordinateSlotSpec, line, cmdName string,
 	positionals []string, presented bool, scope scopeFacts,
 ) []string {
@@ -246,6 +247,13 @@ func invocationViolations(t *testing.T, slots map[string]coordinateSlotSpec, lin
 		if err := parseInvocation(t, strings.ReplaceAll(line, standInOpaque, "x")); err != nil {
 			out = append(out, "the CLI's own parser rejects it: "+err.Error())
 		}
+	} else if err := mentionArity(line, cmdName, positionals); err != nil {
+		out = append(out, "names the command without the arguments it requires: "+err.Error())
+	}
+	// A command that counts its arguments in RunE passes cobra's validation with
+	// none, so a line or mention short of them parses and still does not run.
+	if want := runEArity(t)[slots[cmdName].use]; len(positionals) < want && !slices.Contains(splitInvocation(line), "--help") {
+		out = append(out, fmt.Sprintf("names %d argument(s) where %q refuses fewer than %d", len(positionals), slots[cmdName].use, want))
 	}
 	spec, known := slots[cmdName]
 	if !known {
@@ -261,6 +269,296 @@ func invocationViolations(t *testing.T, slots map[string]coordinateSlotSpec, lin
 		}
 	}
 	return out
+}
+
+var (
+	runEArityOnce  sync.Once
+	runEArityByUse map[string]int
+)
+
+// runEArity reads, per Use line, the fewest positionals a command's RunE accepts
+// before it does anything else: a top-level `if len(args) … N { return
+// usageErr(cmd) }`. It is read off the source because cobra never sees it.
+func runEArity(t *testing.T) map[string]int {
+	t.Helper()
+	runEArityOnce.Do(func() {
+		runEArityByUse = map[string]int{}
+		for _, p := range loadRepoPackages(t) {
+			if !strings.HasSuffix(p.PkgPath, "/internal/cli") {
+				continue
+			}
+			for _, f := range p.Syntax {
+				ast.Inspect(f, func(n ast.Node) bool {
+					if lit, ok := n.(*ast.CompositeLit); ok {
+						if use, fewest, found := commandArity(lit); found {
+							runEArityByUse[use] = fewest
+						}
+					}
+					return true
+				})
+			}
+		}
+	})
+	return runEArityByUse
+}
+
+// commandArity returns a cobra.Command literal's Use line and the fewest
+// positionals its RunE accepts, when its RunE opens on a count refusal.
+func commandArity(lit *ast.CompositeLit) (string, int, bool) {
+	use, run := commandParts(lit)
+	if use == "" || run == nil || run.Body == nil {
+		return "", 0, false
+	}
+	for _, stmt := range run.Body.List {
+		ifs, ok := stmt.(*ast.IfStmt)
+		if !ok || !returnsUsageErr(ifs.Body) {
+			// A count checked only after another way out is not one every
+			// invocation owes.
+			if returns(stmt) {
+				break
+			}
+			continue
+		}
+		if fewest, counted := countRefused(ifs.Cond); counted {
+			return use, fewest, true
+		}
+	}
+	return "", 0, false
+}
+
+// commandParts reads the Use line and the RunE literal out of a command literal.
+func commandParts(lit *ast.CompositeLit) (use string, run *ast.FuncLit) {
+	for _, el := range lit.Elts {
+		kv, ok := el.(*ast.KeyValueExpr)
+		if !ok {
+			continue
+		}
+		key, isIdent := kv.Key.(*ast.Ident)
+		if !isIdent {
+			continue
+		}
+		switch key.Name {
+		case "Use":
+			if b, isLit := kv.Value.(*ast.BasicLit); isLit {
+				use = literalValue(b)
+			}
+		case "RunE":
+			if fn, isFn := kv.Value.(*ast.FuncLit); isFn {
+				run = fn
+			}
+		}
+	}
+	return use, run
+}
+
+// countRefused reads `len(args) != N`, `len(args) < N` or `len(args) == 0` as
+// the fewest positionals the guarded refusal lets through.
+func countRefused(cond ast.Expr) (int, bool) {
+	cmp, ok := cond.(*ast.BinaryExpr)
+	if !ok {
+		return 0, false
+	}
+	call, isCall := cmp.X.(*ast.CallExpr)
+	n, isInt := cmp.Y.(*ast.BasicLit)
+	if !isCall || !isInt || n.Kind != token.INT {
+		return 0, false
+	}
+	if fn, isIdent := call.Fun.(*ast.Ident); !isIdent || fn.Name != "len" {
+		return 0, false
+	}
+	v, err := strconv.Atoi(n.Value)
+	if err != nil {
+		return 0, false
+	}
+	switch {
+	case cmp.Op == token.NEQ || cmp.Op == token.LSS:
+		return v, true
+	case cmp.Op == token.EQL && v == 0:
+		return 1, true
+	}
+	return 0, false
+}
+
+// returns reports whether stmt holds a return statement.
+func returns(stmt ast.Stmt) bool {
+	found := false
+	ast.Inspect(stmt, func(n ast.Node) bool {
+		if _, ok := n.(*ast.ReturnStmt); ok {
+			found = true
+		}
+		return !found
+	})
+	return found
+}
+
+// returnsUsageErr reports whether a block returns usageErr(...).
+func returnsUsageErr(body *ast.BlockStmt) bool {
+	for _, stmt := range body.List {
+		ret, ok := stmt.(*ast.ReturnStmt)
+		if !ok || len(ret.Results) != 1 {
+			continue
+		}
+		if call, isCall := ret.Results[0].(*ast.CallExpr); isCall {
+			if fn, isIdent := call.Fun.(*ast.Ident); isIdent && fn.Name == "usageErr" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// mentionArity holds a command named inside a sentence to the positional count
+// it requires, without the parse a presented line gets: a mention's flags are
+// judged by TestEveryPrintedFlagIsOneTheCommandDefines.
+func mentionArity(line, cmdName string, positionals []string) error {
+	// Asking for help is the one invocation cobra answers before it counts.
+	if slices.Contains(splitInvocation(line), "--help") {
+		return nil
+	}
+	root := newRootCmd(io.Discard, io.Discard)
+	cmd, _, err := root.Find(strings.Fields(cmdName))
+	if err != nil {
+		return fmt.Errorf("resolving %q: %w", cmdName, err)
+	}
+	return cmd.ValidateArgs(positionals) //nolint:wrapcheck // cobra's own sentence is the verdict
+}
+
+// TestEveryPrintedFlagIsOneTheCommandDefines holds every long flag the shipped
+// source prints to a command that accepts it. A flag inside a line is judged
+// against the command the line invokes, whether the line is presented or
+// mentioned. A flag in the prose around it is judged by where the string is
+// built: outside internal/cli no code knows which command is running, so prose
+// there may name only a flag every command defines; a remedy needing any other
+// belongs in a full invocation, or in the CLI.
+func TestEveryPrintedFlagIsOneTheCommandDefines(t *testing.T) {
+	root := newRootCmd(io.Discard, io.Discard)
+	judged, outside := 0, 0
+	for _, m := range allFlagMessages(t) {
+		n, faults := flagViolations(t, root, m.text, insideCLI(m.file))
+		judged += n
+		if !insideCLI(m.file) {
+			outside++
+		}
+		for _, v := range faults {
+			t.Errorf("%s:%d %s\n  (rendered from: %q)", m.file, m.line, v, m.text)
+		}
+	}
+	// The floor is well under the population so ordinary churn does not trip it.
+	if judged < 300 || outside < 20 {
+		t.Fatalf("judged only %d printed flags, %d strings outside internal/cli; the guard is not reaching the source",
+			judged, outside)
+	}
+	t.Logf("judged %d printed flags", judged)
+}
+
+// insideCLI reports whether a file is in the package that knows which command
+// is running.
+func insideCLI(file string) bool {
+	return strings.Contains(filepath.ToSlash(file), "/internal/cli/")
+}
+
+// flagViolations is the flag verdict on one message, pure so the control below
+// can plant text. It returns how many flags it judged and what it found.
+func flagViolations(t *testing.T, root *cobra.Command, text string, cliBuilt bool) (int, []string) {
+	t.Helper()
+	var out []string
+	judged := 0
+	prose := text
+	for _, inv := range invocationsIn(text) {
+		prose = strings.Replace(prose, inv.line, "", 1)
+		for _, conjunct := range strings.Split(inv.line, " && ") {
+			conjunct = strings.TrimSpace(conjunct)
+			line, cmdName, _, ok := readInvocation(t, conjunct)
+			if !ok {
+				prose += " " + conjunct
+				continue
+			}
+			// What the line read stops short of is the sentence it sits in.
+			prose += " " + conjunct[min(len(conjunct), len(line)):]
+			cmd, _, err := root.Find(strings.Fields(cmdName))
+			if err != nil {
+				t.Fatalf("resolving %q: %v", cmdName, err)
+			}
+			for _, field := range splitInvocation(line) {
+				name, isFlag := strings.CutPrefix(field, "--")
+				if !isFlag || name == "" {
+					continue
+				}
+				name, _, _ = strings.Cut(name, "=")
+				// A runtime value spliced on after the flag is not part of its name.
+				name, _, _ = strings.Cut(name, standInOpaque)
+				judged++
+				if !flagDefinedOn(root, cmd, name) {
+					out = append(out, fmt.Sprintf("prints --%s in %q, a flag %q does not define", name, line, cmdName))
+				}
+			}
+		}
+	}
+	if isArgumentFragment(prose) {
+		return judged, out
+	}
+	for _, name := range flagTokensIn(prose) {
+		judged++
+		if !cliBuilt && root.PersistentFlags().Lookup(name) == nil {
+			out = append(out, fmt.Sprintf("prints --%s outside an invocation, from a package that cannot know which command is running", name))
+		}
+	}
+	return judged, out
+}
+
+// isArgumentFragment reports whether text is argument words and no sentence: an
+// argv element handed to a subprocess, or a piece spliced into an invocation.
+// Every token is a flag, a <placeholder> or a value the source does not
+// describe, so there is no prose for a reader to act on.
+func isArgumentFragment(text string) bool {
+	fields := strings.Fields(text)
+	if len(fields) == 0 {
+		return true
+	}
+	for _, f := range fields {
+		if !strings.HasPrefix(f, "-") && !strings.HasPrefix(f, "<") && !strings.Contains(f, standInOpaque) {
+			return false
+		}
+	}
+	return true
+}
+
+// flagDefinedOn reports whether cmd accepts --name, cobra's own help flag
+// included.
+func flagDefinedOn(root, cmd *cobra.Command, name string) bool {
+	cmd.InitDefaultHelpFlag()
+	for _, set := range []*pflag.FlagSet{cmd.Flags(), cmd.InheritedFlags(), root.PersistentFlags()} {
+		if set.Lookup(name) != nil {
+			return true
+		}
+	}
+	return false
+}
+
+// flagTokensIn returns the names of the long flags text prints. A dash run
+// inside a word, a bare "--" and a rule of dashes are not flags.
+func flagTokensIn(text string) []string {
+	var out []string
+	for i := 0; i+2 < len(text); i++ {
+		if text[i] != '-' || text[i+1] != '-' || (i > 0 && isFlagByte(text[i-1])) {
+			continue
+		}
+		j := i + 2
+		if text[j] < 'a' || text[j] > 'z' {
+			i = j
+			continue
+		}
+		for j < len(text) && isFlagByte(text[j]) {
+			j++
+		}
+		out = append(out, strings.TrimRight(text[i+2:j], "-"))
+		i = j
+	}
+	return out
+}
+
+func isFlagByte(b byte) bool {
+	return b == '-' || b == '_' || (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9')
 }
 
 // readInvocation resolves a candidate line against the CLI's own command tree
@@ -609,6 +907,18 @@ func fullStopEndsLine(text string, i int) bool {
 // source that names the binary.
 func allPrintedMessages(t *testing.T) []printedMessage {
 	t.Helper()
+	return printedMessagesWhere(t, func(text string) bool { return strings.Contains(text, "kanonarion ") })
+}
+
+// allFlagMessages renders every string-valued expression in the shipped source
+// that prints a long flag, whether or not it names the binary.
+func allFlagMessages(t *testing.T) []printedMessage {
+	t.Helper()
+	return printedMessagesWhere(t, func(text string) bool { return len(flagTokensIn(text)) > 0 })
+}
+
+func printedMessagesWhere(t *testing.T, keep func(string) bool) []printedMessage {
+	t.Helper()
 	var out []printedMessage
 	for _, p := range loadRepoPackages(t) {
 		if p.TypesInfo == nil {
@@ -619,18 +929,18 @@ func allPrintedMessages(t *testing.T) []printedMessage {
 			if strings.HasSuffix(file, "_test.go") {
 				continue
 			}
-			out = append(out, messagesInFile(p, f, file)...)
+			out = append(out, messagesInFile(p, f, file, keep)...)
 		}
 	}
 	return out
 }
 
-func messagesInFile(p *packages.Package, f *ast.File, file string) []printedMessage {
+func messagesInFile(p *packages.Package, f *ast.File, file string, keep func(string) bool) []printedMessage {
 	var out []printedMessage
 	consumed := map[ast.Node]bool{}
 	fns := enclosingFunctions(f)
 	record := func(pos token.Pos, text string) {
-		if !strings.Contains(text, "kanonarion ") {
+		if !keep(text) {
 			return
 		}
 		out = append(out, printedMessage{
@@ -1137,7 +1447,10 @@ func TestRemedyGuardCatchesAPlantedInvocation(t *testing.T) {
 		{"a coordinate in a walk id's slot", "re-scan it:\n  kanonarion vuln-scan example.com/mod@v1.0.0", scopeFacts{}, true},
 		{"a walk id in its own slot", "re-scan it:\n  kanonarion vuln-scan " + standInWalkID, scopeFacts{}, false},
 		{"a line missing the argument it needs", "re-scan it:\n  kanonarion vuln-scan-rescan", scopeFacts{}, true},
-		{"the same command merely named in a sentence", "answers come from 'kanonarion vuln-show', which states the frame", scopeFacts{}, false},
+		{"a command named in a sentence without the argument it requires", "answers come from 'kanonarion vuln-show', which states the frame", scopeFacts{}, true},
+		{"a mention with the argument it requires", "answers come from 'kanonarion vuln-show example.com/mod@v1.0.0', which states the frame", scopeFacts{}, false},
+		{"a mention asking for help", "a different budget: see 'kanonarion extract --help'.", scopeFacts{}, false},
+		{"the licence remedy this closes", "no license record: run 'kanonarion license' first", scopeFacts{}, true},
 		{"prose carrying on after a line", "so kanonarion walk --gomod ./go.mod records the current resolution", scopeFacts{}, false},
 		{"an argument that is an English word in its own right", "  kanonarion config set preferences.json true", scopeFacts{}, false},
 		{"an argument carrying spaces", "  kanonarion config set license_policy.categories.permissive '[MIT, Apache-2.0, ISC]'", scopeFacts{}, false},
@@ -1160,6 +1473,55 @@ func TestRemedyGuardCatchesAPlantedInvocation(t *testing.T) {
 				t.Errorf("reported %v for %q, want %v (%v)", got, tc.text, tc.wantFault, faults)
 			}
 		})
+	}
+}
+
+// TestRemedyGuardCatchesAPlantedFlag is the flag check's control: each shape it
+// exists to catch is reported, and each it must leave alone is not.
+func TestRemedyGuardCatchesAPlantedFlag(t *testing.T) {
+	root := newRootCmd(io.Discard, io.Discard)
+	for _, tc := range []struct {
+		name      string
+		text      string
+		cliBuilt  bool
+		wantFault bool
+	}{
+		{"a flag the invoked command does not define", "re-scan it:\n  kanonarion vuln-scan " + standInWalkID + " --snapshot-source x", true, true},
+		{"the command that defines it", "re-scan it:\n  kanonarion vuln-scan-rescan " + standInWalkID + " --snapshot-source x --snapshot-version y", true, false},
+		{"a mention carrying a flag its command does not define", "run 'kanonarion vuln-scan --snapshot-version y' instead", true, true},
+		{"prose naming a flag, built where no command is known", "drop --fresh so the stored generation is used (kanonarion vuln-snapshot-list shows what is held)", false, true},
+		{"the same prose built in the CLI", "drop --fresh so the stored generation is used (kanonarion vuln-snapshot-list shows what is held)", true, false},
+		{"prose naming a flag every command defines", "list them with kanonarion walk-list, adding --json for a document", false, false},
+		{"prose naming no command, built where no command is known", "proxy URL uses plain HTTP; pass --insecure to allow", false, true},
+		{"an argv element handed to a subprocess", "--depth=1", false, false},
+		{"a piece spliced into an invocation", " --tinygo <target>", false, false},
+		{"a quoted line nested in another", "kanonarion callgraph example.com/mod@v1.0.0 (or 'kanonarion extract " + standInWalkID + " --stages callgraph' over the project walk)", true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, faults := flagViolations(t, root, tc.text, tc.cliBuilt)
+			if got := len(faults) > 0; got != tc.wantFault {
+				t.Errorf("reported %v for %q, want %v (%v)", got, tc.text, tc.wantFault, faults)
+			}
+		})
+	}
+}
+
+// TestRunEArity_IsReadOffTheSource pins what the RunE count derivation makes of
+// commands the CLI ships: one that refuses on its first statement, one that
+// takes two, and one whose count applies only after a --gomod form returned.
+func TestRunEArity_IsReadOffTheSource(t *testing.T) {
+	arity := runEArity(t)
+	if len(arity) < 15 {
+		t.Fatalf("read a RunE count off only %d commands; the derivation is not reaching the source", len(arity))
+	}
+	slots := coordinateSlots(t)
+	for _, tc := range []struct {
+		cmd  string
+		want int
+	}{{"license", 1}, {"walk-diff", 2}, {"fetch", 0}} {
+		if got := arity[slots[tc.cmd].use]; got != tc.want {
+			t.Errorf("%q: RunE refuses fewer than %d positionals, want %d", tc.cmd, got, tc.want)
+		}
 	}
 }
 
@@ -1432,5 +1794,61 @@ func TestTheLegitimateVersionPlaceholderStaysLegitimate(t *testing.T) {
 	}
 	if found == 0 {
 		t.Fatalf("no shipped message contains %q; the pin is measuring nothing", words)
+	}
+}
+
+// TestRemedyGuardJudgesTheTinyGoRemedies holds the two TinyGo lines — the
+// missing-package remedy and the frame notice — to the guard's verdict. Both
+// are built at run time from the invocation, which the source scan above
+// renders as opaque, so each is rendered here for every command that prints it.
+func TestRemedyGuardJudgesTheTinyGoRemedies(t *testing.T) {
+	t.Cleanup(func() { invokedCmd, invokedArgs = nil, nil })
+	slots := coordinateSlots(t)
+	local, err := coordinate.NewLocalCoordinate("example.com/blinky")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fetched, err := coordinate.NewModuleCoordinate("example.com/drivers", "v1.0.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	texts := []string{
+		gotoolchain.TinyGoPackageRemedy([]string{"machine"}, cgdomain.TinyGoReanalysisInstruction(local, "/work/tree")),
+		gotoolchain.TinyGoPackageRemedy([]string{"machine"}, cgdomain.TinyGoReanalysisInstruction(fetched, "")),
+	}
+	for _, args := range [][]string{
+		{"local", "."}, {"walk", "--gomod", "./go.mod", "--no-progress"}, {"audit", "--gomod", "./go.mod"},
+		{"inspect", "--gomod", "./go.mod"}, {"sbom", "--package", "./cmd/x", "--format", "spdx"},
+	} {
+		cmd, rest, ferr := newRootCmd(io.Discard, io.Discard).Find(args)
+		if ferr != nil {
+			t.Fatal(ferr)
+		}
+		if perr := cmd.ParseFlags(rest); perr != nil {
+			t.Fatal(perr)
+		}
+		invokedCmd, invokedArgs = cmd, cmd.Flags().Args()
+		texts = append(texts,
+			gotoolchain.TinyGoPackageRemedy([]string{"machine"}, tinyGoRerun()),
+			(&frameExcludesJSON{Files: []string{"v_tinygo.go"}, Command: tinyGoRerun()}).statement())
+	}
+	judged := 0
+	for _, text := range texts {
+		for _, inv := range invocationsIn(text) {
+			for _, conjunct := range strings.Split(inv.line, " && ") {
+				line, cmdName, positionals, ok := readInvocation(t, strings.TrimSpace(conjunct))
+				if !ok {
+					t.Errorf("%q is not read as an invocation of this CLI", conjunct)
+					continue
+				}
+				judged++
+				for _, v := range invocationViolations(t, slots, line, cmdName, positionals, true, scopeFacts{}) {
+					t.Errorf("%q: %s", line, v)
+				}
+			}
+		}
+	}
+	if judged != 14 {
+		t.Errorf("judged %d TinyGo invocations, want 14", judged)
 	}
 }

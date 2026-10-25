@@ -144,7 +144,7 @@ func TestCallGraphList_ZeroResultNoticeComposesNothing(t *testing.T) {
 func TestCallGraphShow_SupersededNoteComposesNothing(t *testing.T) {
 	uc := fakeWithGenerations()
 	note, err := supersededGenerationsNote(context.Background(),
-		coordinatetest.MustNew(listModule, "v9.9.9"), uc, nil)
+		coordinatetest.MustNew(listModule, "v9.9.9"), uc, nil, nil)
 	if err != nil {
 		t.Fatalf("supersededGenerationsNote: %v", err)
 	}

@@ -1,14 +1,14 @@
 // Package localfs provides a walk adapter that implements
 // walkports.LocalModuleFetcher by creating FactRecords from local filesystem
-// source trees instead of fetching from a module proxy. It is used when a
-// go.mod replace directive points to an on-disk directory and local-replace
-// analysis has been enabled.
+// source trees instead of fetching from a module proxy. It reads a project
+// walk's root, its local-path replacements and its go.work members.
 package localfs
 
 import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -29,6 +29,10 @@ import (
 // ingestion logic changes such that cached records would differ on re-ingestion.
 const PipelineVersion = "local-0.1.0"
 
+// ErrPublishedCoordinate refuses a request to file a directory under a
+// published module version.
+var ErrPublishedCoordinate = errors.New("a module read from disk is recorded at its local version, not a published one")
+
 // Fetcher creates FactRecords from local filesystem Go module source trees.
 // It implements walkports.LocalModuleFetcher.
 type Fetcher struct {
@@ -45,27 +49,18 @@ func New(blobs fetchports.BlobStore, facts fetchports.FactStore, clock fetchport
 // EnsureFetchedFromPath ingests the Go module rooted at absPath as coord.
 // It creates a module-spec zip, hashes it, stores both the zip and the
 // go.mod in the BlobStore, and persists a FactRecord in the FactStore.
-// Results are cached: a second call with the same coord and PipelineVersion
-// returns the stored record without re-reading the filesystem.
 //
-// Exception: a coordinate at the synthetic local version (the project-walk
-// root) is never served from cache. The working tree mutates between runs, so
-// a cached snapshot would be stale; the tree is re-read and the stored record
-// overwritten on every call. Local-replace targets keep their pinned semver
-// coordinates and remain cacheable.
+// coord must be at the synthetic local version, and is never served from
+// cache: a directory pins no content, so the tree is re-read and a new
+// measurement appended on every call. A published coordinate is refused, so
+// code read from disk can never be filed as the module that was published.
 func (f *Fetcher) EnsureFetchedFromPath(
 	ctx context.Context,
 	coord coordinate.ModuleCoordinate,
-	absPath string,
+	absPath, writtenPath string,
 ) (walkports.LocalModuleFetchResult, error) {
 	if !coord.IsLocal() {
-		existing, ok, err := fetchports.AbsentIfNothingServable(f.facts.GetFetchRecord(ctx, coord, PipelineVersion))
-		if err != nil {
-			return walkports.LocalModuleFetchResult{}, fmt.Errorf("checking cache for %s: %w", coord, err)
-		}
-		if ok {
-			return walkports.LocalModuleFetchResult{Record: existing, FromCache: true}, nil
-		}
+		return walkports.LocalModuleFetchResult{}, fmt.Errorf("%w: %s", ErrPublishedCoordinate, coord)
 	}
 
 	goModData, err := os.ReadFile(filepath.Join(absPath, "go.mod")) /* #nosec G304 -- absPath supplied by trusted caller */
@@ -103,18 +98,15 @@ func (f *Fetcher) EnsureFetchedFromPath(
 		ModuleHash:         zipHash,
 		GoModHash:          goModHash,
 		VerificationStatus: fetchdomain.LocalSource,
-		// A directory has no go.sum entry by construction — the toolchain
-		// writes a checksum for a module it downloads, never for one it reads
-		// off disk — so the absence is stated rather than left to look like a
-		// check that passed. Nothing verified this tree; that is the fact.
-		VerificationDetail: "local filesystem path: " + absPath +
-			"; no checksum is available for a filesystem source, so none was checked",
-		FetchedAt:       f.clock.Now().UTC(),
-		PipelineVersion: PipelineVersion,
-		ContentLocation: zipIdentity.String(),
-		GoModLocation:   goModIdentity.String(),
-		AcquisitionMode: fetchdomain.AcquisitionLocal,
-		MeasurementKind: fetchdomain.MeasurementAcquired,
+		// A directory has no go.sum entry by construction, so the absence is
+		// stated rather than left to look like a check that passed.
+		VerificationDetail: localSourceDetail(writtenPath),
+		FetchedAt:          f.clock.Now().UTC(),
+		PipelineVersion:    PipelineVersion,
+		ContentLocation:    zipIdentity.String(),
+		GoModLocation:      goModIdentity.String(),
+		AcquisitionMode:    fetchdomain.AcquisitionLocal,
+		MeasurementKind:    fetchdomain.MeasurementAcquired,
 	}
 	sealed, err := fetchdomain.Seal(m)
 	if err != nil {
@@ -128,6 +120,16 @@ func (f *Fetcher) EnsureFetchedFromPath(
 		return walkports.LocalModuleFetchResult{}, fmt.Errorf("composing local measurement of %s: %w", coord, err)
 	}
 	return walkports.LocalModuleFetchResult{Record: composed, FromCache: false}, nil
+}
+
+// localSourceDetail names the source without the absolute path it was read
+// from: that path is machine-specific and would differ between two checkouts of
+// one tree.
+func localSourceDetail(writtenPath string) string {
+	if writtenPath == "" {
+		return "analysed from the working tree (local source, nothing to verify)"
+	}
+	return "local directory " + writtenPath + " (local source, nothing to verify)"
 }
 
 // localModuleZip zips the tree at absPath as the module zip of coord.

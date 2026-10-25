@@ -1,0 +1,8 @@
+package conflict
+
+/*
+typedef long shared_t;
+*/
+import "C"
+
+func B() C.shared_t { return 2 }

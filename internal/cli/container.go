@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -8,15 +9,15 @@ import (
 	"path/filepath"
 
 	"github.com/eitanity/kanonarion/internal/config/domain"
+	configports "github.com/eitanity/kanonarion/internal/config/ports"
 
-	blobstore "github.com/eitanity/kanonarion/internal/adapters/blobstore/localfs"
 	mcblobstore "github.com/eitanity/kanonarion/internal/adapters/blobstore/modcache"
 	"github.com/eitanity/kanonarion/internal/adapters/clock"
-	fetchsqlite "github.com/eitanity/kanonarion/internal/adapters/factstore/sqlite"
 	"github.com/eitanity/kanonarion/internal/adapters/goenv"
 	"github.com/eitanity/kanonarion/internal/adapters/meminfo"
 	fetchproxy "github.com/eitanity/kanonarion/internal/adapters/proxy/direct"
 	mcproxy "github.com/eitanity/kanonarion/internal/adapters/proxy/modcache"
+	privateproxy "github.com/eitanity/kanonarion/internal/adapters/proxy/private"
 	noopsigner "github.com/eitanity/kanonarion/internal/adapters/signer/noop"
 	fetchsumdb "github.com/eitanity/kanonarion/internal/adapters/sumdb/gosum"
 	gosumfile "github.com/eitanity/kanonarion/internal/adapters/sumdb/gosumfile"
@@ -25,42 +26,37 @@ import (
 
 	cganalyser "github.com/eitanity/kanonarion/internal/callgraph/adapters/analyser/staticcha"
 	cgmodulecache "github.com/eitanity/kanonarion/internal/callgraph/adapters/modulecache"
-	cgsqlite "github.com/eitanity/kanonarion/internal/callgraph/adapters/store/sqlite"
 	cgapp "github.com/eitanity/kanonarion/internal/callgraph/application"
+	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
 	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
 
 	"github.com/eitanity/kanonarion/internal/composition"
+	"github.com/eitanity/kanonarion/internal/composition/storage"
+	sqlitestorage "github.com/eitanity/kanonarion/internal/composition/storage/sqlite"
 
 	dirxmod "github.com/eitanity/kanonarion/internal/directive/adapters/parser/xmod"
-	dirsqlite "github.com/eitanity/kanonarion/internal/directive/adapters/store/sqlite"
 	dirapp "github.com/eitanity/kanonarion/internal/directive/application"
 	dirports "github.com/eitanity/kanonarion/internal/directive/ports"
 
 	gdgosrc "github.com/eitanity/kanonarion/internal/godebug/adapters/scanner/gosrc"
-	gdsqlite "github.com/eitanity/kanonarion/internal/godebug/adapters/store/sqlite"
 	gdvendortree "github.com/eitanity/kanonarion/internal/godebug/adapters/vendortree"
 	gdapp "github.com/eitanity/kanonarion/internal/godebug/application"
 
 	fipsgosrc "github.com/eitanity/kanonarion/internal/fips/adapters/scanner/gosrc"
-	fipssqlite "github.com/eitanity/kanonarion/internal/fips/adapters/store/sqlite"
 	fipsvendortree "github.com/eitanity/kanonarion/internal/fips/adapters/vendortree"
 	fipsapp "github.com/eitanity/kanonarion/internal/fips/application"
 	nativegosource "github.com/eitanity/kanonarion/internal/native/adapters/gosource"
-	nativesqlite "github.com/eitanity/kanonarion/internal/native/adapters/store/sqlite"
 	nativeapp "github.com/eitanity/kanonarion/internal/native/application"
 
 	venlocalfs "github.com/eitanity/kanonarion/internal/vendortree/adapters/scanner/localfs"
-	vensqlite "github.com/eitanity/kanonarion/internal/vendortree/adapters/store/sqlite"
 	venzipsource "github.com/eitanity/kanonarion/internal/vendortree/adapters/zipsource/blobstore"
 	venapp "github.com/eitanity/kanonarion/internal/vendortree/application"
 
 	exgoast "github.com/eitanity/kanonarion/internal/example/adapters/parser/goast"
-	exsqlite "github.com/eitanity/kanonarion/internal/example/adapters/store/sqlite"
 	exapp "github.com/eitanity/kanonarion/internal/example/application"
 
 	extextractor "github.com/eitanity/kanonarion/internal/extract/adapters/extractor/local"
 	extstages "github.com/eitanity/kanonarion/internal/extract/adapters/stages/local"
-	extsqlite "github.com/eitanity/kanonarion/internal/extract/adapters/store/sqlite"
 	extractapp "github.com/eitanity/kanonarion/internal/extract/application"
 
 	fetchapp "github.com/eitanity/kanonarion/internal/fetch/application"
@@ -70,12 +66,10 @@ import (
 
 	ifaceext "github.com/eitanity/kanonarion/internal/iface/adapters/extractor/godoc"
 	goastspelling "github.com/eitanity/kanonarion/internal/iface/adapters/spelling/goast"
-	ifacesqlite "github.com/eitanity/kanonarion/internal/iface/adapters/store/sqlite"
 	ifaceapp "github.com/eitanity/kanonarion/internal/iface/application"
 
 	licdet "github.com/eitanity/kanonarion/internal/license/adapters/detector/licensecheck"
 	licoverrides "github.com/eitanity/kanonarion/internal/license/adapters/overrides/yaml"
-	licsqlite "github.com/eitanity/kanonarion/internal/license/adapters/store/sqlite"
 	licapp "github.com/eitanity/kanonarion/internal/license/application"
 	licdomain "github.com/eitanity/kanonarion/internal/license/domain"
 	licports "github.com/eitanity/kanonarion/internal/license/ports"
@@ -83,21 +77,14 @@ import (
 	sbomcdx "github.com/eitanity/kanonarion/internal/sbom/adapters/generator/cyclonedx"
 	sbomnative "github.com/eitanity/kanonarion/internal/sbom/adapters/nativefacts"
 	sbomorigin "github.com/eitanity/kanonarion/internal/sbom/adapters/origin/fetchfacts"
-	sbomstore "github.com/eitanity/kanonarion/internal/sbom/adapters/store/sqlite"
 	sbomvendortree "github.com/eitanity/kanonarion/internal/sbom/adapters/vendortree"
 	sbomapp "github.com/eitanity/kanonarion/internal/sbom/application"
 
-	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
-
-	stalesqlite "github.com/eitanity/kanonarion/internal/staleness/adapters/store/sqlite"
 	staleports "github.com/eitanity/kanonarion/internal/staleness/ports"
-
-	stdlibsqlite "github.com/eitanity/kanonarion/internal/stdlib/adapters/store/sqlite"
 
 	vulncallgraph "github.com/eitanity/kanonarion/internal/vuln/adapters/callgraph"
 	vulnfetch "github.com/eitanity/kanonarion/internal/vuln/adapters/fetch"
 	"github.com/eitanity/kanonarion/internal/vuln/adapters/reachability"
-	vulnsqlite "github.com/eitanity/kanonarion/internal/vuln/adapters/store/sqlite"
 	vulnvendorclosure "github.com/eitanity/kanonarion/internal/vuln/adapters/vendorclosure/vendortree"
 	govulncheck "github.com/eitanity/kanonarion/internal/vuln/adapters/vuln/govulncheck"
 	osvdb "github.com/eitanity/kanonarion/internal/vuln/adapters/vulndb/osv"
@@ -108,13 +95,12 @@ import (
 	walkfetcher "github.com/eitanity/kanonarion/internal/walk/adapters/fetcher/local"
 	walkretry "github.com/eitanity/kanonarion/internal/walk/adapters/fetcher/retrying"
 	walkgomod "github.com/eitanity/kanonarion/internal/walk/adapters/gomod/xmod"
-	walksqlite "github.com/eitanity/kanonarion/internal/walk/adapters/walks/sqlite"
 	walkapp "github.com/eitanity/kanonarion/internal/walk/application"
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
 )
 
-// Container is the composition root for the CLI. It opens a single mirror.db
-// handle, wires all adapters, and exposes all use cases as interface fields.
+// Container is the composition root for the CLI. It wires every adapter over
+// one storage value and exposes all use cases as interface fields.
 type Container struct {
 	// Config is the resolved store configuration for this invocation.
 	// Preferences have already been applied to logLevel/jsonOut by root's
@@ -146,6 +132,12 @@ type Container struct {
 	// run is actually using — resolving it a second time reads the host again and
 	// can produce a different number from the one in force.
 	CallgraphBound extextractor.CallgraphBound
+
+	// cgAnalyser and cgFrames are where the invocation's build frame is wired:
+	// the frame analyses run under, and the frame reads select. See
+	// adoptDeclaredFrame.
+	cgAnalyser *cganalyser.Analyser
+	cgFrames   cgports.CallGraphFrameSelector
 
 	// license
 	ExtractLicense     ExtractLicenseUseCase
@@ -229,46 +221,11 @@ type Container struct {
 	// staleness. The ledger of latest-version lookups, read and written by
 	// every command that reports how far behind a dependency is.
 	StalenessLedger staleports.Ledger
-}
 
-// NewContainer opens a single mirror.db with all migrations applied, wires all
-// adapters from that handle, and returns the populated Container together with
-// a cleanup function that closes the DB.
-//
-// cfg is the resolved store configuration; callers should pass activeConfig
-// from the CLI layer. goBinary may be empty (falls back to PATH).
-// skipVCSVerify is forwarded to the fetch use case for the walk pipeline.
-// openMigratedStore opens mirror.db and applies every migration this build
-// knows, refusing a store that already carries migrations it does not.
-//
-// Opened without migrations, then judged, then migrated. This is the operating
-// path's only door into the store, so it is where an older binary meeting a
-// newer store has to be stopped: schema_migrations is keyed on (module,
-// version), so this binary's own migrations all appear applied and nothing
-// errors — the store just holds tables and constraints shaped by a later build.
-// The failure that follows is not an open failure but a write one, per
-// statement, and every one of them was logged and stepped over: a full scan
-// that persisted nothing and still printed a summary.
-//
-// `store info` deliberately does not come through here — it opens with nil
-// migrations and never applies any — so the command that names the remedy stays
-// available after this refuses.
-func openMigratedStore(dbPath string, intent sqlitestore.Intent) (sqlitestore.DB, error) {
-	dbHandle, err := sqlitestore.Open(dbPath, nil, intent)
-	if err != nil {
-		return nil, fmt.Errorf("opening database: %w", err)
-	}
-	state, err := readStoreSchemaState(dbHandle)
-	if err != nil {
-		return nil, errors.Join(err, dbHandle.Close())
-	}
-	if state.isNewer() {
-		return nil, errors.Join(newerStoreError(dbPath, state), dbHandle.Close())
-	}
-	if err := sqlitestore.Apply(dbHandle, allMigrations()); err != nil {
-		return nil, errors.Join(fmt.Errorf("opening database: %w", err), dbHandle.Close())
-	}
-	return dbHandle, nil
+	// Audit is the backend's assurance log; ConfigHashes is its memory of the
+	// last config hash that log recorded, nil when it keeps none.
+	Audit        fetchports.AuditSink
+	ConfigHashes configports.ConfigHashLedger
 }
 
 // offlineStdlibAnchor reports whether this run anchors the standard library to
@@ -291,28 +248,66 @@ func releaseStore(closeStore func() error) {
 	_ = closeStore() //nolint:errcheck // nothing committed is lost; see above
 }
 
+// openStorage opens the backend req.Config selects; a test swaps it to run
+// the CLI over a supplied backend.
+var openStorage = openConfiguredStorage
+
+// openConfiguredStorage is the one resolver every command opens its store
+// through. A configuration naming a backend this binary did not register is a
+// precondition failure.
+func openConfiguredStorage(req storage.Request) (*storage.Storage, error) {
+	ctx := context.Background()
+	if err := walkIDLookup.beforeOpen(ctx, req.StoreRoot); err != nil {
+		return nil, err
+	}
+	req.Command, req.OnBlobRefused = invokedCommand, blobRefusals.observe
+	st, err := composition.OpenStorage(ctx, req)
+	if errors.Is(err, storage.ErrBackendNotRegistered) {
+		return nil, &exitError{code: ExitConfig, msg: err.Error()}
+	}
+	if err == nil {
+		if rerr := walkIDLookup.afterOpen(ctx, st); rerr != nil {
+			return nil, errors.Join(rerr, storageCloser(st)())
+		}
+	}
+	return st, err //nolint:wrapcheck // the backend's text is the refusal
+}
+
+// NewContainer opens the store under storeRoot and returns the populated
+// Container together with a cleanup function that closes the store.
+//
+// cfg is the resolved store configuration; callers should pass activeConfig
+// from the CLI layer. goBinary may be empty (falls back to PATH).
+// skipVCSVerify is forwarded to the fetch use case for the walk pipeline.
 func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg domain.Config, logger *slog.Logger) (*Container, func() error, error) {
 	// The store root is created only for a command that declared it writes
 	// records. Every other command gets a container over a store that already
 	// exists, which is why a mistyped --store-root now reaches the caller as a
 	// refusal instead of as an empty store with a truthful-sounding answer.
-	intent := storeOpenIntent()
-	if err := ensureStoreRoot(storeRoot, intent); err != nil {
-		return nil, nil, err
-	}
-
-	dbPath := filepath.Join(storeRoot, "mirror.db")
-	dbHandle, err := openMigratedStore(dbPath, intent)
+	st, err := openStorage(storage.Request{
+		StoreRoot: storeRoot,
+		Intent:    storeOpenIntent(),
+		SetAside:  storeSetAside.report,
+		Logger:    logger,
+		Config:    cfg,
+	})
 	if err != nil {
 		return nil, nil, err
 	}
+	return NewContainerFrom(st, storeRoot, goproxy, goBinary, skipVCSVerify, cfg, logger)
+}
 
-	cleanup := func() error {
-		if cerr := dbHandle.Close(); cerr != nil {
-			return fmt.Errorf("closing database: %w", cerr)
-		}
-		return nil
+// NewContainerFrom wires every adapter over st and returns the Container with
+// a cleanup that closes st. It owns st: a refusal closes it before returning.
+//
+// storeRoot is where the checksum-database cache and the call-graph child's
+// --store-root live, not where records are stored.
+func NewContainerFrom(st *storage.Storage, storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg domain.Config, logger *slog.Logger) (*Container, func() error, error) {
+	closeStore := storageCloser(st)
+	if err := admitStorage(st, storeRoot); err != nil {
+		return nil, nil, errors.Join(err, closeStore())
 	}
+	cleanup := closeStore
 
 	// ---- shared infrastructure ----
 	// The container reads the clock the CLI reads rather than constructing its
@@ -332,63 +327,39 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	// none is computed as a difference between two clock readings.
 	clk := cliClock
 	stopwatch := clock.Monotonic{}
-	signer := noopsigner.New()
-	localBlobs := blobstore.New(storeRoot)
-	cleanOrphanedBlobTemps(localBlobs, logger)
+	signer := storageSigner(st)
 	vcs := fetchvcs.New()
 
-	blobs, sumdb, proxyAdapter, err := selectFetchAdapters(storeRoot, goproxy, goBinary, localBlobs, dbHandle, logger)
+	blobs, sumdb, proxyAdapter, err := selectFetchAdapters(cfg.Storage.SumDBCacheDir(storeRoot), goproxy, goBinary, st.Blobs, closeStore, logger)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	// ---- factstore (auditing) ----
-	rawStore := fetchsqlite.New(dbHandle)
-	rawStore.ReportSetAside(storeSetAside.report)
-	factStore, err := fetchsqlite.NewAuditingStore(rawStore, filepath.Join(storeRoot, "audit.jsonl"))
-	if err != nil {
-		_ = dbHandle.Close()
-		return nil, nil, fmt.Errorf("creating auditing fetch store: %w", err)
-	}
-
-	// Re-address artefacts written under the old store-chosen blob handles so an
-	// existing store survives the change to identity addressing. Runs once,
-	// guarded by a marker file.
-	if aerr := adoptLegacyBlobs(dbHandle, localBlobs, storeRoot, logger); aerr != nil {
-		logger.Warn("could not re-address existing blobs by artefact identity", "error", aerr)
-	}
-
-	// ---- store adapters (all share dbHandle) ----
-	walkStore := walksqlite.New(dbHandle)
-	extStore := extsqlite.New(dbHandle)
-	licStore := licsqlite.New(dbHandle)
-	ifaceStore := ifacesqlite.New(dbHandle)
-	cgStore := cgsqlite.New(dbHandle)
+	// ---- stores, all from the storage value ----
+	factStore, auditSink := st.Facts, st.Audit
+	walkStore, extStore, licStore, ifaceStore := st.Walks, st.Extractions, st.Licenses, st.Interfaces
+	cgStore, exStore, vulnStore, sbomStore := st.CallGraphs, st.Examples, st.Vulnerabilities, st.SBOMs
 	// Which working tree the reader is standing in. A query about a local
 	// coordinate is then answered from THAT tree's newest generation rather than
 	// from whichever tree was analysed last — and from outside any module, or in a
 	// module the ledger has never been run in, the read is exactly what it was.
-	cgStore.PreferWorktree(callerWorktree(logger))
-	// A generation this build cannot reproduce is composed around and named; see
-	// storeSetAside for where.
-	cgStore.ReportSetAside(storeSetAside.report)
-	licStore.ReportSetAside(storeSetAside.report)
-	walkStore.ReportSetAside(storeSetAside.report)
-	extStore.ReportSetAside(storeSetAside.report)
-	exStore := exsqlite.New(dbHandle)
-	exStore.ReportSetAside(storeSetAside.report)
-	vulnStore := vulnsqlite.New(dbHandle)
-	sbomStore := sbomstore.New(dbHandle)
+	// A backend without the preference is read as it was before trees could be
+	// told apart.
+	if wp, ok := cgStore.(interface {
+		PreferWorktree(cgports.WorktreePreference)
+	}); ok {
+		wp.PreferWorktree(callerWorktree(logger))
+	}
 
 	// ---- fetch use cases ----
 	fetchUC := fetchapp.NewFetchModuleUseCase(
 		proxyAdapter, vcs, blobs, factStore,
 		sumdb, clk, stopwatch, "", logger,
-	).WithSigner(signer, factStore).
+	).WithSigner(signer, st.Attestations).
 		// The write side keeps the stronger of an existing and an incoming record
 		// unless the operator asked for the weaker one, and emits the refusal (or
 		// the permitted downgrade) into the same append-only log the writes go to.
-		WithAudit(factStore).
+		WithAudit(auditSink).
 		WithAllowVerificationDowngrade(allowVerificationDowngrade)
 	if modcacheMode {
 		fetchUC = fetchUC.WithModcacheMode()
@@ -400,7 +371,11 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	// hard, while an absent entry falls through to network sumdb verification.
 	// In --from-modcache mode go.sum is already the sole anchor (via sumdb), so
 	// this is skipped.
-	fetchUC, err = withProjectGoSumAnchor(fetchUC, dbHandle, logger)
+	fetchUC, err = withProjectGoSumAnchor(fetchUC, closeStore, logger)
+	if err != nil {
+		return nil, nil, err
+	}
+	fetchUC, err = withPrivateModules(fetchUC, closeStore, logger)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -418,7 +393,7 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	}
 	localFetcher := walklocalfs.New(blobs, factStore, clk)
 	resolver := walkapp.NewGraphResolver(parser, fetcher, blobs, clk, "", logger).
-		WithBuildListResolver(walkbuildlist.New(goBinary, logger).WithTarget(declaredTarget))
+		WithBuildListResolver(walkbuildlist.New(goBinary, logger).WithTarget(declaredTarget).WithTinyGo(declaredTinyGo))
 	// The stdlib chain of custody has two anchors. On the network path it uses
 	// go.dev/dl's published checksum plus a googlesource commit. In --from-modcache
 	// mode the run is fully offline, so it anchors instead to the local toolchain
@@ -434,14 +409,18 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	// environment may leave the building — and only the second one governs here.
 	if offlineStdlibAnchor(modcacheMode) {
 		resolver = resolver.WithStdlibAcquirer(
-			composition.NewOfflineStdlibAcquirer(dbHandle, goBinary, clk, factStore, logger, storeSetAside.report), skipVCSVerify)
+			composition.NewOfflineStdlibAcquirer(st.Stdlib, goBinary, clk, auditSink, logger), skipVCSVerify)
 	} else {
 		resolver = resolver.WithStdlibAcquirer(
-			composition.NewStdlibAcquirer(dbHandle, blobs, clk, factStore, logger, storeSetAside.report), skipVCSVerify)
+			composition.NewStdlibAcquirer(st.Stdlib, blobs, clk, auditSink, logger), skipVCSVerify)
 	}
+	// TinyGo custody's release leg follows the stdlib's offline rule: serve a
+	// held measurement and reach nothing when the run or environment is offline.
+	resolver = resolver.WithTinyGoReleaseAcquirer(
+		composition.NewTinyGoReleaseAcquirer(st.TinyGoReleases, clk, logger, offlineStdlibAnchor(modcacheMode)))
 	walker := walkapp.NewWalker(resolver, fetcher, localFetcher, clk, stopwatch, 0, logger)
 
-	executeWalkUC := walkapp.NewExecuteWalkUseCase(walker, walkStore, "", "", logger).WithAudit(factStore)
+	executeWalkUC := walkapp.NewExecuteWalkUseCase(walker, walkStore, "", "", logger).WithAudit(auditSink)
 	queryWalksUC := walkapp.NewQueryWalksUseCase(walkStore)
 	diffWalksUC := walkapp.NewDiffWalksUseCase(walkStore)
 
@@ -449,11 +428,11 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	licExtractUC := licapp.NewExtractLicenseUseCase(licapp.Config{
 		Facts: factStore, Blobs: blobs, Licenses: licStore,
 		Detector: licdet.New(), Clock: clk, Stopwatch: stopwatch, Logger: logger,
-	}).WithAudit(factStore)
+	}).WithAudit(auditSink)
 	ifaceExtractUC := ifaceapp.NewExtractInterfaceUseCase(ifaceapp.Config{
 		Facts: factStore, Blobs: blobs, Store: ifaceStore,
 		Extractor: ifaceext.New("0.1.0", clk), Clock: clk, Stopwatch: stopwatch, Logger: logger,
-	}).WithAudit(factStore)
+	}).WithAudit(auditSink)
 	cganalyser.SetToolchainProbe(goToolchainVersionProbe)
 	// Where the analysis's own toolchain keeps the standard library, the module
 	// cache and the files it generates. The analyser renders every recorded source
@@ -465,7 +444,8 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	// child's to. This process is one or the other, never both: as a child it
 	// writes the lines its parent's stall detector reads, and as a parent it
 	// forwards what its children wrote.
-	cgAnalyser := cganalyser.New("0.1.0", goBinary, logger).WithProgress(callgraphNarration)
+	cgAnalyser := cganalyser.New("0.1.0", goBinary, logger).WithProgress(callgraphNarration).
+		WithIgnoredFiles(reportIgnoredPackages)
 	// A module analysed in isolation is its own main module, and the load runs
 	// with the network off, so every go.mod minimal version selection reads and
 	// every dependency the type checker compiles has to be in a module cache
@@ -479,29 +459,28 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 		Stopwatch:  stopwatch,
 		Exclusions: cfg.Callgraph.Exclude,
 		Toolchain:  runToolchainNamer,
-	}).WithAudit(factStore)
+	}).WithAudit(auditSink)
 	cgLocalExtractUC := cgapp.NewExtractLocalCallGraphUseCase(cgapp.LocalConfig{
 		Store: cgStore, Analyser: cgAnalyser, Clock: clk, Stopwatch: stopwatch, Logger: logger,
-	}).WithAudit(factStore)
+	}).WithAudit(auditSink)
 	// The recorded chain of custody, read by the stdlib call-graph stage to anchor
 	// its record and by every command asked about the stdlib coordinate.
-	stdlibCustody := stdlibsqlite.New(dbHandle)
-	stdlibCustody.ReportSetAside(storeSetAside.report)
+	stdlibCustody := st.Stdlib
 	cgStdlibExtractUC := cgapp.NewExtractStdlibCallGraphUseCase(cgapp.StdlibConfig{
 		Store: cgStore, Analyser: cgAnalyser,
 		Toolchains: newToolchainLocator(goBinary),
 		Custody:    stdlibCustodyProjection{reader: stdlibCustody},
 		Clock:      clk, Stopwatch: stopwatch, Logger: logger,
-	}).WithAudit(factStore)
+	}).WithAudit(auditSink)
 	exExtractUC := exapp.NewExtractExampleUseCase(exapp.Config{
 		Facts: factStore, Blobs: blobs, Examples: exStore,
 		Parser: exgoast.New(),
 		Clock:  clk, Stopwatch: stopwatch, Logger: logger,
-	}).WithAudit(factStore)
+	}).WithAudit(auditSink)
 
 	kanonarionBinary, err := os.Executable()
 	if err != nil {
-		_ = dbHandle.Close()
+		_ = closeStore() //nolint:errcheck // the refusal is the error returned
 		return nil, nil, fmt.Errorf("resolving executable path for callgraph subprocess: %w", err)
 	}
 	// One worker runs every stage for its module, so the pool cannot bound the
@@ -522,7 +501,12 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 		cgModcacheDir = modcacheDir
 	}
 	cgExtraArgs := extextractor.CallGraphSubprocessArgs(storeRoot, cgModcacheDir)
-	adapterExtractor := extextractor.NewAdapterExtractor(licExtractUC, ifaceExtractUC, cgSubprocessExec, cgStore, cgapp.PipelineVersion, cgExtraArgs, exExtractUC).
+	// The child selects its backend from the same file, or it would write its
+	// records into a different store from the one this process reads.
+	if path, ok := explicitConfigPath(); ok {
+		cgExtraArgs = append(cgExtraArgs, "--config="+absOrSelf(path))
+	}
+	adapterExtractor := extextractor.NewAdapterExtractor(licExtractUC, ifaceExtractUC, cgSubprocessExec, st.CallGraphOutcomes, cgapp.PipelineVersion, cgExtraArgs, exExtractUC).
 		WithLogger(logger).
 		WithCallgraphConcurrency(callgraphBound.Workers).
 		// The bound is sized once; the host is re-read before each analysis
@@ -546,10 +530,10 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 		Logger:           logger,
 	})
 	if err != nil {
-		_ = dbHandle.Close()
+		_ = closeStore() //nolint:errcheck // the refusal is the error returned
 		return nil, nil, fmt.Errorf("wiring extract use case: %w", err)
 	}
-	extractUC = extractUC.WithAudit(factStore)
+	extractUC = extractUC.WithAudit(auditSink)
 	queryExtractUC := extractapp.NewQueryExtractionUseCase(extStore)
 
 	// ---- license query / notice / compatibility / diff use cases ----
@@ -572,15 +556,15 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	queryExamplesUC := exapp.NewQueryExamplesUseCase(exStore)
 
 	// ---- vuln use cases ----
-	scanner := govulncheck.New("v1", vulnStore).WithLogger(logger).WithTarget(declaredTarget)
-	database := osvdb.New(nil, vulnStore, clk).WithLogger(logger)
+	scanner := govulncheck.New("v1", vulnStore).WithLogger(logger).WithTarget(declaredTarget).WithTinyGo(declaredTinyGo)
+	database := osvdb.New(nil, vulnStore, clk).WithLogger(logger).WithBase(cfg.VulnDB.Mirror())
 	reach := reachability.New()
 	cgLoader := reachability.NewCallGraphStoreLoader(cgStore, cgapp.PipelineVersion)
 	// One annotator for the whole container, so the module scanner, the walk scan
 	// and the re-scan share its memo of served graphs: serving a graph is a blob
 	// decode and an edge reconstruction, and a walk's records share their routes.
 	routeAnnotator := reachability.NewDispatchAnnotator(
-		reachability.NewCallSiteStoreReader(cgStore, cgapp.PipelineVersion), logger)
+		reachability.NewCallSiteStoreReader(cgStore, cgapp.PipelineVersion).WithReadFrame(declaredReadFrame), logger)
 
 	// The same ceiling: a reachability scan spawns the same analysis of the same
 	// module, and a ceiling that applied only on the extract path would leave the
@@ -602,12 +586,12 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 		// and that download is a persist like any other. The walk and re-scan use
 		// cases carry the same sink, so an advisory set arriving by any route is
 		// witnessed once, by the route that fetched it.
-		WithAudit(factStore)
+		WithAudit(auditSink)
 	walkScannerUC := vulnapp.NewScanWalkUseCase(
 		walkStore, vulnStore, moduleScannerUC,
 		vulnfetch.NewFetchModuleAdapter(fetchUC),
 		clk, vulnapp.PipelineVersion, logger,
-	).WithAudit(factStore).WithHostMemory(meminfo.New()).
+	).WithAudit(auditSink).WithHostMemory(meminfo.New()).
 		WithRouteAnnotator(routeAnnotator).
 		// A vendored project's analysis surface is its vendor/ tree. The reader is
 		// built over the vendor context's own modules.txt parser rather than a
@@ -619,7 +603,7 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 		walkStore, vulnStore, moduleScannerUC,
 		vulnfetch.NewFetchModuleAdapter(fetchUC),
 		clk, vulnapp.PipelineVersion, logger,
-	).WithAudit(factStore).WithHostMemory(meminfo.New()).
+	).WithAudit(auditSink).WithHostMemory(meminfo.New()).
 		WithRouteAnnotator(routeAnnotator).
 		// The same reader the scan gets, for the same reason and one more: a
 		// re-scan reaches for the walk's project directory to reproduce the frame
@@ -641,7 +625,7 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 		WithProjectDirs(walkProjectDirs{walks: queryWalksUC}).
 		WithWalkModules(walkProjectDirs{walks: queryWalksUC})
 	queryVulnUC := newSearchedVulnQuery(vulnapp.NewQueryVulnUseCase(vulnStore), negSearcher)
-	queryScanRunsUC := vulnapp.NewQueryScanRunsUseCase(vulnStore, walkStore)
+	queryScanRunsUC := vulnapp.NewQueryScanRunsUseCase(vulnStore, st.WalkPresence)
 	diffScanRunsUC := newSearchedDiffScanRuns(vulnapp.NewDiffScanRunsUseCase(vulnStore), negSearcher)
 
 	// ---- sbom use cases ----
@@ -668,7 +652,7 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	// use case reads it: a C library a cgo module ships inside its own zip is part
 	// of what the binary contains, so it belongs in the document that lists what
 	// ships. The native use cases further down share this handle.
-	nativeStore := nativesqlite.New(dbHandle)
+	nativeStore := st.Native
 	generateSBOMUC := sbomapp.NewGenerateSBOMUseCase(
 		walkStore, licStore, sbomStore,
 		sbomcdx.New(sbomPipelineVersion),
@@ -684,47 +668,47 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 		WithNativeComponents(sbomnative.New(nativeStore)).
 		// The SBOM is the artefact that leaves the building, so both producing one
 		// and handing a stored one back are appended to the assurance log.
-		WithAudit(factStore)
+		WithAudit(auditSink)
 	querySBOMUC := sbomapp.NewQuerySBOMUseCase(sbomStore)
 
 	// ---- directive use cases ----
-	dirStore := dirsqlite.New(dbHandle)
+	dirStore := st.Directives
 	directiveParser := dirxmod.New()
 	extractDirectivesUC := dirapp.NewExtractDirectivesUseCase(dirapp.Config{
-		Parser: directiveParser, Store: dirStore, Audit: factStore,
+		Parser: directiveParser, Store: dirStore, Audit: auditSink,
 		Clock: clk, Stopwatch: stopwatch, Logger: logger,
 	})
 	queryDirectivesUC := dirapp.NewQueryDirectivesUseCase(dirStore)
 	diffDirectivesUC := dirapp.NewDiffScansUseCase(dirStore)
 
 	// ---- godebug use cases ----
-	gdStore := gdsqlite.New(dbHandle)
+	gdStore := st.GoDebug
 	extractGoDebugUC := gdapp.NewExtractGoDebugUseCase(gdapp.Config{
 		// A vendored directive names the module vendor/modules.txt says owns
 		// the file, read by the vendor context's scanner through the godebug
 		// port — composed here, exactly as the fips scanner below is.
 		Scanner: gdgosrc.New(gdvendortree.New(venlocalfs.New(nil))),
-		Store:   gdStore, Audit: factStore,
+		Store:   gdStore, Audit: auditSink,
 		Clock: clk, Stopwatch: stopwatch, Logger: logger,
 	})
 	queryGoDebugUC := gdapp.NewQueryGoDebugUseCase(gdStore)
 
 	// ---- vendor use cases ----
-	venStore := vensqlite.New(dbHandle)
+	venStore := st.Vendor
 	extractVendorUC := venapp.NewExtractVendorUseCase(venapp.Config{
-		Scanner: venlocalfs.New(venzipsource.New(blobs)), Store: venStore, Audit: factStore,
+		Scanner: venlocalfs.New(venzipsource.New(blobs)), Store: venStore, Audit: auditSink,
 		Clock: clk, Stopwatch: stopwatch, Logger: logger,
 	})
 	queryVendorUC := venapp.NewQueryVendorUseCase(venStore)
 
 	// ---- fips use cases ----
-	fipsStore := fipssqlite.New(dbHandle)
+	fipsStore := st.FIPS
 	extractFIPSUC := fipsapp.NewExtractFIPSUseCase(fipsapp.Config{
 		// A vendored finding names the module vendor/modules.txt says owns the
 		// file, read by the vendor context's scanner through the fips port —
 		// the composition lives here so neither context reaches into the other.
 		Scanner: fipsgosrc.New(fipsvendortree.New(venlocalfs.New(nil))),
-		Store:   fipsStore, Audit: factStore,
+		Store:   fipsStore, Audit: auditSink,
 		Clock: clk, Stopwatch: stopwatch, Logger: logger,
 	})
 	queryFIPSUC := fipsapp.NewQueryFIPSUseCase(fipsStore)
@@ -732,12 +716,13 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	// ---- native use cases ----
 	extractNativeUC := nativeapp.NewExtractNativeUseCase(nativeapp.Config{
 		Facts: factStore, Blobs: blobs, Native: nativeStore,
-		Source: nativegosource.New(), Audit: factStore,
+		Source: nativegosource.New(), Audit: auditSink,
 		Clock: clk, Stopwatch: stopwatch, Logger: logger,
 	})
 	queryNativeUC := nativeapp.NewQueryNativeUseCase(nativeStore)
 
 	ctr := &Container{
+		cgAnalyser:  cgAnalyser,
 		Config:      cfg,
 		FetchModule: queryFetchUC,
 		QueryFetch:  queryFetchUC,
@@ -803,26 +788,47 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 		ExtractNative: extractNativeUC,
 		QueryNative:   queryNativeUC,
 
-		StalenessLedger: stalesqlite.New(dbHandle),
+		StalenessLedger: st.Staleness,
+
+		Audit:        auditSink,
+		ConfigHashes: st.ConfigHashes,
 	}
 
-	return ctr, cleanup, nil
+	if fs, ok := cgStore.(cgports.CallGraphFrameSelector); ok {
+		ctr.cgFrames = fs
+	}
+	ctr.adoptDeclaredFrame()
+	release := trackContainer(ctr)
+	return ctr, func() error { release(); return cleanup() }, nil
 }
 
-// ensureStoreRoot creates the store root for a command that writes records.
-func ensureStoreRoot(storeRoot string, intent sqlitestore.Intent) error {
-	if intent == sqlitestore.IntentCreate {
-		if err := os.MkdirAll(storeRoot, 0o750); err != nil {
-			return fmt.Errorf("creating store root %s: %w", storeRoot, err)
-		}
+// requireSQLiteBackend refuses a command that reads the SQLite backend's files
+// under the store root directly when the store is configured for another
+// backend; does says what the command does to those files.
+func requireSQLiteBackend(command, does string) error {
+	name, err := composition.ConfiguredBackend(activeConfig)
+	if err != nil {
+		return &exitError{code: ExitConfig, msg: err.Error()}
+	}
+	if name != sqlitestorage.Name {
+		return &exitError{code: ExitConfig, msg: fmt.Sprintf(
+			"%s %s; this store is configured for backend %q", command, does, name)}
 	}
 	return nil
 }
 
+// absOrSelf is path made absolute, or path itself when that fails.
+func absOrSelf(path string) string {
+	if abs, err := filepath.Abs(path); err == nil {
+		return abs
+	}
+	return path
+}
+
 // selectFetchAdapters wires the blob store, checksum client and module proxy
 // for the network path, or their module-cache equivalents under
-// --from-modcache.
-func selectFetchAdapters(storeRoot, goproxy, goBinary string, localBlobs *blobstore.Store, dbHandle sqlitestore.DB, logger *slog.Logger) (fetchports.BlobStore, fetchports.SumDBClient, fetchports.ModuleProxy, error) {
+// --from-modcache. sumdbDir is the checksum-database cache.
+func selectFetchAdapters(sumdbDir, goproxy, goBinary string, localBlobs fetchports.BlobStore, closeStore func() error, logger *slog.Logger) (fetchports.BlobStore, fetchports.SumDBClient, fetchports.ModuleProxy, error) {
 	// Adapter selection. In the default path the network proxy, the network
 	// checksum-database client, and the content-addressed blob store are wired.
 	// In --from-modcache mode three adapters are swapped for module-cache-backed
@@ -830,16 +836,24 @@ func selectFetchAdapters(storeRoot, goproxy, goBinary string, localBlobs *blobst
 	// local go.sum, and the fetch pipeline records coordinate-derived handles
 	// instead of writing blobs.
 	var (
-		blobs        fetchports.BlobStore = localBlobs
+		blobs        = localBlobs
 		sumdb        fetchports.SumDBClient
 		proxyAdapter fetchports.ModuleProxy
 	)
 	if modcacheMode {
-		blobs = mcblobstore.New(modcacheDir, localBlobs)
+		// The module cache is linked into the backend's blobs, so they must be
+		// files on this host.
+		delegate, ok := localBlobs.(mcblobstore.Delegate)
+		if !ok {
+			_ = closeStore() //nolint:errcheck // the refusal is the error returned
+			return nil, nil, nil, &exitError{code: ExitConfig, msg: fmt.Sprintf(
+				"--from-modcache needs a blob store that holds files on this host; the storage backend's blob store (%T) does not", localBlobs)}
+		}
+		blobs = mcblobstore.New(modcacheDir, delegate)
 		proxyAdapter = mcproxy.New(modcacheDir, goBinary, filepath.Dir(goSumPath), logger)
 		gsClient, gerr := gosumfile.New(goSumPath, logger)
 		if gerr != nil {
-			_ = dbHandle.Close()
+			_ = closeStore() //nolint:errcheck // the refusal is the error returned
 			return nil, nil, nil, fmt.Errorf("loading go.sum for modcache mode: %w", gerr)
 		}
 		sumdb = gsClient
@@ -850,7 +864,7 @@ func selectFetchAdapters(storeRoot, goproxy, goBinary string, localBlobs *blobst
 		// a policy answer (GOSUMDB=off, GOPRIVATE, no hash line) returns on the first
 		// attempt. In --from-modcache mode the go.sum adapter above reads a local
 		// file with no network to flake, so it is left undecorated.
-		sumdb = sumdbretry.New(fetchsumdb.New(filepath.Join(storeRoot, "sumdb")), logger)
+		sumdb = sumdbretry.New(fetchsumdb.New(sumdbDir), logger)
 		dp, perr := fetchproxy.New(goproxy, false)
 		switch {
 		case fetchproxy.IsRefusal(perr):
@@ -870,32 +884,70 @@ func selectFetchAdapters(storeRoot, goproxy, goBinary string, localBlobs *blobst
 			logger.Warn("module fetching refused by the environment; reads continue, fetches will fail", "reason", perr)
 			proxyAdapter = fetchproxy.Refusing(perr)
 		case perr != nil:
-			_ = dbHandle.Close()
+			_ = closeStore() //nolint:errcheck // the refusal is the error returned
 			return nil, nil, nil, fmt.Errorf("creating proxy adapter: %w", perr)
 		default:
 			proxyAdapter = dp
 		}
+		proxyAdapter = withPrivateRoute(proxyAdapter, goBinary, projectGoSumPath, logger)
 	}
 	return blobs, sumdb, proxyAdapter, nil
 }
 
-// cleanOrphanedBlobTemps removes temp files a killed write left in the blob
-// store, logging rather than failing.
-func cleanOrphanedBlobTemps(localBlobs *blobstore.Store, logger *slog.Logger) {
-	if n, freed, cleanErr := localBlobs.CleanOrphanedTemps(); cleanErr != nil {
-		logger.Warn("failed to clean orphaned blob temp files", "error", cleanErr)
-	} else if n > 0 {
-		logger.Debug("cleaned orphaned blob temp files", "count", n, "bytes", freed)
+// withPrivateRoute sends every module GOPRIVATE/GONOPROXY names to the module
+// cache, where the go command fetches it as the user, so no proxy ever sees its
+// path. goSum is the project's; without a pattern the proxy is unchanged.
+func withPrivateRoute(proxyAdapter fetchports.ModuleProxy, goBinary, goSum string, logger *slog.Logger) fetchports.ModuleProxy {
+	if !goenv.HasNoProxyPatterns() {
+		return proxyAdapter
 	}
+	return privateproxy.New(proxyAdapter, goenv.NoProxy, func(ctx context.Context) (fetchports.ModuleProxy, error) {
+		dir, err := goEnvGOMODCACHE(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return mcproxy.New(dir, goBinary, filepath.Dir(goSum), logger), nil
+	})
+}
+
+// withPrivateModules anchors the private modules withPrivateRoute sends to the
+// module cache on the project go.sum; with none, the use case refuses them.
+func withPrivateModules(fetchUC *fetchapp.FetchModuleUseCase, closeStore func() error, logger *slog.Logger) (*fetchapp.FetchModuleUseCase, error) {
+	if modcacheMode {
+		return fetchUC, nil
+	}
+	uc, err := privateFetchUseCase(fetchUC, projectGoSumPath, logger)
+	if err != nil {
+		_ = closeStore() //nolint:errcheck // the refusal is the error returned
+		return nil, err
+	}
+	return uc, nil
+}
+
+// privateFetchUseCase anchors private modules on goSum, or refuses them when
+// goSum is empty. Without a private pattern fetchUC is unchanged.
+func privateFetchUseCase(fetchUC *fetchapp.FetchModuleUseCase, goSum string, logger *slog.Logger) (*fetchapp.FetchModuleUseCase, error) {
+	if !goenv.HasNoProxyPatterns() {
+		return fetchUC, nil
+	}
+	var anchor fetchports.SumDBClient
+	if goSum != "" {
+		gsClient, gerr := gosumfile.New(goSum, logger)
+		if gerr != nil {
+			return nil, fmt.Errorf("loading project go.sum for private modules: %w", gerr)
+		}
+		anchor = gsClient
+	}
+	return fetchUC.WithPrivateModules(goenv.NoProxy, anchor), nil
 }
 
 // withProjectGoSumAnchor layers the walk root's go.sum on the network path as
 // an extra offline integrity anchor, when there is one.
-func withProjectGoSumAnchor(fetchUC *fetchapp.FetchModuleUseCase, dbHandle sqlitestore.DB, logger *slog.Logger) (*fetchapp.FetchModuleUseCase, error) {
+func withProjectGoSumAnchor(fetchUC *fetchapp.FetchModuleUseCase, closeStore func() error, logger *slog.Logger) (*fetchapp.FetchModuleUseCase, error) {
 	if !modcacheMode && projectGoSumPath != "" {
 		gsClient, gerr := gosumfile.New(projectGoSumPath, logger)
 		if gerr != nil {
-			_ = dbHandle.Close()
+			_ = closeStore() //nolint:errcheck // the refusal is the error returned
 			return nil, fmt.Errorf("loading project go.sum for verification: %w", gerr)
 		}
 		fetchUC = fetchUC.WithProjectGoSum(gsClient)
@@ -977,4 +1029,79 @@ func licenseOverrideEntries(cfg domain.Config) map[string]licdomain.LicenseOverr
 		}
 	}
 	return entries
+}
+
+// storageCloser is st's Close, or a no-op for a value with nothing to close.
+func storageCloser(st *storage.Storage) func() error {
+	if st == nil || st.Close == nil {
+		return func() error { return nil }
+	}
+	return st.Close
+}
+
+// storageSigner is st's signer; a backend that supplies none gets the no-op,
+// which is the OSS default.
+func storageSigner(st *storage.Storage) fetchports.Signer {
+	if st.Signer == nil {
+		return noopsigner.New()
+	}
+	return st.Signer
+}
+
+// admitStorage refuses an incomplete value and a store this build must not
+// write. Every command refuses a newer store, reads included, because every
+// command builds a container. NewContainer takes no context, so the checks,
+// which read only the backend's own bookkeeping, run under their own.
+//
+//nolint:contextcheck // see above; NewContainer keeps its signature
+func admitStorage(st *storage.Storage, storeRoot string) error {
+	if err := st.Validate(); err != nil {
+		return fmt.Errorf("opening store: %w", err)
+	}
+	if st.Writable == nil {
+		return nil
+	}
+	ctx := context.Background()
+	werr := st.Writable(ctx)
+	if werr == nil || !errors.Is(werr, storage.ErrStoreSchemaNewer) {
+		return werr
+	}
+	if st.Schema == nil {
+		return &exitError{code: ExitConfig, msg: werr.Error()}
+	}
+	state, err := st.Schema.SchemaState(ctx)
+	if err != nil {
+		return errors.Join(werr, err)
+	}
+	// The refusal names the store as the backend does; one that names nothing
+	// is named by its root.
+	location := state.Location
+	if location == "" {
+		location = storeRoot
+	}
+	return newerStoreError(location, schemaStateOf(state))
+}
+
+// adoptDeclaredFrame wires the invocation's declared build frame into the
+// call-graph analyser and the frame every call-graph read selects: the
+// declaration, or this host when nothing was declared. It runs when the
+// container is built and again from declare whenever a declaration is settled
+// while the container is open.
+func (c *Container) adoptDeclaredFrame() {
+	if c.cgAnalyser != nil {
+		c.cgAnalyser.WithTarget(declaredTarget).WithTinyGo(declaredTinyGo)
+	}
+	if c.cgFrames != nil {
+		c.cgFrames.WithReadFrame(invocationFrame())
+	}
+}
+
+// declaredReadFrame is invocationFrame and the flag a remedy carries to reach it.
+func declaredReadFrame() (cgdomain.BuildFrame, string) {
+	return invocationFrame(), targetFlagHint()
+}
+
+// invocationFrame is the build frame this invocation's call-graph reads select.
+func invocationFrame() cgdomain.BuildFrame {
+	return cganalyser.DeclaredFrame(declaredTarget, declaredTinyGo)
 }

@@ -68,3 +68,48 @@ func TestSetContentHash_FetchRecordMarshalFailure(t *testing.T) {
 		t.Errorf("SetContentHash() error = %q, want it to name the failing coordinate", err.Error())
 	}
 }
+
+func TestIdentityHash_MarshalFailure(t *testing.T) {
+	original := canonicalMarshal
+	t.Cleanup(func() { canonicalMarshal = original })
+	injected := errors.New("injected marshal failure")
+	canonicalMarshal = func(any) ([]byte, error) { return nil, injected }
+
+	if _, err := (WalkRecordHasher{}).IdentityHash(WalkRecord{}); !errors.Is(err, injected) {
+		t.Errorf("IdentityHash() error = %v, want it to wrap the injected error", err)
+	}
+}
+
+// TestNodeStatus_IsFailure: an unrecognised status counts as a failure.
+func TestNodeStatus_IsFailure(t *testing.T) {
+	for s, want := range map[NodeStatus]bool{
+		NodeSucceeded: false, NodeLocalReplace: false, NodeFetchFailed: true, NodeInternalPanic: true, NodeStatus(99): true,
+	} {
+		if got := s.IsFailure(); got != want {
+			t.Errorf("%v.IsFailure() = %v, want %v", s, got, want)
+		}
+	}
+}
+
+func TestCountNodeFailures(t *testing.T) {
+	a, b := coordinatetest.MustNew("example.com/a", "v1.0.0"), coordinatetest.MustNew("example.com/b", "v1.0.0")
+	rec := WalkRecord{PerNodeResults: map[coordinate.ModuleCoordinate]NodeResult{
+		a: {Status: NodeSucceeded}, b: {Status: NodeFetchFailed},
+	}}
+	if got := CountNodeFailures(rec); got != 1 {
+		t.Errorf("CountNodeFailures = %d, want 1", got)
+	}
+}
+
+func TestArtefactAbsenceNoun(t *testing.T) {
+	for s, want := range map[ResolutionSource]string{
+		ResolutionLocalMainModule: "local main module", ResolutionLocalReplace: "local replace",
+		ResolutionLocalWorkspaceMember: "workspace member", ResolutionStdlib: "Go standard library",
+		ResolutionTinyGo: "TinyGo toolchain", ResolutionDepthBounded: "requirement beyond the depth bound",
+		ResolutionMVS: "",
+	} {
+		if got := s.ArtefactAbsenceNoun(); got != want {
+			t.Errorf("%s.ArtefactAbsenceNoun() = %q, want %q", s, got, want)
+		}
+	}
+}

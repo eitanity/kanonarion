@@ -54,6 +54,24 @@ func (uc *QueryExamplesUseCase) ExampleHistory(ctx context.Context, coord coordi
 	return recs, nil
 }
 
+// ErrNoPipelineListing is returned by PipelinesHeld when the configured store
+// cannot list the pipelines a coordinate is held at.
+var ErrNoPipelineListing = errors.New("this example store cannot list the pipelines a coordinate is held at")
+
+// PipelinesHeld returns the pipeline versions the ledger holds coord at, oldest
+// first.
+func (uc *QueryExamplesUseCase) PipelinesHeld(ctx context.Context, coord coordinate.ModuleCoordinate) ([]string, error) {
+	r, ok := uc.store.(exampleports.PipelinesHeldReader)
+	if !ok {
+		return nil, ErrNoPipelineListing
+	}
+	held, err := r.PipelinesHeld(ctx, coord)
+	if err != nil {
+		return nil, fmt.Errorf("listing example pipelines for %s: %w", coord, err)
+	}
+	return held, nil
+}
+
 // ListExampleRecords returns summaries matching the given filter.
 func (uc *QueryExamplesUseCase) ListExampleRecords(ctx context.Context, filter exampleports.ExampleFilter) ([]exampleports.ExampleSummary, error) {
 	sums, err := uc.store.ListExampleRecords(ctx, filter)

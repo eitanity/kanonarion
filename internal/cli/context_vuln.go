@@ -8,6 +8,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
 	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
+	vulnports "github.com/eitanity/kanonarion/internal/vuln/ports"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
 )
@@ -343,7 +344,7 @@ func (b *vulnBatchCtx) anchoredVulnerabilities(ctx context.Context, coord coordi
 		}
 		rec, found, err := b.selectForBatch(recordsTheRunScanned(recs, run, coord), coord)
 		if err != nil {
-			return contextVulnerabilities{Status: sectionStatusReadError, Error: err.Error()}
+			return vulnSelectionFailed(err)
 		}
 		if !found {
 			continue
@@ -356,7 +357,7 @@ func (b *vulnBatchCtx) anchoredVulnerabilities(ctx context.Context, coord coordi
 	// the whole ledger answers — still in the anchored frame.
 	rec, found, err := b.selectForBatch(recs, coord)
 	if err != nil {
-		return contextVulnerabilities{Status: sectionStatusReadError, Error: err.Error()}
+		return vulnSelectionFailed(err)
 	}
 	if found {
 		return vulnRecordToContext(&rec, "", "")
@@ -382,7 +383,7 @@ func (b *vulnBatchCtx) anchoredVulnerabilities(ctx context.Context, coord coordi
 func (b *vulnBatchCtx) recordFirstVulnerabilities(ctx context.Context, coord coordinate.ModuleCoordinate, recs []vuldomain.VulnerabilityRecord, vulnUC QueryVulnUseCase) contextVulnerabilities {
 	rec, found, err := b.selectForBatch(recs, coord)
 	if err != nil {
-		return contextVulnerabilities{Status: sectionStatusReadError, Error: err.Error()}
+		return vulnSelectionFailed(err)
 	}
 	if !found {
 		return contextVulnerabilities{Status: sectionStatusNotRun}
@@ -472,6 +473,12 @@ func (b *vulnBatchCtx) nameRecordBasis(ctx context.Context, result *contextVulne
 	if anchor := b.frameFor(ctx, walkID); anchor.rooting.IsRecorded() {
 		result.WalkBasisFrame = string(anchor.rooting)
 	}
+}
+
+// vulnSelectionFailed is the section for a selection that did not serve a
+// record; see failedReadStatus.
+func vulnSelectionFailed(err error) contextVulnerabilities {
+	return contextVulnerabilities{Status: failedReadStatus(err, vulnports.ErrVulnConflict), Error: err.Error()}
 }
 
 // selectForBatch picks the record a batch report serves for one coordinate: in

@@ -1,6 +1,7 @@
 // Package builder implements ports.SymbolTableProber. It builds a probe binary
 // from a local Go workspace with inlining disabled (-gcflags='all=-l') and
-// reads the binary's symbol table via go tool nm.
+// reads the binary's symbol table via go tool nm. Under a TinyGo frame tinygo
+// builds it at -opt=0, the same guard against inlining.
 //
 // For binary targets, every main package the workspace declares is built
 // directly and their symbol tables unioned — a project with more than one main
@@ -25,6 +26,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -72,14 +74,14 @@ func combinedCapture(cmd *exec.Cmd) ([]byte, string, error) {
 // right. detail is the child's own account of the failure, returned so each
 // caller keeps its own wording, and carries the refusal in its place when this
 // host has nothing that can serve.
-func runChild(ctx context.Context, tc *goenv.Toolchains, root, goBin string, read capture, args ...string) ([]byte, string, error) {
+func runChild(ctx context.Context, tc *goenv.Toolchains, root, bin string, frame childFrame, read capture, args ...string) ([]byte, string, error) {
 	for {
-		cmd := childproc.CommandContext(ctx, goBin, args...) // #nosec G204 -- binary path is either "go" (hardcoded) or caller-supplied and trusted
+		cmd := childproc.CommandContext(ctx, bin, args...) // #nosec G204 -- binary path is "go", "tinygo" or caller-supplied and trusted
 		cmd.Dir = root
 		// A build the cancellation kills cannot remove its own work directory, so
 		// it gets a temp root this process removes once it has exited.
 		scratch, removeScratch := childproc.Scratch()
-		cmd.Env = append(tc.Apply(probeEnv(root)), scratch...)
+		cmd.Env = append(frame(tc.Apply(probeEnv(root))), scratch...)
 		out, detail, err := read(cmd)
 		removeScratch()
 		if err == nil {
@@ -95,9 +97,19 @@ func runChild(ctx context.Context, tc *goenv.Toolchains, root, goBin string, rea
 	}
 }
 
+// childFrame writes the build frame onto one child's environment, after the
+// toolchain's values.
+type childFrame func(env []string) []string
+
+// noFrame leaves a child's environment as the posture and toolchain built it.
+func noFrame(env []string) []string { return env }
+
 // Prober implements ports.SymbolTableProber.
 type Prober struct {
 	goBinary string
+	// target and tinygo are the declared build frame; zero declares the host.
+	target goenv.Target
+	tinygo goenv.TinyGo
 }
 
 // New constructs a Prober. goBinary may be empty (uses "go" from PATH).
@@ -110,6 +122,99 @@ func (p *Prober) goBin() string {
 	return p.goBinary
 }
 
+// WithTarget declares the platform the probe lists and builds for. The zero
+// value declares this host's pair, which every listing and build still pins.
+func (p *Prober) WithTarget(t goenv.Target) *Prober {
+	p.target = t
+	return p
+}
+
+// WithTinyGo declares a TinyGo frame: its GOROOT, platform and tags reach every
+// go list, and its artefact is built by tinygo for that target.
+func (p *Prober) WithTinyGo(f goenv.TinyGo) *Prober {
+	p.tinygo = f
+	return p
+}
+
+// listFrame is the frame a go list child resolves under: the platform, then
+// the TinyGo frame when one is declared, as the call-graph load applies them.
+func (p *Prober) listFrame(env []string) []string { return p.tinygo.Apply(p.target.Apply(env)) }
+
+// exportFrame is the frame the library harness's export data is compiled in.
+// gc cannot compile TinyGo's GOROOT, so a TinyGo frame lists exports for its
+// platform and tags against Go's own root, without cgo.
+func (p *Prober) exportFrame(env []string) []string {
+	if !p.tinygo.Declared() {
+		return p.listFrame(env)
+	}
+	out := slices.Clip(env)
+	out = append(out, "GOOS="+p.tinygo.GOOS(), "GOARCH="+p.tinygo.GOARCH())
+	if p.tinygo.GOARM() != "" {
+		out = append(out, "GOARM="+p.tinygo.GOARM())
+	}
+	return append(out, "CGO_ENABLED=0")
+}
+
+// listArgs puts TinyGo's tag set after the go subcommand, never in GOFLAGS.
+func (p *Prober) listArgs(args ...string) []string {
+	tags := p.tinygo.ListArgs()
+	if len(tags) == 0 || len(args) == 0 {
+		return args
+	}
+	return append(append([]string{args[0]}, tags...), args[1:]...)
+}
+
+// builder names the command that builds this frame's artefacts.
+func (p *Prober) builder() string {
+	if p.tinygo.Declared() {
+		return localdomain.ProbeBuilderTinyGo
+	}
+	return localdomain.ProbeBuilderGo
+}
+
+// buildsWasm reports whether this frame's artefact is a wasm module.
+func (p *Prober) buildsWasm() bool {
+	if p.tinygo.Declared() {
+		return p.tinygo.BuildsWasm()
+	}
+	return p.target.OrHost().GOARCH() == "wasm"
+}
+
+// frameFlag is the declaration as a refusal names it.
+func (p *Prober) frameFlag() string {
+	if p.tinygo.Declared() {
+		return "--tinygo " + p.tinygo.Target()
+	}
+	return "--target " + p.target.OrHost().String()
+}
+
+// WasmArtefactError is the refusal for a frame whose artefact is a wasm
+// module: the probe reads a symbol table, and this build has no reader for one.
+type WasmArtefactError struct {
+	// Flag is the declaration that selected the frame, as typed.
+	Flag string
+}
+
+func (e *WasmArtefactError) Error() string {
+	return fmt.Sprintf("%s builds a wasm module, and the probe reads a symbol table this build has no reader for in a wasm module", e.Flag)
+}
+
+// build compiles one package into outBin. go build disables inlining with
+// -gcflags=all=-l; tinygo's equivalent is -opt=0, without which a called
+// function is inlined away and missing from the table.
+func (p *Prober) build(ctx context.Context, tc *goenv.Toolchains, root, pkg, outBin string) (string, error) {
+	if p.tinygo.Declared() {
+		// The target flag is tinygo's whole frame: its own GOROOT in the
+		// environment stops tinygo resolving the standard library.
+		_, detail, err := runChild(ctx, tc, root, "tinygo", noFrame, combinedCapture,
+			"build", "-target="+p.tinygo.Target(), "-opt=0", "-o", outBin, pkg)
+		return detail, err
+	}
+	_, detail, err := runChild(ctx, tc, root, p.goBin(), p.target.Apply, combinedCapture,
+		"build", "-gcflags=all=-l", "-o", outBin, pkg)
+	return detail, err
+}
+
 // Probe builds a probe binary from the workspace at root with inlining
 // disabled and returns its symbol table.
 //
@@ -120,10 +225,13 @@ func (p *Prober) goBin() string {
 // symbol tables are unioned for the verdict and kept per binary for
 // attribution.
 func (p *Prober) Probe(ctx context.Context, root string) (ports.SymbolProbeResult, error) {
+	if p.buildsWasm() {
+		return ports.SymbolProbeResult{}, &WasmArtefactError{Flag: p.frameFlag()}
+	}
 	toolchains := goenv.NewToolchains()
 	defer func() { _ = toolchains.Close() }()
 
-	mainPkgs, err := findMainPackages(ctx, toolchains, root, p.goBin())
+	mainPkgs, err := p.findMainPackages(ctx, toolchains, root)
 	if err != nil {
 		return ports.SymbolProbeResult{}, fmt.Errorf("detecting workspace kind: %w", err)
 	}
@@ -158,7 +266,7 @@ func (p *Prober) probeBinaries(ctx context.Context, tc *goenv.Toolchains, root, 
 	var firstErr error
 
 	for i, mainPkg := range sorted {
-		entry := ports.ProbedBinary{ImportPath: mainPkg}
+		entry := ports.ProbedBinary{ImportPath: mainPkg, Builder: p.builder()}
 		outBin := filepath.Join(outDir, fmt.Sprintf("probe_%d", i))
 		symbols, err := p.buildAndRead(ctx, tc, root, mainPkg, outBin)
 		if interrupt.Cancelled(ctx, err) {
@@ -186,15 +294,15 @@ func (p *Prober) probeBinaries(ctx context.Context, tc *goenv.Toolchains, root, 
 		return ports.SymbolProbeResult{}, fmt.Errorf("building probe binary: no main package of %d could be probed: %w", len(sorted), firstErr)
 	}
 
-	return ports.SymbolProbeResult{BinarySymbols: union, Kind: localdomain.ProbeKindBinary, Binaries: binaries}, nil
+	return ports.SymbolProbeResult{BinarySymbols: union, Kind: localdomain.ProbeKindBinary, Builder: p.builder(), Binaries: binaries}, nil
 }
 
 // buildAndRead builds one main package and reads the resulting symbol table.
 func (p *Prober) buildAndRead(ctx context.Context, tc *goenv.Toolchains, root, mainPkg, outBin string) (map[string]struct{}, error) {
-	if err := buildBinary(ctx, tc, root, mainPkg, outBin, p.goBin()); err != nil {
-		return nil, fmt.Errorf("building probe binary: %w", err)
+	if detail, err := p.build(ctx, tc, root, mainPkg, outBin); err != nil {
+		return nil, fmt.Errorf("building probe binary: %w\n%s", err, detail)
 	}
-	symbols, err := readSymbolTable(ctx, tc, root, outBin, p.goBin())
+	symbols, err := p.readSymbols(ctx, tc, root, outBin)
 	if err != nil {
 		return nil, fmt.Errorf("reading symbol table: %w", err)
 	}
@@ -207,15 +315,29 @@ func (p *Prober) probeLibrary(ctx context.Context, tc *goenv.Toolchains, root, o
 	harnessDir := filepath.Join(root, probeHarnessDir)
 	defer func() { _ = os.RemoveAll(harnessDir) }()
 
-	omitted, err := buildLibraryProbe(ctx, tc, root, harnessDir, outBin, p.goBin())
+	omitted, err := p.buildLibraryProbe(ctx, tc, root, harnessDir, outBin)
 	if err != nil {
 		return ports.SymbolProbeResult{}, fmt.Errorf("building library probe: %w", err)
 	}
-	symbols, err := readSymbolTable(ctx, tc, root, outBin, p.goBin())
+	symbols, err := p.readSymbols(ctx, tc, root, outBin)
 	if err != nil {
 		return ports.SymbolProbeResult{}, fmt.Errorf("reading symbol table: %w", err)
 	}
-	return ports.SymbolProbeResult{BinarySymbols: symbols, Kind: localdomain.ProbeKindLibrary, HarnessOmitted: omitted}, nil
+	return ports.SymbolProbeResult{BinarySymbols: symbols, Kind: localdomain.ProbeKindLibrary, Builder: p.builder(), HarnessOmitted: omitted}, nil
+}
+
+// readSymbols reads outBin's symbol table, in Go's spelling whichever builder
+// produced it.
+func (p *Prober) readSymbols(ctx context.Context, tc *goenv.Toolchains, root, outBin string) (map[string]struct{}, error) {
+	symbols, err := readSymbolTable(ctx, tc, root, outBin, p.goBin())
+	if err != nil || !p.tinygo.Declared() {
+		return symbols, err
+	}
+	out := make(map[string]struct{}, len(symbols))
+	for sym := range symbols {
+		out[normaliseTinyGoSymbol(sym)] = struct{}{}
+	}
+	return out, nil
 }
 
 // goListPackage mirrors the fields we need from `go list -json`.
@@ -231,10 +353,10 @@ type goListModule struct {
 	Path string
 }
 
-// findMainPackages runs go list -json./... and returns the import paths of
-// packages whose Name == "main".
-func findMainPackages(ctx context.Context, tc *goenv.Toolchains, root, goBin string) ([]string, error) {
-	out, detail, err := runChild(ctx, tc, root, goBin, stdoutCapture, "list", "-json", "./...")
+// findMainPackages runs go list -json./... under the frame and returns the
+// import paths of packages whose Name == "main".
+func (p *Prober) findMainPackages(ctx context.Context, tc *goenv.Toolchains, root string) ([]string, error) {
+	out, detail, err := runChild(ctx, tc, root, p.goBin(), p.listFrame, stdoutCapture, p.listArgs("list", "-json", "./...")...)
 	if err != nil {
 		return nil, fmt.Errorf("go list: %w\n%s", err, detail)
 	}
@@ -255,24 +377,15 @@ func findMainPackages(ctx context.Context, tc *goenv.Toolchains, root, goBin str
 	return mains, nil
 }
 
-// buildBinary builds mainPkg into outBin with inlining disabled.
-func buildBinary(ctx context.Context, tc *goenv.Toolchains, root, mainPkg, outBin, goBin string) error {
-	if _, detail, err := runChild(ctx, tc, root, goBin, combinedCapture,
-		"build", "-gcflags=all=-l", "-o", outBin, mainPkg); err != nil {
-		return fmt.Errorf("%w\n%s", err, detail)
-	}
-	return nil
-}
-
 // buildLibraryProbe generates a synthetic harness inside harnessDir and
 // builds it into outBin with inlining disabled. It returns the exported
 // declarations the harness had to leave out.
-func buildLibraryProbe(ctx context.Context, tc *goenv.Toolchains, root, harnessDir, outBin, goBin string) ([]localdomain.HarnessOmission, error) {
+func (p *Prober) buildLibraryProbe(ctx context.Context, tc *goenv.Toolchains, root, harnessDir, outBin string) ([]localdomain.HarnessOmission, error) {
 	if err := os.MkdirAll(harnessDir, 0o700); err != nil {
 		return nil, fmt.Errorf("creating harness dir: %w", err)
 	}
 
-	pkgs, err := listWorkspaceExports(ctx, tc, root, goBin)
+	pkgs, err := p.listWorkspaceExports(ctx, tc, root)
 	if err != nil {
 		return nil, fmt.Errorf("compiling workspace packages: %w", err)
 	}
@@ -291,8 +404,7 @@ func buildLibraryProbe(ctx context.Context, tc *goenv.Toolchains, root, harnessD
 		return nil, fmt.Errorf("writing harness: %w", err)
 	}
 
-	if _, detail, err := runChild(ctx, tc, root, goBin, combinedCapture,
-		"build", "-gcflags=all=-l", "-o", outBin, "./"+probeHarnessDir); err != nil {
+	if detail, err := p.build(ctx, tc, root, "./"+probeHarnessDir, outBin); err != nil {
 		return nil, fmt.Errorf("building harness: %w\n%s", err, detail)
 	}
 	return omitted, nil
@@ -322,9 +434,9 @@ func libraryHarness(pkgs []goListPackage, goMod []byte) (string, []localdomain.H
 // export data. The flags match the harness build, so that build reuses this
 // compilation. A workspace that does not compile fails here, with the compiler's
 // own report, as it failed at the harness build before.
-func listWorkspaceExports(ctx context.Context, tc *goenv.Toolchains, root, goBin string) ([]goListPackage, error) {
-	out, detail, err := runChild(ctx, tc, root, goBin, stdoutCapture,
-		"list", "-export", "-deps", "-json", "-gcflags=all=-l", "./...")
+func (p *Prober) listWorkspaceExports(ctx context.Context, tc *goenv.Toolchains, root string) ([]goListPackage, error) {
+	out, detail, err := runChild(ctx, tc, root, p.goBin(), p.exportFrame, stdoutCapture,
+		p.listArgs("list", "-export", "-deps", "-json", "-gcflags=all=-l", "./...")...)
 	if err != nil {
 		return nil, fmt.Errorf("go list: %w\n%s", err, detail)
 	}
@@ -343,8 +455,10 @@ func listWorkspaceExports(ctx context.Context, tc *goenv.Toolchains, root, goBin
 }
 
 // readSymbolTable runs go tool nm on binPath and returns the set of symbol names.
+// nm runs outside the frame: it reads any platform's container, and under a
+// TinyGo GOROOT the go command cannot build the tool at all.
 func readSymbolTable(ctx context.Context, tc *goenv.Toolchains, root, binPath, goBin string) (map[string]struct{}, error) {
-	out, detail, err := runChild(ctx, tc, root, goBin, stdoutCapture, "tool", "nm", binPath)
+	out, detail, err := runChild(ctx, tc, root, goBin, noFrame, stdoutCapture, "tool", "nm", binPath)
 	if err != nil {
 		return nil, fmt.Errorf("go tool nm: %w\n%s", err, detail)
 	}
@@ -366,3 +480,51 @@ func readSymbolTable(ctx context.Context, tc *goenv.Toolchains, root, binPath, g
 
 // Ensure Prober implements ports.SymbolTableProber at compile time.
 var _ ports.SymbolTableProber = (*Prober)(nil)
+
+// normaliseTinyGoSymbol rewrites TinyGo's method spelling to Go's, which the
+// stored findings and the matcher use: (*P.T).M becomes P.(*T).M and (P.T).M
+// becomes P.T.M. Anything else passes through.
+func normaliseTinyGoSymbol(sym string) string {
+	if !strings.HasPrefix(sym, "(") {
+		return sym
+	}
+	end := closingParen(sym)
+	if end < 0 || end+1 >= len(sym) || sym[end+1] != '.' {
+		return sym
+	}
+	recv, method := sym[1:end], sym[end+2:]
+	ptr := strings.HasPrefix(recv, "*")
+	recv = strings.TrimPrefix(recv, "*")
+	base := recv
+	if i := strings.IndexByte(base, '['); i >= 0 {
+		base = base[:i]
+	}
+	dot := strings.IndexByte(base[strings.LastIndexByte(base, '/')+1:], '.')
+	if dot < 0 {
+		return sym
+	}
+	dot += strings.LastIndexByte(base, '/') + 1
+	pkg, typ := recv[:dot], recv[dot+1:]
+	if ptr {
+		return pkg + ".(*" + typ + ")." + method
+	}
+	return pkg + "." + typ + "." + method
+}
+
+// closingParen is the index of the parenthesis closing the one sym opens with,
+// or -1 when it is never closed.
+func closingParen(sym string) int {
+	depth := 0
+	for i, r := range sym {
+		switch r {
+		case '(':
+			depth++
+		case ')':
+			depth--
+			if depth == 0 {
+				return i
+			}
+		}
+	}
+	return -1
+}

@@ -41,7 +41,7 @@ func (s *Scanner) Scan(ctx context.Context, req ports.ScanRequest) (rec domain.V
 	// An isolated scan extracts a published zip into a scratch directory: there
 	// is no working tree and therefore no vendor/ tree to root at, so this path
 	// is fetched-surface by construction.
-	env := s.target.Apply(scanEnv(os.Environ(), goModCache, surfaceNormalised))
+	env := s.tinygo.Apply(s.target.Apply(scanEnv(os.Environ(), goModCache, surfaceNormalised)))
 
 	// The environment above pins the toolchain so no scan child can download one,
 	// which also refuses a toolchain already unpacked on this host. One decision
@@ -104,19 +104,12 @@ func (s *Scanner) Scan(ctx context.Context, req ports.ScanRequest) (rec domain.V
 
 	// 3. Mode dispatch: binary mode builds a test binary first for a fast symbol-table
 	// scan; source mode does the full SSA + call-graph analysis.
-	var build func(childEnv []string) *exec.Cmd
-	if scanMode == domain.ScanModeBinary {
-		var berr error
-		build, scanMode, berr = s.binaryModeBuild(ctx, toolchains, env, scanDir, tmpDir, tool, dbArg, scanMode)
-		if berr != nil {
-			return domain.VulnerabilityRecord{}, berr
-		}
+	build, scanMode, listFault, err := s.modeBuild(ctx, toolchains, env, scanDir, tmpDir, tool, dbArg, scanMode)
+	if err != nil {
+		return domain.VulnerabilityRecord{}, err
 	}
-	if scanMode != domain.ScanModeBinary {
-		var serr error
-		if build, serr = s.sourceModeBuild(ctx, toolchains, env, scanDir, tool, dbArg); serr != nil {
-			return domain.VulnerabilityRecord{}, serr
-		}
+	if listFault != nil {
+		return s.failureRecord(*listFault, coord, snapshot), nil
 	}
 
 	// 4. Stream govulncheck JSON output and parse results.
@@ -165,14 +158,32 @@ func (s *Scanner) Scan(ctx context.Context, req ports.ScanRequest) (rec domain.V
 	}, nil
 }
 
+// modeBuild returns the govulncheck command for scanMode and the mode it
+// settled on: binary mode falls back to source when no binary was built.
+func (s *Scanner) modeBuild(ctx context.Context, toolchains *goenv.Toolchains, env []string, scanDir, tmpDir string, tool resolvedTool, dbArg string, scanMode domain.ScanMode) (func(childEnv []string) *exec.Cmd, domain.ScanMode, *scanFailure, error) {
+	var build func(childEnv []string) *exec.Cmd
+	if scanMode == domain.ScanModeBinary {
+		var berr error
+		build, scanMode, berr = s.binaryModeBuild(ctx, toolchains, env, scanDir, tmpDir, tool, dbArg, scanMode)
+		if berr != nil {
+			return nil, "", nil, berr
+		}
+	}
+	if scanMode != domain.ScanModeBinary {
+		return s.sourceModeBuild(ctx, toolchains, env, scanDir, tool, dbArg)
+	}
+	return build, scanMode, nil, nil
+}
+
 // sourceModeBuild downloads the module's dependencies and returns the command
-// that runs govulncheck's source analysis over it.
-func (s *Scanner) sourceModeBuild(ctx context.Context, toolchains *goenv.Toolchains, env []string, scanDir string, tool resolvedTool, dbArg string) (func(childEnv []string) *exec.Cmd, error) {
+// that runs govulncheck over it, in source mode or, for a TinyGo closure that
+// compiles C, at module level; the mode is returned beside it.
+func (s *Scanner) sourceModeBuild(ctx context.Context, toolchains *goenv.Toolchains, env []string, scanDir string, tool resolvedTool, dbArg string) (func(childEnv []string) *exec.Cmd, domain.ScanMode, *scanFailure, error) {
 	// Source mode: download deps then run govulncheck source analysis.
 	s.logger.Info("vuln-scan: downloading dependencies", "dir", scanDir)
 	out, dlErr := runGoChild(ctx, toolchains, env, scanDir, "mod", "download")
 	if serr := stoppedScan(ctx, dlErr); serr != nil {
-		return nil, serr
+		return nil, "", nil, serr
 	}
 	if dlErr != nil {
 		// Source mode continues regardless: a download failure often just means
@@ -186,13 +197,17 @@ func (s *Scanner) sourceModeBuild(ctx context.Context, toolchains *goenv.Toolcha
 		s.logger.Debug("vuln-scan: go mod download succeeded", "output", string(out))
 	}
 	s.logMem(ctx, "deps_downloaded")
-	s.logger.Info("vuln-scan: running govulncheck source mode", "dir", scanDir, "db", dbArg)
+	mode, fault, err := s.scanModeFor(ctx, toolchains, env, scanDir)
+	if err != nil || fault != nil {
+		return nil, "", fault, err
+	}
+	s.logger.Info("vuln-scan: running govulncheck "+string(mode)+" mode", "dir", scanDir, "db", dbArg)
 	return func(childEnv []string) *exec.Cmd {
-		cmd := childproc.CommandContext(ctx, tool.bin, "-json", "-db", dbArg, "./...") // #nosec G204 -- binary path from exec.LookPath
+		cmd := childproc.CommandContext(ctx, tool.bin, s.scanArgs(dbArg, mode)...) // #nosec G204 -- binary path from exec.LookPath
 		cmd.Dir = scanDir
 		cmd.Env = childEnv
 		return cmd
-	}, nil
+	}, mode, nil, nil
 }
 
 // failedScanRecord is the record of a govulncheck run that exited with an
@@ -209,7 +224,11 @@ func (s *Scanner) failedScanRecord(ctx context.Context, run scanChildResult, too
 		return domain.VulnerabilityRecord{}, serr
 	}
 	s.logger.Debug("vuln-scan: govulncheck exited with error", "error", waitErr, "stderr", stderrStr)
-	f := classifyScanFailure(waitErr, stderrStr, tool)
+	return s.failureRecord(classifyScanFailure(waitErr, stderrStr, tool), coord, snapshot), nil
+}
+
+// failureRecord is the record of a scan that failed as f states.
+func (s *Scanner) failureRecord(f scanFailure, coord coordinate.ModuleCoordinate, snapshot domain.DatabaseSnapshot) domain.VulnerabilityRecord {
 	return domain.VulnerabilityRecord{
 		Coordinate:        coord,
 		Findings:          nil,
@@ -221,7 +240,7 @@ func (s *Scanner) failedScanRecord(ctx context.Context, run scanChildResult, too
 		DatabaseSnapshot:  snapshot,
 		ScannedAt:         time.Now(),
 		PipelineVersion:   s.pipelineVersion,
-	}, nil
+	}
 }
 
 // binaryModeBuild builds a test binary for a symbol-table scan and returns the
@@ -417,9 +436,8 @@ func zipModuleDir(root string) (string, bool) {
 // The advisory count this path measures is returned to the caller, which carries
 // it onto the snapshot the record names. It is a positive number only when this
 // function extracted and counted a database itself; the pre-extracted dir was
-// already counted by the walk that supplied it, and the live-database fallback
-// is a set nothing here has read, so both report zero — unmeasured, which is
-// what the snapshot's own invariant admits.
+// already counted by the walk that supplied it, so it reports zero — unmeasured,
+// which is what the snapshot's own invariant admits.
 func (s *Scanner) prepareDBArg(ctx context.Context, snapshot domain.DatabaseSnapshot, dbDir string) (string, int, func(), error) {
 	noop := func() {}
 	s.logger.Info("vuln-scan: preparing vulnerability database", "snapshot", snapshot.Version())
@@ -569,9 +587,11 @@ const (
 // build configuration, so disabling it made this scan resolve a different module
 // graph from the one the walk resolved and the developer compiles.
 //
-// GOGC is the one value every surface sets, and it decides nothing about
-// resolution: govulncheck holds the whole package graph live, and the default
-// pacing costs the host memory this analysis has no need to spend.
+// GOGC and GOPACKAGESDRIVER=off are the two values every surface sets, and
+// neither decides anything about resolution. govulncheck holds the whole package
+// graph live, and the default pacing costs the host memory this analysis has no
+// need to spend; and it loads through go/packages, which would otherwise run a
+// driver program named by the host or found on PATH instead of the go command.
 //
 // CGO_ENABLED is deliberately not set here on any surface. Only one child gets
 // cgo turned off — the binary-mode test build; see withCgoDisabled — because
@@ -640,9 +660,9 @@ const (
 // GOWORK/GOFLAGS/GOSUMDB/GOPROXY/GOTOOLCHAIN.
 func scanEnv(base []string, goModCache string, surface scanSurface) []string {
 	// Copy rather than append onto base so a caller's slice is never mutated.
-	env := make([]string, len(base), len(base)+7)
+	env := make([]string, len(base), len(base)+8)
 	copy(env, base)
-	env = append(env, "GOGC=30")
+	env = append(env, "GOGC=30", "GOPACKAGESDRIVER=off")
 	if surface == surfaceLiveTree {
 		return env
 	}

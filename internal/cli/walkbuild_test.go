@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -302,7 +303,7 @@ func TestRescanPreflight_SaysItIsReEvaluatingARecordedBuild(t *testing.T) {
 	uc.AddWalk(rec)
 
 	var buf bytes.Buffer
-	if err := writeRescanBuildPreflight(context.Background(), &buf, uc, rec.ID); err != nil {
+	if err := writeRescanBuildPreflight(context.Background(), &buf, uc, rec.ID, ""); err != nil {
 		t.Fatalf("writeRescanBuildPreflight: %v", err)
 	}
 	out := buf.String()
@@ -313,10 +314,24 @@ func TestRescanPreflight_SaysItIsReEvaluatingARecordedBuild(t *testing.T) {
 		t.Errorf("the pre-flight does not say the build is the recorded one; got:\n%s", out)
 	}
 
+	if !strings.Contains(out, "against fresh advisories") {
+		t.Errorf("an unpinned re-scan does not say it fetches fresh advisories; got:\n%s", out)
+	}
+
+	// Pinned, it downloads nothing, so it names the snapshot instead.
+	var pinned bytes.Buffer
+	if err := writeRescanBuildPreflight(context.Background(), &pinned, uc, rec.ID, "vuln.go.dev@2026-10-21T00:27:29Z"); err != nil {
+		t.Fatalf("writeRescanBuildPreflight pinned: %v", err)
+	}
+	if got := pinned.String(); strings.Contains(got, "fresh advisories") ||
+		!strings.Contains(got, "against the pinned advisory snapshot vuln.go.dev@2026-10-21T00:27:29Z") {
+		t.Errorf("a pinned re-scan does not name its snapshot; got:\n%s", got)
+	}
+
 	// A walk the store cannot produce costs the command nothing: the re-scan is
 	// about to report that failure itself, in its own words.
 	var empty bytes.Buffer
-	if err := writeRescanBuildPreflight(context.Background(), &empty, uc, "01NOSUCHWALK000000000000"); err != nil {
+	if err := writeRescanBuildPreflight(context.Background(), &empty, uc, "01NOSUCHWALK000000000000", ""); err != nil {
 		t.Fatalf("writeRescanBuildPreflight on a missing walk: %v", err)
 	}
 	if empty.Len() != 0 {
@@ -345,7 +360,7 @@ func TestBuildOnTheJSONSurfaces_CarriesTheWalksEnvUnderOneSpelling(t *testing.T)
 		{"a walk that recorded none", unrecorded, walkBuildJSON{}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := walkBuildOf(tc.rec); got != tc.want {
+			if got := walkBuildOf(tc.rec); !reflect.DeepEqual(got, tc.want) {
 				t.Errorf("walkBuildOf() = %+v, want %+v", got, tc.want)
 			}
 			// Emitted whatever it holds. An absent key would say this producer
@@ -393,5 +408,32 @@ func TestVerificationCoverageJSON_BuildHoldsBothHalves(t *testing.T) {
 		if !strings.Contains(string(encoded), key) {
 			t.Errorf("the coverage build object omits %s", key)
 		}
+	}
+}
+
+// A TinyGo walk's build object carries the frame under the walk record's own
+// keys; a standard walk's object has none of them, so it is byte-identical to
+// what it was before they existed.
+func TestWalkBuildJSON_TinyGoFieldsOnlyOnATinyGoWalk(t *testing.T) {
+	standard := walkRecordUnder(t, "01WALKBUILD00000000000015", "linux", "amd64", "go1.26.6", "", "")
+	doc, err := json.Marshal(walkBuildOf(standard))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(doc), `{"goos":"linux","goarch":"amd64","go_version":"go1.26.6"}`; got != want {
+		t.Errorf("standard build = %s, want %s", got, want)
+	}
+
+	pico := walkRecordUnder(t, "01WALKBUILD00000000000016", "linux", "arm", "go1.27.2", "", "")
+	pico.Graph.BuildEnv.GOARM = "6"
+	pico.Graph.BuildEnv.TinyGoTarget = "pico"
+	pico.Graph.BuildEnv.TinyGoVersion = "0.42.0"
+	pico.Graph.BuildEnv.TinyGoTags = []string{"tinygo", "pico"}
+	doc, err = json.Marshal(walkBuildOf(pico))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(doc), `{"goos":"linux","goarch":"arm","goarm":"6","go_version":"go1.27.2","tinygo_target":"pico","tinygo_version":"0.42.0","tinygo_tags":["tinygo","pico"]}`; got != want {
+		t.Errorf("TinyGo build = %s, want %s", got, want)
 	}
 }

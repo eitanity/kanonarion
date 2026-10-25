@@ -35,6 +35,15 @@ var hostTarget = Target{goos: runtime.GOOS, goarch: runtime.GOARCH}
 // Host is the platform this process is running on.
 func Host() Target { return hostTarget }
 
+// OverrideHost makes t the host for this process until restore is called. It is
+// for test harnesses only — a golden suite pins a host so its output names no
+// real platform — and an architecture test refuses any non-test caller.
+func OverrideHost(t Target) (restore func()) {
+	prev := hostTarget
+	hostTarget = t
+	return func() { hostTarget = prev }
+}
+
 // NewTarget is a declared pair. Both halves are required: half a pair is a
 // declaration whose other half would be taken from the environment, which is
 // the shape this type exists to remove.

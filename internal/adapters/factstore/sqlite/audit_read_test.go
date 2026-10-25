@@ -266,8 +266,9 @@ func TestReadLedger_MissingFileIsAnError(t *testing.T) {
 func TestAuditLogPath(t *testing.T) {
 	root := t.TempDir()
 	path := sqlite.AuditLogPath(root)
-	if _, err := sqlite.NewAuditLog(path); err != nil {
-		t.Fatalf("NewAuditLog at the reader's path: %v", err)
+	log := sqlite.NewAuditLog(path)
+	if err := log.RecordEvent(audit.Event{Type: audit.EventReplaceDirectiveObserved}); err != nil {
+		t.Fatalf("RecordEvent: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(root, "audit.jsonl")); err != nil {
 		t.Errorf("the writer did not create the file the reader looks for: %v", err)

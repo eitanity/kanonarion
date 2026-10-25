@@ -35,6 +35,15 @@ type scanChildResult struct {
 // because it is also where the go command writes the refusal this decision is
 // keyed on.
 func runGoChild(ctx context.Context, tc *goenv.Toolchains, base []string, dir string, args ...string) ([]byte, error) {
+	return goChildLoop(ctx, tc, base, dir, args, func(cmd *exec.Cmd) ([]byte, string, error) {
+		out, err := cmd.CombinedOutput()
+		return out, string(out), err
+	})
+}
+
+// goChildLoop is runGoChild with the capture left to run, which returns what
+// the caller gets back and the text the escalation decision reads.
+func goChildLoop(ctx context.Context, tc *goenv.Toolchains, base []string, dir string, args []string, run func(*exec.Cmd) ([]byte, string, error)) ([]byte, error) {
 	for {
 		cmd := childproc.CommandContext(ctx, "go", args...) // #nosec G204 -- args are literals and paths this package derived
 		cmd.Dir = dir
@@ -42,12 +51,12 @@ func runGoChild(ctx context.Context, tc *goenv.Toolchains, base []string, dir st
 		// gets a temp root removed once it has exited.
 		scratch, removeScratch := childproc.Scratch()
 		cmd.Env = append(tc.Apply(base), scratch...)
-		out, err := cmd.CombinedOutput()
+		out, diag, err := run(cmd)
 		removeScratch()
 		if err == nil {
 			return out, nil
 		}
-		retry, refusal := tc.Escalate(string(out))
+		retry, refusal := tc.Escalate(diag)
 		if refusal != "" {
 			return out, fmt.Errorf("%w\n%s", err, refusal) //nolint:wrapcheck // the caller names the command it ran; wrapping here would say it twice
 		}

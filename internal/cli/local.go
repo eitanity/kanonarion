@@ -16,6 +16,7 @@ import (
 type localFlags struct {
 	goBinary string
 	force    bool
+	target   buildTargetFlags
 }
 
 func newLocalCmd(stdout, stderr io.Writer) *cobra.Command {
@@ -34,7 +35,9 @@ sees fetched external modules, 'local' ingests the project's own internal
 packages so 'callers'/'callees' can answer questions about them.
 
 A tree that has not changed since the last run is not analysed again: the
-record already held is served, and the derivation line says so. --force
+record already held is served, and the derivation line says so. A tree holds
+one record per build frame (--target, --goos/--goarch, --tinygo), and the
+reuse is per frame. --force
 re-measures anyway, which is what to use when something outside the tree
 changed — a different toolchain. A record left incomplete because this host's
 module cache was cold is never served, so warming the cache and re-running
@@ -44,6 +47,8 @@ After running 'local', query internal symbols directly, e.g.:
   kanonarion callers '<module-path>/internal/cli.runScanRescan'`,
 		Example: `  kanonarion local
   kanonarion local .
+  kanonarion local . --target wasip1/wasm
+  kanonarion local . --tinygo wasip1
   kanonarion local /path/to/project`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			dir := "."
@@ -58,6 +63,7 @@ After running 'local', query internal symbols directly, e.g.:
 
 	cmd.Flags().StringVar(&f.goBinary, "go-binary", "", "path to 'go' binary if not in PATH")
 	cmd.Flags().BoolVar(&f.force, "force", false, "re-analyse even if the tree is unchanged since the stored record")
+	registerBuildTargetFlags(cmd, &f.target)
 
 	return cmd
 }
@@ -88,6 +94,12 @@ func runLocalCallGraph(ctx context.Context, dir string, f localFlags, stdout, st
 		return fmt.Errorf("constructing local coordinate: %w", err)
 	}
 
+	// Settled before the container is built: the analyser and the read frame are
+	// wired from it there.
+	if terr := resolveBuildTarget(ctx, f.target, f.goBinary, abs); terr != nil {
+		return terr
+	}
+
 	ctr, cleanup, err := NewContainer(storeRoot, "", f.goBinary, false, activeConfig, logger)
 	if err != nil {
 		return fmt.Errorf("initialising store: %w", err)
@@ -103,7 +115,7 @@ func runLocalCallGraph(ctx context.Context, dir string, f localFlags, stdout, st
 		return fmt.Errorf("extracting local call graph: %w", err)
 	}
 
-	if err := printCallGraphSummary(result.Record, result.FromCache, jsonOut, abs, stdout,
+	if err := printCallGraphSummary(ctx, result.Record, result.FromCache, jsonOut, abs, stdout,
 		callGraphRunJSON{Derivations: []derivationJSON{localDerivation(result)}}); err != nil {
 		return err
 	}

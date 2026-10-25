@@ -1,0 +1,19 @@
+// Package unmapped references C declarations of types the translation does
+// not cover.
+package unmapped
+
+/*
+#cgo CFLAGS: -DX=1
+_Complex float fake_complex(void);
+struct bits { unsigned int low : 3; unsigned int high : 5; };
+union two { int i; float f; };
+#define NOT_A_CONSTANT __attribute__((unused))
+*/
+import "C"
+
+import _ "syscall" // the generated cgo file imports it
+
+func Complex()   { _ = C.fake_complex() }
+func Bits() any  { return C.struct_bits{} }
+func Two() any   { return C.union_two{} }
+func Macro() any { return C.NOT_A_CONSTANT }

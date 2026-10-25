@@ -7,13 +7,17 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/recordstamp"
+	"github.com/eitanity/kanonarion/internal/versionorder"
 
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
 
 	"github.com/eitanity/kanonarion/internal/adapters/blobcodec"
 	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
@@ -29,6 +33,17 @@ type Store struct {
 	// setAside receives the stored generations a read or a write left out
 	// because this build cannot reproduce them; see ReportSetAside.
 	setAside recordseal.Reporter
+	// superseded names the artefacts a published coordinate's read leaves out;
+	// nil leaves every generation in. See WithSupersededArtefacts.
+	superseded fetchports.SupersededArtefacts
+}
+
+// WithSupersededArtefacts makes the store's reads of a published coordinate
+// leave out generations derived from a directory read under it before local
+// code had its own identity. The generations stay in the ledger.
+func (s *Store) WithSupersededArtefacts(fn fetchports.SupersededArtefacts) *Store {
+	s.superseded = fn
+	return s
 }
 
 // RecordKind is how a set-aside licence generation names its kind.
@@ -287,6 +302,10 @@ func (s *Store) GetLicenseRecord(ctx context.Context, coord coordinate.ModuleCoo
 	if err != nil {
 		return domain2.LicenseRecord{}, false, err
 	}
+	records, err = fetchports.DropSuperseded(ctx, s.superseded, coord, records, func(r domain2.LicenseRecord) string { return r.ArtefactIdentity })
+	if err != nil {
+		return domain2.LicenseRecord{}, false, fmt.Errorf("reading license records of %s: %w", coord, err)
+	}
 	if len(records) == 0 {
 		return domain2.LicenseRecord{}, false, nil
 	}
@@ -340,7 +359,9 @@ ORDER BY julianday(extracted_at) ASC, rowid ASC`
 		if serr := rows.Scan(&blob, &stored); serr != nil {
 			return nil, fmt.Errorf("scanning license record: %w", serr)
 		}
-		rec, aside, rerr := decodeRecord(blob, stored)
+		rec, aside, rerr := decodeRecord(blob, stored, func(r domain2.LicenseRecord) []recordseal.Filed {
+			return keyedBy(coord.Path(), coord.Version(), pipelineVersion, r)
+		})
 		if rerr != nil {
 			return nil, rerr
 		}
@@ -360,11 +381,38 @@ ORDER BY julianday(extracted_at) ASC, rowid ASC`
 	return out, nil
 }
 
+// PipelinesHeld lists the pipeline versions coord holds license records at,
+// oldest first, from the generation index alone: no blob is decoded.
+func (s *Store) PipelinesHeld(ctx context.Context, coord coordinate.ModuleCoordinate) ([]string, error) {
+	rows, err := s.db.DB().QueryContext(ctx,
+		`SELECT DISTINCT pipeline_version FROM licence_records WHERE module_path = ? AND module_version = ?`,
+		coord.Path(), coord.Version())
+	if err != nil {
+		return nil, fmt.Errorf("querying the pipelines held for %s: %w", coord, err)
+	}
+	defer rows.Close() //nolint:errcheck // read-only; Err is checked below
+	var out []string
+	for rows.Next() {
+		var p string
+		if serr := rows.Scan(&p); serr != nil {
+			return nil, fmt.Errorf("scanning the pipelines held for %s: %w", coord, serr)
+		}
+		out = append(out, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating the pipelines held for %s: %w", coord, err)
+	}
+	slices.SortFunc(out, versionorder.ComparePipelineVersions)
+	return out, nil
+}
+
 // decodeRecord turns one stored blob into a verified record. A row that cannot
 // be decoded, parsed or verified is an error rather than an absence, except one
 // whose bytes hash to the seal it is filed under (storedHash) in a shape this
-// build cannot reproduce: that comes back as a set-aside row instead.
-func decodeRecord(blob []byte, storedHash string) (domain2.LicenseRecord, *recordseal.SetAsideRow, error) {
+// build cannot reproduce: that comes back as a set-aside row instead. filed
+// names what the read selected the row by; a verified record sealed otherwise is
+// refused, because its seal proves the bytes and not where they were filed.
+func decodeRecord(blob []byte, storedHash string, filed func(domain2.LicenseRecord) []recordseal.Filed) (domain2.LicenseRecord, *recordseal.SetAsideRow, error) {
 	raw, decErr := blobcodec.Decode(blob)
 	if decErr != nil {
 		return domain2.LicenseRecord{}, nil, fmt.Errorf("decompressing license record: %w", decErr)
@@ -394,7 +442,34 @@ func decodeRecord(blob []byte, storedHash string) (domain2.LicenseRecord, *recor
 			Reason:      cerr,
 		}, nil
 	}
+	if merr := recordseal.CheckFiled(RecordKind, "licence_records", misfiledRemedy, filed(rec)...); merr != nil {
+		return domain2.LicenseRecord{}, nil, fmt.Errorf("%w: %w", ports.ErrLicenceIntegrity, merr)
+	}
 	return rec, nil, nil
+}
+
+// misfiledRemedy is what clears a misfiled licence row. The ledger is
+// append-only, so no re-extraction removes the row and every read of its key
+// meets it again.
+const misfiledRemedy = "no kanonarion command clears it: the ledger is append-only, so a re-extraction appends beside the row " +
+	"and every read of this coordinate still meets it; restore the store from a copy taken before the row was moved"
+
+// keyedBy is the key a licence row is filed under, against the record's seal.
+func keyedBy(path, version, pipeline string, r domain2.LicenseRecord) []recordseal.Filed {
+	return []recordseal.Filed{
+		recordseal.Key(path+"@"+version, r.Coordinate.String()),
+		recordseal.Column("pipeline_version", "pipeline_version", pipeline, r.PipelineVersion),
+	}
+}
+
+// listedBy is keyedBy plus the record columns a listing selects and shows.
+func listedBy(sum ports.LicenseSummary, status, copyright int, r domain2.LicenseRecord) []recordseal.Filed {
+	return append(keyedBy(sum.ModulePath, sum.ModuleVersion, sum.PipelineVersion, r),
+		recordseal.Column("primary_spdx", "primary_spdx", sum.PrimarySPDX, r.PrimarySPDX),
+		recordseal.Column("spdx_expression", "expression", sum.Expression, r.Expression),
+		recordseal.Column("overall_status", "overall_status", strconv.Itoa(status), strconv.Itoa(int(r.OverallStatus))),
+		recordseal.Column("copyright_status", "copyright_status", strconv.Itoa(copyright), strconv.Itoa(int(r.CopyrightStatus))),
+	)
 }
 
 // IdenticalGeneration returns the generation the ledger already holds that
@@ -456,7 +531,15 @@ ORDER BY julianday(extracted_at) DESC, content_hash DESC`
 		if serr := rows.Scan(&blob, &stored); serr != nil {
 			return domain2.LicenseRecord{}, false, fmt.Errorf("scanning licence generation of %s: %w", rec.Coordinate, serr)
 		}
-		held, aside, derr := decodeRecord(blob, stored)
+		held, aside, derr := decodeRecord(blob, stored, func(r domain2.LicenseRecord) []recordseal.Filed {
+			return append(keyedBy(rec.Coordinate.Path(), rec.Coordinate.Version(), rec.PipelineVersion, r),
+				recordseal.Column("primary_spdx", "primary_spdx", rec.PrimarySPDX, r.PrimarySPDX),
+				recordseal.Column("spdx_expression", "expression", rec.Expression, r.Expression),
+				recordseal.Column("overall_status", "overall_status", strconv.Itoa(int(rec.OverallStatus)), strconv.Itoa(int(r.OverallStatus))),
+				recordseal.Column("copyright_status", "copyright_status", strconv.Itoa(int(rec.CopyrightStatus)), strconv.Itoa(int(r.CopyrightStatus))),
+				recordseal.Column("provenance_confidence", "provenance.confidence",
+					strconv.Itoa(int(rec.Provenance.Confidence)), strconv.Itoa(int(r.Provenance.Confidence))))
+		})
 		if derr != nil {
 			return domain2.LicenseRecord{}, false, derr
 		}
@@ -539,7 +622,9 @@ func (s *Store) ListLicenseRecords(ctx context.Context, filter ports.LicenseFilt
 			// licence files. Measured on the maintainer's store,
 			// `license-list --limit 0 --json` over 1,828 records goes from 0.03s
 			// to 0.08s; --copyright already paid more (0.13s) for the same reason.
-			rec, aside, derr := decodeRecord(blob, sum.ContentHash)
+			rec, aside, derr := decodeRecord(blob, sum.ContentHash, func(r domain2.LicenseRecord) []recordseal.Filed {
+				return listedBy(sum, status, copyrightStatus, r)
+			})
 			if derr != nil {
 				return nil, derr
 			}
@@ -563,13 +648,10 @@ func (s *Store) ListLicenseRecords(ctx context.Context, filter ports.LicenseFilt
 
 	out := make([]ports.LicenseSummary, 0, len(order))
 	for _, k := range order {
-		if counts[k] == 1 && !rowFiltered && !asideFirst[k] {
-			// The overwhelming majority: one generation, so the columns already
-			// describe the served record and no blob is decoded to learn it.
-			out = append(out, first[k])
-			continue
-		}
-		sum, listed, lerr := s.composedSummary(ctx, k.path, k.version, k.pipeline)
+		// The overwhelming majority have one generation, so the columns already
+		// describe the served record and no blob is decoded to learn it.
+		sum, listed, lerr := s.listedSummary(ctx, k.path, k.version, k.pipeline, first[k],
+			counts[k] == 1 && !rowFiltered && !asideFirst[k])
 		if lerr != nil {
 			return nil, lerr
 		}
@@ -585,6 +667,22 @@ func (s *Store) ListLicenseRecords(ctx context.Context, filter ports.LicenseFilt
 // so a key's row count is over the rows it matched rather than the ledger's.
 func filtersOnRecordColumn(filter ports.LicenseFilter) bool {
 	return filter.SPDX != "" || filter.Status != nil || len(filter.CopyrightStatus) > 0
+}
+
+// listedSummary is the listing row for one key: the stored row when it alone
+// describes the served record, the composed read otherwise. A key holding
+// superseded generations is always composed, so they are left out.
+func (s *Store) listedSummary(ctx context.Context, path, version, pipeline string, row ports.LicenseSummary, rowServes bool) (ports.LicenseSummary, bool, error) {
+	if rowServes {
+		held, err := fetchports.HoldsSuperseded(ctx, s.superseded, path, version)
+		if err != nil {
+			return ports.LicenseSummary{}, false, err //nolint:wrapcheck // HoldsSuperseded names the coordinate
+		}
+		if !held {
+			return row, true, nil
+		}
+	}
+	return s.composedSummary(ctx, path, version, pipeline)
 }
 
 // composedSummary is the listing row for one key read through composition;

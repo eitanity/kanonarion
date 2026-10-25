@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,18 +16,10 @@ import (
 	blobstore "github.com/eitanity/kanonarion/internal/adapters/blobstore/localfs"
 	"github.com/eitanity/kanonarion/internal/adapters/childproc"
 	"github.com/eitanity/kanonarion/internal/adapters/modcache"
-	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
-	"github.com/eitanity/kanonarion/internal/composition"
+	"github.com/eitanity/kanonarion/internal/composition/storage"
+	sqlitestorage "github.com/eitanity/kanonarion/internal/composition/storage/sqlite"
 	"github.com/eitanity/kanonarion/internal/config/domain"
 )
-
-// allMigrations returns every migration the binary knows about.
-// Its length is the binary's expected schema version. The aggregation lives in
-// the neutral composition root so the CLI and the public façade open mirror.db
-// against an identical schema.
-func allMigrations() []sqlitestore.Migration {
-	return composition.Migrations()
-}
 
 func newStoreCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
@@ -57,6 +50,7 @@ var tempPrefixes = []string{
 	"kanonarion-bin-",
 	"kanonarion-githome-",
 	"kanonarion-toolchain-",
+	"kanonarion-tinygo-",
 	"kanonarion_probe_bin",
 	childproc.ScratchPrefix,
 }
@@ -163,8 +157,11 @@ func dirSize(path string) int64 {
 // the same machine — which is what the command's own help warns about. A test that
 // called os.TempDir() would do exactly that to a concurrent scan, and did.
 func runStoreClean(root, tmpDir string, asJSON bool, stdout io.Writer) error {
+	if err := requireSQLiteBackend("store clean", "cleans the sqlite backend's blob directory"); err != nil {
+		return err
+	}
 	result := storeCleanResult{
-		BlobTemps:   storeCleanBlobTempsResult{Dir: filepath.Join(root, "blobs")},
+		BlobTemps:   storeCleanBlobTempsResult{Dir: sqlitestorage.BlobsDir(root)},
 		TempEntries: storeCleanTempEntriesResult{Dir: tmpDir, Paths: []string{}},
 		Warnings:    []string{},
 	}
@@ -257,6 +254,9 @@ type configShowResult struct {
 	// file, every value in the document is a built-in default, and a consumer
 	// reading only the values cannot tell that from an operator who wrote them.
 	ConfigFile configFileResult `json:"config_file"`
+	// ConfigHash is the hash every gated answer names; it covers every
+	// section but preferences and storage.
+	ConfigHash string `json:"config_hash"`
 
 	Version       string             `json:"version"`
 	Preferences   configPrefsResult  `json:"preferences"`
@@ -283,6 +283,13 @@ type configShowResult struct {
 	VendorPolicy    configVendorResult    `json:"vendor_policy"`
 	FIPSPolicy      configFIPSResult      `json:"fips_policy"`
 	FetchPolicy     configFetchResult     `json:"fetch_policy"`
+	// Storage is the backend the store is opened through (schema v3).
+	Storage configStorageResult `json:"storage"`
+	// VulnDB is where the vulnerability database is downloaded from.
+	VulnDB configVulnDBResult `json:"vulndb"`
+	// Sections is each section the schema does not define, such as a
+	// registered backend's own, as the file wrote it. Absent when there is none.
+	Sections map[string]string `json:"sections,omitempty"`
 
 	// Settings says, per key, where the value above it came from. The blocks
 	// hold what is in force; they cannot hold why, because once the defaults are
@@ -397,6 +404,30 @@ func copyrightDeclarationsResult(in map[string]domain.CopyrightDeclaration) map[
 type configFetchResult struct {
 	AllowedVCSHosts []string `json:"allowed_vcs_hosts"`
 	Enforcing       bool     `json:"enforcing"`
+}
+
+// rawSections renders each section's YAML as text; nil when there is none.
+func rawSections(in map[string][]byte) map[string]string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	for name, raw := range in {
+		out[name] = string(raw)
+	}
+	return out
+}
+
+// configStorageResult is the storage section; an empty sumdb_cache is
+// <store-root>/sumdb.
+type configStorageResult struct {
+	Backend    string `json:"backend"`
+	SumDBCache string `json:"sumdb_cache"`
+}
+
+// configVulnDBResult is the vulndb section; an empty url is https://vuln.go.dev.
+type configVulnDBResult struct {
+	URL string `json:"url"`
 }
 
 type configDirectiveResult struct {
@@ -529,7 +560,12 @@ func runStoreConfigShow(root string, asJSON bool, stdout io.Writer) error {
 				UnknownLicenseIsDefault: !explicit,
 			})
 		}
+		hash, err := cfg.Hash()
+		if err != nil {
+			return err //nolint:wrapcheck // the domain error names the hashing
+		}
 		result := configShowResult{
+			ConfigHash: hash,
 			ConfigFile: configFileResult{
 				Path:            path,
 				Present:         present,
@@ -582,6 +618,12 @@ func runStoreConfigShow(root string, asJSON bool, stdout io.Writer) error {
 				AllowedVCSHosts: cfg.FetchPolicy.AllowedVCSHosts,
 				Enforcing:       cfg.FetchPolicy.AllowedVCSHosts != nil,
 			},
+			Storage: configStorageResult{
+				Backend:    cfg.Storage.Backend,
+				SumDBCache: cfg.Storage.SumDBCache,
+			},
+			VulnDB:   configVulnDBResult{URL: cfg.VulnDB.URL},
+			Sections: rawSections(cfg.Sections),
 			Settings: configSettingResults(effectiveSettings(cfg, raw)),
 		}
 		enc := json.NewEncoder(stdout)
@@ -650,7 +692,8 @@ func writeRejectedConfigNotice(w io.Writer, path string) error {
 	return nil
 }
 
-// readConfigFile reads <root>/config.yaml for the two config-show channels.
+// readConfigFile reads the configuration file in force for the two
+// config-show channels.
 //
 // An absent file is an ordinary state rather than a failure: nothing has been
 // set, so every value resolves to a built-in default and the view can still
@@ -660,7 +703,7 @@ func writeRejectedConfigNotice(w io.Writer, path string) error {
 // contents were never seen would answer a policy question with a guess. The
 // two cases are separated on the error value, not on its text.
 func readConfigFile(root string) (path string, data []byte, present bool, err error) {
-	path = filepath.Join(root, "config.yaml")
+	path = configFilePath(root)
 	data, err = os.ReadFile(path) // #nosec G304 -- operator-supplied store-root path
 	switch {
 	case err == nil:
@@ -736,6 +779,9 @@ type storeSchemaState struct {
 // binary knows is simply one this binary is about to bring up to date.
 func (s storeSchemaState) isNewer() bool { return len(s.unknown) > 0 }
 
+// storeSchemaUnreported is the status of a backend that keeps no schema state.
+const storeSchemaUnreported = "unreported"
+
 func (s storeSchemaState) status() string {
 	switch {
 	case s.isNewer():
@@ -747,27 +793,40 @@ func (s storeSchemaState) status() string {
 	}
 }
 
-// readStoreSchemaState asks the store what it holds and pairs the answer with what
-// this binary expects. The comparison itself lives in sqlitestore, beside migrate,
-// because the public driver surface opens the store to write to it too and must
-// reach the same verdict this does.
-//
-// The handle must have been opened WITHOUT migrations, or the comparison would be
-// against a table this call had just written to.
-//
-// It takes no context. It runs on the path that opens the store — before any
-// command's context exists — and reads one bounded local table, so a cancellation
-// hook here would buy nothing and cost every NewContainer caller a parameter.
-func readStoreSchemaState(dbHandle sqlitestore.DB) (storeSchemaState, error) {
-	state, err := sqlitestore.ReadMigrationState(dbHandle, allMigrations())
+// requireExistingStore refuses a command that answers only from a store that
+// already exists, before anything opens one. The configured backend says
+// whether it does, through an inspection that writes nothing.
+func requireExistingStore(storeRoot string) error {
+	st, err := inspectStore(storeRoot)
 	if err != nil {
-		return storeSchemaState{}, fmt.Errorf("reading store schema state: %w", err)
+		return err
 	}
-	return storeSchemaState{
-		applied:  state.Applied,
-		expected: len(allMigrations()),
-		unknown:  state.Unknown,
-	}, nil
+	_ = storageCloser(st)() //nolint:errcheck // an inspection that wrote nothing loses nothing on close
+	return nil
+}
+
+// inspectStore opens the configured backend for reporting only. A store that
+// was never initialised gets the refusal every store-reading command gives.
+func inspectStore(storeRoot string) (*storage.Storage, error) {
+	st, err := openStorage(storage.Request{StoreRoot: storeRoot, Intent: storage.IntentInspect, Config: activeConfig})
+	var notFound *storage.NotFoundError
+	if errors.As(err, &notFound) {
+		return nil, &storeMissingError{location: notFound.Location}
+	}
+	return st, err
+}
+
+// storeMissingError refuses a read of a store that was never initialised.
+type storeMissingError struct{ location string }
+
+func (e *storeMissingError) Error() string {
+	return fmt.Sprintf("store not found at %s: run a kanonarion command to initialise it", e.location)
+}
+
+// schemaStateOf pairs the backend's schema report with the comparison the
+// report and the gate share.
+func schemaStateOf(st storage.SchemaState) storeSchemaState {
+	return storeSchemaState{applied: st.Applied, expected: st.Expected, unknown: st.Unknown}
 }
 
 // newerStoreError is the refusal an older binary owes a newer store, in the shape
@@ -790,28 +849,43 @@ func runStoreInfo(storeRoot string, jsonOut bool, stdout, _ io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("resolving store root: %w", err)
 	}
-	dbPath := filepath.Join(absStore, "mirror.db")
-
-	if _, serr := os.Stat(dbPath); os.IsNotExist(serr) {
-		return fmt.Errorf("store not found at %s: run a kanonarion command to initialise it", dbPath)
-	}
-
-	// Open with no migrations — only initialises the infrastructure tables
-	// (schema_migrations, _store_meta) without applying any domain migrations.
-	// This keeps store info read-only with respect to domain schema changes, and
-	// is what lets it still answer for a store this binary refuses to operate on:
-	// the command an operator reaches for to diagnose the refusal must not be
-	// subject to it.
-	dbHandle, err := sqlitestore.Open(dbPath, nil, sqlitestore.IntentRead)
+	// The inspection applies no migration and writes nothing, so a store this
+	// binary refuses to operate on is still reported: the command an operator
+	// reaches for to diagnose the refusal must not be subject to it.
+	st, err := inspectStore(absStore)
 	if err != nil {
-		return fmt.Errorf("opening store at %s: %w", dbPath, err)
+		var exit *exitError
+		var missing *storeMissingError
+		if errors.As(err, &exit) || errors.As(err, &missing) {
+			return err
+		}
+		return fmt.Errorf("opening store at %s: %w", absStore, err)
 	}
-	defer func() { _ = dbHandle.Close() }()
+	defer func() { _ = storageCloser(st)() }() //nolint:errcheck // a read-only inspection loses nothing on close
+	return writeStoreInfo(context.Background(), st, absStore, "", jsonOut, stdout)
+}
 
-	state, err := readStoreSchemaState(dbHandle)
-	if err != nil {
-		return err
+// writeStoreInfo reports st's schema state; a backend that keeps none is told
+// apart from one that is up to date. dbPath names the store when the backend's
+// report names no location.
+func writeStoreInfo(ctx context.Context, st *storage.Storage, absStore, dbPath string, jsonOut bool, stdout io.Writer) error {
+	if st.Schema == nil {
+		if jsonOut {
+			return encodeJSON(stdout, storeInfoResult{StoreRoot: absStore, DBPath: dbPath, Status: storeSchemaUnreported})
+		}
+		if _, err := fmt.Fprintln(stdout, "store schema: the storage backend reports no schema state"); err != nil {
+			return fmt.Errorf("writing store info: %w", err)
+		}
+		return nil
 	}
+	report, err := st.Schema.SchemaState(ctx)
+	if err != nil {
+		return fmt.Errorf("reading store schema state: %w", err)
+	}
+	if report.Location != "" {
+		dbPath = report.Location
+	}
+	state := schemaStateOf(report)
 	unknown := state.unknown
 	appliedCount := state.applied
 	expected := state.expected

@@ -106,6 +106,9 @@ func FindingReachabilityState(f VulnerabilityFinding) ReachabilityState {
 	if f.IsWithdrawn() {
 		return StateWithdrawn
 	}
+	if f.NotEstablished {
+		return StateNotDetermined
+	}
 	if f.Reachable == nil {
 		if f.ReachabilityAttemptFailed() {
 			return StateNotComputed
@@ -149,6 +152,10 @@ func (s ReachabilityState) String() string {
 	return string(s)
 }
 
+// wordMarshal is a seam over json.Marshal for the two word types' MarshalJSON.
+// A string cannot fail to marshal, so only a test can reach their error arm.
+var wordMarshal = json.Marshal
+
 // MarshalJSON emits the word String renders, so the zero value travels as
 // "not_analysed" rather than as an empty string.
 //
@@ -156,7 +163,7 @@ func (s ReachabilityState) String() string {
 // a producer that never derives one carries would both serialise to nothing —
 // the collapse this type exists to undo, reintroduced one level down.
 func (s ReachabilityState) MarshalJSON() ([]byte, error) {
-	b, err := json.Marshal(s.String())
+	b, err := wordMarshal(s.String())
 	if err != nil {
 		return nil, fmt.Errorf("marshalling reachability state: %w", err)
 	}

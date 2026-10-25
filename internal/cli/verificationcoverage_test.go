@@ -211,3 +211,34 @@ func TestAuditVerificationCoverage_EqualsTheRows(t *testing.T) {
 		t.Errorf("the unfetched row must be unrecorded: %+v", c)
 	}
 }
+
+// A go.work member is local source like the root, and a published module whose
+// read left out a local-source row says so on its row, in text and JSON.
+func TestGraphVerificationRows_WorkspaceMemberAndSupersededLocalGeneration(t *testing.T) {
+	dep := coordinatetest.MustNew("example.com/dep", "v1.0.0")
+	member := coordinatetest.MustNew("example.com/member", coordinate.LocalVersion)
+	records := fakeFetchRecords{byCoord: map[coordinate.ModuleCoordinate]fetchdomain.CompositeRecord{
+		dep: {
+			FactRecord:                 fetchdomain.FactRecord{VerificationStatus: string(fetchdomain.VerifiedByGoSum)},
+			SupersededLocalGenerations: 2,
+		},
+	}}
+	rows := graphVerificationRows(context.Background(), []walkdomain.GraphNode{
+		{Coordinate: dep, ResolutionSource: walkdomain.ResolutionMVS},
+		{Coordinate: member, ResolutionSource: walkdomain.ResolutionLocalWorkspaceMember},
+	}, records)
+
+	if rows[0].SupersededLocal == nil || rows[0].SupersededLocal.Records != 2 || rows[0].SupersededLocal.Statement != "local generation, superseded by identity" {
+		t.Errorf("dep row superseded = %+v, want 2 local generations", rows[0].SupersededLocal)
+	}
+	if rows[1].observation.Bucket != fetchdomain.BucketLocalSource || rows[1].SupersededLocal != nil {
+		t.Errorf("member row = %+v, want local source with nothing superseded", rows[1])
+	}
+	var out bytes.Buffer
+	if err := writeVerificationDetail(&out, rows); err != nil {
+		t.Fatalf("writeVerificationDetail: %v", err)
+	}
+	if !strings.Contains(out.String(), "local generation, superseded by identity: 2 record(s)") {
+		t.Errorf("detail does not name the superseded rows:\n%s", out.String())
+	}
+}

@@ -89,6 +89,12 @@ type canonicalBuildEnv struct {
 	GOARCH    string `json:"goarch"`
 	GOOS      string `json:"goos"`
 	GoVersion string `json:"go_version"`
+	// The TinyGo frame is omitempty so a walk without one marshals, and
+	// hashes, exactly as it did before the fields existed.
+	GOARM         string   `json:"goarm,omitempty"`
+	TinyGoTags    []string `json:"tinygo_tags,omitempty"`
+	TinyGoTarget  string   `json:"tinygo_target,omitempty"`
+	TinyGoVersion string   `json:"tinygo_version,omitempty"`
 }
 
 type canonicalWalkNode struct {
@@ -104,13 +110,17 @@ type canonicalWalkNode struct {
 	// ResolutionLocalReplace). Pointer + omitempty so unset values do not
 	// appear in the canonical JSON for pre- records.
 	OriginalCoordinate *canonicalWalkCoord `json:"original_coordinate,omitempty"`
-	ResolutionSource   string              `json:"resolution_source"`
-	Retracted          bool                `json:"retracted"`
+	// Packages and TinyGo are pointer/omitempty for the reason Stdlib is: only a
+	// TinyGo walk sets them, so every other walk hashes exactly as before.
+	Packages         []string `json:"packages,omitempty"`
+	ResolutionSource string   `json:"resolution_source"`
+	Retracted        bool     `json:"retracted"`
 	// Stdlib carries the standard-library chain-of-custody facts. Pointer +
 	// omitempty so every non-stdlib node (and a stdlib node acquired before this
 	// field existed) hashes identically to before; when present it is covered by
 	// the walk hash.
 	Stdlib *canonicalStdlibFacts `json:"stdlib,omitempty"`
+	TinyGo *canonicalTinyGoFacts `json:"tinygo,omitempty"`
 	// Raw artefact digests. omitempty so nodes without digests (the local main
 	// module, legacy pre-digest records) hash identically to before; when present
 	// they are covered by the walk hash.
@@ -130,6 +140,16 @@ type canonicalStdlibFacts struct {
 	VCSURL             string `json:"vcs_url"`
 	VerificationDetail string `json:"verification_detail"`
 	VerificationStatus string `json:"verification_status"`
+}
+
+// canonicalTinyGoFacts is the fixed-field-order form of TinyGoFacts, in sorted
+// JSON-key order; a map marshals with its keys sorted.
+type canonicalTinyGoFacts struct {
+	// Custody is omitempty so a TinyGo walk recorded before it hashes as it did.
+	Custody  *canonicalTinyGoCustody `json:"custody,omitempty"`
+	Mixed    map[string][]string     `json:"mixed,omitempty"`
+	Packages []string                `json:"packages"`
+	Target   string                  `json:"target"`
 }
 
 type canonicalWalkEdge struct {
@@ -458,7 +478,10 @@ func fromCanonicalBuildEnv(c *canonicalBuildEnv) BuildEnv {
 	if c == nil {
 		return BuildEnv{}
 	}
-	return BuildEnv{GOOS: c.GOOS, GOARCH: c.GOARCH, GoVersion: c.GoVersion}
+	return BuildEnv{
+		GOOS: c.GOOS, GOARCH: c.GOARCH, GoVersion: c.GoVersion,
+		GOARM: c.GOARM, TinyGoTarget: c.TinyGoTarget, TinyGoVersion: c.TinyGoVersion, TinyGoTags: c.TinyGoTags,
+	}
 }
 
 // toCanonicalBuildEnv converts a BuildEnv into its canonical pointer form,
@@ -470,9 +493,13 @@ func toCanonicalBuildEnv(e BuildEnv) *canonicalBuildEnv {
 		return nil
 	}
 	return &canonicalBuildEnv{
-		GOARCH:    e.GOARCH,
-		GOOS:      e.GOOS,
-		GoVersion: e.GoVersion,
+		GOARCH:        e.GOARCH,
+		GOOS:          e.GOOS,
+		GoVersion:     e.GoVersion,
+		GOARM:         e.GOARM,
+		TinyGoTags:    e.TinyGoTags,
+		TinyGoTarget:  e.TinyGoTarget,
+		TinyGoVersion: e.TinyGoVersion,
 	}
 }
 
@@ -502,6 +529,13 @@ func canonicalWalkNodes(nodes []GraphNode) []canonicalWalkNode {
 			out[i].OriginalCoordinate = &c
 		}
 		out[i].Stdlib = toCanonicalStdlibFacts(n.Stdlib)
+		out[i].Packages = n.Packages
+		if n.TinyGo != nil {
+			out[i].TinyGo = &canonicalTinyGoFacts{
+				Custody: toCanonicalTinyGoCustody(n.TinyGo.Custody),
+				Mixed:   n.TinyGo.Mixed, Packages: n.TinyGo.Packages, Target: n.TinyGo.Target,
+			}
+		}
 	}
 	return out
 }
@@ -698,7 +732,15 @@ func nodesFromCanonical(c canonicalWalkRecord) ([]GraphNode, error) {
 				SHA384: n.ZipSHA384,
 				SHA512: n.ZipSHA512,
 			},
-			Stdlib: fromCanonicalStdlibFacts(n.Stdlib),
+			Stdlib:   fromCanonicalStdlibFacts(n.Stdlib),
+			Packages: n.Packages,
+		}
+		if n.TinyGo != nil {
+			custody, cerr := fromCanonicalTinyGoCustody(n.TinyGo.Custody)
+			if cerr != nil {
+				return nil, fmt.Errorf("node %d: %w", i, cerr)
+			}
+			nodes[i].TinyGo = &TinyGoFacts{Target: n.TinyGo.Target, Packages: n.TinyGo.Packages, Mixed: n.TinyGo.Mixed, Custody: custody}
 		}
 		if n.OriginalCoordinate != nil {
 			oc, oerr := coordinate.NewModuleCoordinate(n.OriginalCoordinate.Path, n.OriginalCoordinate.Version)

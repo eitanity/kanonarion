@@ -33,7 +33,8 @@ A record holds the public API of **one buildable configuration** — its build
 frame: `goos/goarch` plus cgo state, printed on every answer. `go/build`
 evaluates the constraints (`//go:build` lines and `_goos_goarch.go` filename
 suffixes); only the files that configuration contains are read. The frame is the
-extracting host's.
+extracting host's: interface extraction takes no `--target` or `--tinygo`, and a
+declared frame on a call-graph command does not reach it.
 
 It matters for any module with per-platform variants. `golang.org/x/sys`,
 `modernc.org/libc` and `github.com/mattn/go-isatty` declare one exported symbol
@@ -306,7 +307,8 @@ kanonarion symbol-find <name> [flags]
 
 Also takes the build-scope flags `--gomod`, `--walk-id`, `--toolchain` and
 `--target GOOS/GOARCH` — see [Declaring the build
-target](walk.md#declaring-the-build-target---target).
+target](walk.md#declaring-the-build-target---target) — and `--tinygo <target>`
+— see [Declaring a TinyGo target](walk.md#declaring-a-tinygo-target---tinygo).
 
 `<name>` is a bare name (`Marshal`) or a qualified one. The name is what follows
 the last dot; what comes before it may be:

@@ -184,4 +184,8 @@ type FetchedModule struct {
 	// one derived from the module path, or one the untrusted proxy named. It is
 	// the zero value whenever no VCS leg was established. See VCSURLBinding.
 	VCSURLBinding VCSURLBinding
+
+	// VersionTime is the time the module source reported for the version in its
+	// .info; zero when it gave none. See FactRecord.VersionTime.
+	VersionTime time.Time
 }

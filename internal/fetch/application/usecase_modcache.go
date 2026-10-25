@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
@@ -58,8 +59,26 @@ func (uc *FetchModuleUseCase) WithModcacheMode() *FetchModuleUseCase {
 // validation leg. Recording the log's status here would have an air-gapped run
 // report an anchor it never reached, and rank it level with a run that did.
 func (uc *FetchModuleUseCase) executeModcache(ctx context.Context, req FetchRequest) (_ FetchResult, retErr error) {
+	return uc.executeFromCache(ctx, req, cacheRoute{
+		anchor:      uc.sumdb,
+		detail:      "verified against local go.sum (modcache mode); VCS cross-verification skipped",
+		goModDetail: "go.mod-only fetch (modcache); go.mod verified against local go.sum; zip not read",
+	})
+}
+
+// cacheRoute is how a measurement read from the module cache is anchored and
+// described: --from-modcache for every module, or one private module.
+type cacheRoute struct {
+	anchor      ports.SumDBClient
+	detail      string
+	goModDetail string
+	vcs         domain2.LegProvenance
+}
+
+// executeFromCache is executeModcache over an explicit anchor and description.
+func (uc *FetchModuleUseCase) executeFromCache(ctx context.Context, req FetchRequest, route cacheRoute) (_ FetchResult, retErr error) {
 	if req.GoModOnly {
-		return uc.executeGoModOnlyModcache(ctx, req)
+		return uc.executeGoModOnlyModcache(ctx, req, route)
 	}
 
 	traceID := ulid.Make().String()
@@ -108,10 +127,11 @@ func (uc *FetchModuleUseCase) executeModcache(ctx context.Context, req FetchRequ
 		return FetchResult{}, err
 	}
 	log.InfoContext(ctx, "download_ok", slog.Int("zip_bytes", len(zipData)))
+	versionTime := uc.cachedVersionTime(ctx, log, req.Coordinate)
 
 	// Step 3: verify against the local go.sum. A missing entry or a hash
 	// mismatch is a hard failure — no blob is stored and no record is written.
-	if verr := uc.verifyAgainstGoSum(ctx, req.Coordinate, req.OriginalCoordinate, dl); verr != nil {
+	if verr := verifyAgainstGoSum(ctx, route.anchor, req.Coordinate, req.OriginalCoordinate, dl); verr != nil {
 		return FetchResult{}, verr
 	}
 	log.InfoContext(ctx, "gosum_verified", slog.String("zip_hash", dl.ZipHash.String()))
@@ -142,7 +162,7 @@ func (uc *FetchModuleUseCase) executeModcache(ctx context.Context, req FetchRequ
 		GoModHash:          dl.GoModHash,
 		Digests:            dl.Digests,
 		VerificationStatus: domain2.VerifiedByGoSum,
-		VerificationDetail: "verified against local go.sum (modcache mode); VCS cross-verification skipped",
+		VerificationDetail: route.detail,
 		FetchedAt:          uc.clock.Now().UTC(),
 		PipelineVersion:    uc.pipelineVersion,
 		ContentLocation:    zipIdentity.String(),
@@ -150,6 +170,8 @@ func (uc *FetchModuleUseCase) executeModcache(ctx context.Context, req FetchRequ
 		Retracted:          retracted,
 		AcquisitionMode:    domain2.AcquisitionModcache,
 		MeasurementKind:    domain2.MeasurementAcquired,
+		VCSCheck:           route.vcs,
+		VersionTime:        versionTime,
 	}
 
 	// Step 6: seal and append. This mode's anchor is the local go.sum alone, so it
@@ -159,12 +181,24 @@ func (uc *FetchModuleUseCase) executeModcache(ctx context.Context, req FetchRequ
 	return uc.persistAndSign(ctx, log, req, m)
 }
 
+// cachedVersionTime is the version time the module cache's .info holds. The
+// cache, not the time, anchors this measurement, so an .info that cannot be read
+// records the time as unknown rather than refusing a fetch that otherwise holds.
+func (uc *FetchModuleUseCase) cachedVersionTime(ctx context.Context, log *slog.Logger, coord coordinate.ModuleCoordinate) time.Time {
+	info, err := uc.proxy.Info(ctx, coord)
+	if err != nil {
+		log.WarnContext(ctx, "module_cache_info_unavailable", slog.String("error", err.Error()))
+		return time.Time{}
+	}
+	return info.Time
+}
+
 // executeGoModOnlyModcache is the go.mod-only counterpart to executeModcache:
 // it reads only the module's go.mod from the cache, verifies its h1 against the
 // local go.sum, and records a go.mod-only fact (GoModLocation set,
 // ContentLocation empty) — no zip is read. It anchors and records exactly as
 // executeModcache does. It is the --from-modcache analogue of executeGoModOnly.
-func (uc *FetchModuleUseCase) executeGoModOnlyModcache(ctx context.Context, req FetchRequest) (_ FetchResult, retErr error) {
+func (uc *FetchModuleUseCase) executeGoModOnlyModcache(ctx context.Context, req FetchRequest, route cacheRoute) (_ FetchResult, retErr error) {
 	traceID := ulid.Make().String()
 	lap := uc.stopwatch.Start()
 
@@ -205,7 +239,7 @@ func (uc *FetchModuleUseCase) executeGoModOnlyModcache(ctx context.Context, req 
 
 	// Step 3: verify the go.mod h1 against the local go.sum. A missing entry or a
 	// mismatch is a hard failure — no record is written.
-	if verr := uc.verifyGoModAgainstGoSum(ctx, req.Coordinate, req.OriginalCoordinate, dl); verr != nil {
+	if verr := verifyGoModAgainstGoSum(ctx, route.anchor, req.Coordinate, req.OriginalCoordinate, dl); verr != nil {
 		return FetchResult{}, verr
 	}
 	log.InfoContext(ctx, "gosum_verified", slog.String("go_mod_hash", dl.GoModHash.String()))
@@ -231,7 +265,7 @@ func (uc *FetchModuleUseCase) executeGoModOnlyModcache(ctx context.Context, req 
 		Coordinate:         req.Coordinate,
 		GoModHash:          dl.GoModHash,
 		VerificationStatus: domain2.VerifiedByGoSum,
-		VerificationDetail: "go.mod-only fetch (modcache); go.mod verified against local go.sum; zip not read",
+		VerificationDetail: route.goModDetail,
 		FetchedAt:          uc.clock.Now().UTC(),
 		PipelineVersion:    uc.pipelineVersion,
 		GoModLocation:      goModIdentity.String(),
@@ -306,8 +340,8 @@ func (uc *FetchModuleUseCase) cachedGoModOnlyModcache(ctx context.Context, log *
 // local go.sum entry surfaced by the SumDBClient. A module absent from go.sum,
 // or whose go.mod hash disagrees, yields ErrGoSumVerification. It is the
 // go.mod-only analogue of verifyAgainstGoSum.
-func (uc *FetchModuleUseCase) verifyGoModAgainstGoSum(ctx context.Context, coord, original coordinate.ModuleCoordinate, dl ports.GoModDownload) error {
-	res := uc.sumdb.Lookup(ctx, coord)
+func verifyGoModAgainstGoSum(ctx context.Context, anchor ports.SumDBClient, coord, original coordinate.ModuleCoordinate, dl ports.GoModDownload) error {
+	res := anchor.Lookup(ctx, coord)
 	if !res.Available {
 		if isReplaced(coord, original) && !res.LookupFailed() {
 			return errReplacedModuleNotInGoSum(coord, original, res.Reason)
@@ -324,8 +358,8 @@ func (uc *FetchModuleUseCase) verifyGoModAgainstGoSum(ctx context.Context, coord
 // verifyAgainstGoSum checks the module's computed h1 hashes against the local
 // go.sum entries surfaced by the SumDBClient. A module absent from go.sum, or
 // whose zip/go.mod hash disagrees, yields ErrGoSumVerification.
-func (uc *FetchModuleUseCase) verifyAgainstGoSum(ctx context.Context, coord, original coordinate.ModuleCoordinate, dl ports.ModuleDownload) error {
-	res := uc.sumdb.Lookup(ctx, coord)
+func verifyAgainstGoSum(ctx context.Context, anchor ports.SumDBClient, coord, original coordinate.ModuleCoordinate, dl ports.ModuleDownload) error {
+	res := anchor.Lookup(ctx, coord)
 	if !res.Available {
 		if isReplaced(coord, original) && !res.LookupFailed() {
 			return errReplacedModuleNotInGoSum(coord, original, res.Reason)

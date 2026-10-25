@@ -65,7 +65,7 @@ func TestExtract_DriftBlockedAndAudited(t *testing.T) {
 		Clock: clock.Fixed{}, Stopwatch: clock.Monotonic{},
 	})
 
-	rec, err := uc.Extract(context.Background(), "go.mod", true, configdomain.DefaultConfig().VendorPolicy)
+	rec, err := uc.Extract(context.Background(), "go.mod", true, configdomain.DefaultConfig().VendorPolicy, testConfigHash)
 	if err != nil {
 		t.Fatalf("Extract: %v", err)
 	}
@@ -90,6 +90,7 @@ func TestExtract_DriftBlockedAndAudited(t *testing.T) {
 	if len(sink.events) != 1 || sink.events[0].Type != audit.EventVendorTreeGenerated {
 		t.Fatalf("want 1 vendor_tree_generated event, got %+v", sink.events)
 	}
+	assertConfigHashed(t, rec.ConfigHash, sink.events)
 	if err := sink.events[0].Validate(); err != nil {
 		t.Errorf("invalid audit event: %v", err)
 	}
@@ -121,7 +122,7 @@ func TestExtract_CleanNoFindings(t *testing.T) {
 		Store: store, Audit: sink,
 		Clock: clock.Fixed{}, Stopwatch: clock.Monotonic{},
 	})
-	rec, err := uc.Extract(context.Background(), "go.mod", false, configdomain.DefaultConfig().VendorPolicy)
+	rec, err := uc.Extract(context.Background(), "go.mod", false, configdomain.DefaultConfig().VendorPolicy, testConfigHash)
 	if err != nil {
 		t.Fatalf("Extract: %v", err)
 	}
@@ -130,5 +131,22 @@ func TestExtract_CleanNoFindings(t *testing.T) {
 	}
 	if len(sink.events) != 1 {
 		t.Errorf("clean scan must still be audited, got %d events", len(sink.events))
+	}
+}
+
+// testConfigHash stands for the config hash the caller evaluated under.
+const testConfigHash = "sha256:test-config"
+
+// assertConfigHashed checks the record and every event name the config hash
+// they were evaluated under.
+func assertConfigHashed(t *testing.T, recorded string, events []audit.Event) {
+	t.Helper()
+	if recorded != testConfigHash {
+		t.Errorf("record ConfigHash = %q, want %q", recorded, testConfigHash)
+	}
+	for _, e := range events {
+		if e.Payload["config_hash"] != testConfigHash {
+			t.Errorf("%s payload config_hash = %v, want %q", e.Type, e.Payload["config_hash"], testConfigHash)
+		}
 	}
 }

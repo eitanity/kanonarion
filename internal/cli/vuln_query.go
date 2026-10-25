@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"slices"
@@ -16,6 +17,7 @@ import (
 
 	vulnapp "github.com/eitanity/kanonarion/internal/vuln/application"
 	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
+	vulnports "github.com/eitanity/kanonarion/internal/vuln/ports"
 	"github.com/spf13/cobra"
 )
 
@@ -113,6 +115,11 @@ func runVulnShow(
 	// name rather than parsed and dropped.
 	if terr := resolveReadTarget(ctx, target, "vuln-show", !history && walkID == "" && gomodSet, gomod); terr != nil {
 		return terr
+	}
+	// A named walk supplies the call-graph frame; adopted after the resolution
+	// above, which would otherwise put the read back in the host frame.
+	if aerr := adoptNamedWalkFrame(ctx, walks, walkID); aerr != nil {
+		return aerr
 	}
 
 	if history {
@@ -379,7 +386,7 @@ func explainWalkRecordAbsence(
 		// subject. But scanning a resolution that a fresher walk has already
 		// superseded produces a second scan surface for an outdated build list,
 		// so a newer succeeded walk of the same root is worth one line.
-		msg := fmt.Sprintf("no vulnerability scan run for walk %s — run: kanonarion vuln-scan %s", walkID, walkID)
+		msg := vulnports.WalkNotScanned{WalkID: walkID}.Error()
 		if note := newerWalkNote(ctx, walks, walkID); note != "" {
 			msg += "\n" + note
 		}
@@ -669,6 +676,7 @@ func historyWalks(records []vuldomain.VulnerabilityRecord) []string {
 
 func newVulnByIDCmd(stdout, stderr io.Writer) *cobra.Command {
 	var walkID string
+	var timeline bool
 
 	cmd := &cobra.Command{
 		Use: "vuln-by-id <finding-id>",
@@ -683,10 +691,14 @@ With no --walk-id, the answer spans the entire store: every module version,
 pipeline version and database snapshot generation ever scanned — including a
 module version that was patched out of your build several scans ago. Pass
 --walk-id to restrict the answer to the modules one walk's scans covered,
-which is what "which of my modules is hit by this CVE" usually means.`,
+which is what "which of my modules is hit by this CVE" usually means.
+
+--timeline lists, per module version and analysis frame, when the advisory's
+state changed across the stored records, and why.`,
 		Example: `  kanonarion vuln-by-id GO-2023-1234
   kanonarion vuln-by-id CVE-2023-12345 --json
-  kanonarion vuln-by-id GO-2023-1234 --walk-id 01KQDBVW092ER1HNXZ60X27CMD`,
+  kanonarion vuln-by-id GO-2023-1234 --walk-id 01KQDBVW092ER1HNXZ60X27CMD
+  kanonarion vuln-by-id GO-2023-1234 --timeline`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			logger := buildLogger(logLevel, stderr)
@@ -695,11 +707,19 @@ which is what "which of my modules is hit by this CVE" usually means.`,
 				return fmt.Errorf("initialising store: %w", err)
 			}
 			defer releaseStore(cleanup)
+			// A named walk supplies the frame the route roots are classified in.
+			if aerr := adoptNamedWalkFrame(cmd.Context(), ctr.QueryWalks, walkID); aerr != nil {
+				return aerr
+			}
+			if timeline {
+				return runVulnTimeline(cmd.Context(), args[0], walkID, jsonOut, ctr.QueryVuln, stdout)
+			}
 			return runVulnByID(cmd.Context(), args[0], walkID, jsonOut, ctr.QueryVuln, ctr.QueryCallGraph, stdout)
 		},
 	}
 
 	cmd.Flags().StringVar(&walkID, "walk-id", "", "restrict results to modules scanned under this walk (optional; defaults to every stored scan)")
+	cmd.Flags().BoolVar(&timeline, "timeline", false, "list when the advisory's state changed per module version and frame, and why")
 
 	return cmd
 }
@@ -713,6 +733,9 @@ func runVulnByID(ctx context.Context, findingID, walkID string, jsonOut bool, uc
 	// the answer rather than a reason to withhold it: one drifted row used to
 	// take out every other module this advisory touches. Any other error still
 	// aborts.
+	if nerr := walkNotScanned(err); nerr != nil {
+		return nerr
+	}
 	unreadable, survivable := unreadableRowReport(err)
 	if err != nil && !survivable {
 		return fmt.Errorf("vuln-by-id: %w", err)
@@ -805,4 +828,15 @@ func supersededByIDNote(records []vuldomain.VulnerabilityRecord) string {
 			"        They are the newest evidence the store holds for those coordinates, and they are not\n"+
 			"        what a current scan would answer. Re-scan a coordinate to replace one.\n",
 		n, len(records), vulnPipelineVersion)
+}
+
+// walkNotScanned is the refusal for a walk-scoped read of a walk that was never
+// scanned: its one sentence at exit 4, as vuln-show prints it, without the
+// layers' wrapping. nil for any other error.
+func walkNotScanned(err error) error {
+	var wns vulnports.WalkNotScanned
+	if !errors.As(err, &wns) {
+		return nil
+	}
+	return &exitError{code: ExitNotFound, msg: wns.Error()}
 }

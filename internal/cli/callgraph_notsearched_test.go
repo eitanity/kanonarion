@@ -120,6 +120,7 @@ func nsRecord(t *testing.T, g nsGen, at time.Time) cgdomain.CallGraphRecord {
 	r.NodeCount, r.EdgeCount = len(ns), len(edges)
 	r.ExtractedAt = at
 	r.PipelineVersion = g.pipeline
+	r.Frame = hostFrame()
 	sealed, err := cgdomain.CallGraphRecordHasher{}.SetContentHash(r)
 	if err != nil {
 		t.Fatalf("SetContentHash: %v", err)

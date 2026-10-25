@@ -6,8 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
 
 	"github.com/spf13/cobra"
 
@@ -72,6 +70,7 @@ type contextOutput struct {
 	License         contextLicense         `json:"license"`
 	Interface       contextInterface       `json:"interface"`
 	CallGraph       contextCallGraph       `json:"call_graph"`
+	Capability      contextCapability      `json:"capability"`
 	Examples        contextExamples        `json:"examples"`
 	Vulnerabilities contextVulnerabilities `json:"vulnerabilities"`
 	// Native is what this module's own artefact compiles into the binary from
@@ -140,6 +139,12 @@ const (
 	// sectionStatusDivergent: the module's fetch records disagree on a hash they
 	// both carry. The error field states the disagreement.
 	sectionStatusDivergent = "divergent"
+	// sectionStatusOtherFrame: the call graph is held only under build frames
+	// other than the read's; held_frames and read_with name them.
+	sectionStatusOtherFrame = "other_frame"
+	// sectionStatusConflict: the records that would answer disagree, so none
+	// is served. The error field states the disagreement.
+	sectionStatusConflict = "conflict"
 )
 
 // Fork-heuristic status strings, mirrored from the domain status names so the
@@ -328,6 +333,10 @@ type contextCallGraph struct {
 	EntryPointsByPackage map[string]int `json:"entry_points_by_package,omitempty"`
 	EntryPoints          []string       `json:"entry_points,omitempty"`
 	Error                string         `json:"error,omitempty"`
+	// HeldFrames and ReadWith, on an other_frame section, are the frames the
+	// graph is held under and the flag that reads each.
+	HeldFrames []string `json:"held_frames,omitempty"`
+	ReadWith   []string `json:"read_with,omitempty"`
 }
 
 type contextExample struct {
@@ -693,9 +702,8 @@ func runContext(ctx context.Context, arg string, f contextFlags, stdout, stderr 
 		return fmt.Errorf("invalid coordinate %q: %w", arg, err)
 	}
 
-	dbPath := filepath.Join(storeRoot, "mirror.db")
-	if _, serr := os.Stat(dbPath); os.IsNotExist(serr) {
-		return fmt.Errorf("store not found at %s: run a kanonarion command to initialise it", dbPath)
+	if serr := requireExistingStore(storeRoot); serr != nil {
+		return serr
 	}
 
 	ctr, cleanup, err := NewContainer(storeRoot, "", "", false, activeConfig, logger)
@@ -732,18 +740,21 @@ func runContext(ctx context.Context, arg string, f contextFlags, stdout, stderr 
 	// its own. A document that selected twice could name one walk and count in
 	// another.
 	basis := resolveBasisWalk(ctx, ctr.QueryWalks, vulns.WalkBasisID)
+	callGraph, capability := buildCallGraph(ctx, coord, ctr.QueryCallGraph, f.entryPointsFull, f.packageFilter)
+	verification := buildVerification(ctx, coord, ctr.QueryFetch)
 	out := contextOutput{
 		Module:          contextModuleInfo{Path: coord.Path(), Version: coord.Version()},
-		Verification:    buildVerification(ctx, coord, ctr.QueryFetch),
+		Verification:    verification,
 		Provenance:      buildProvenance(coord),
 		Dependencies:    buildDependencies(ctx, coord, ctr.QueryWalks, basis),
 		License:         buildLicense(ctx, coord, ctr.QueryLicense, ctr.StdlibCustody),
 		Interface:       buildInterface(ctx, coord, ctr.QueryInterface, compact, f.packageFilter),
-		CallGraph:       buildCallGraph(ctx, coord, ctr.QueryCallGraph, f.entryPointsFull, f.packageFilter),
+		CallGraph:       callGraph,
+		Capability:      capability,
 		Examples:        buildExamples(ctx, coord, ctr.QueryExamples, compact, f.packageFilter),
 		Vulnerabilities: vulns,
 		Native:          deriveNativeCoverage(ctx, ctr.QueryNative, coord),
-		Commands:        buildCommandsWithWalk(coord, cmdWalkID),
+		Commands:        buildCommandsWithWalk(coord, cmdWalkID, verification, basis),
 	}
 
 	if f.sizeOnly {

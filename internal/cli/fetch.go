@@ -3,21 +3,23 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
+	"path/filepath"
 
-	"github.com/eitanity/kanonarion/internal/adapters/blobstore/localfs"
 	"github.com/eitanity/kanonarion/internal/adapters/clock"
-	sqlite2 "github.com/eitanity/kanonarion/internal/adapters/factstore/sqlite"
 	proxyadapter "github.com/eitanity/kanonarion/internal/adapters/proxy/direct"
-	noopsigner "github.com/eitanity/kanonarion/internal/adapters/signer/noop"
 	"github.com/eitanity/kanonarion/internal/adapters/sumdb/gosum"
 	sumdbretry "github.com/eitanity/kanonarion/internal/adapters/sumdb/retrying"
 	"github.com/eitanity/kanonarion/internal/adapters/vcs/gitexec"
+	"github.com/eitanity/kanonarion/internal/composition/storage"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/fetch/application"
 	"github.com/eitanity/kanonarion/internal/fetch/domain"
+	stalegolist "github.com/eitanity/kanonarion/internal/staleness/adapters/golist"
 	staledomain "github.com/eitanity/kanonarion/internal/staleness/domain"
 	staleports "github.com/eitanity/kanonarion/internal/staleness/ports"
 	"github.com/spf13/cobra"
@@ -43,6 +45,9 @@ type fetchFlags struct {
 	// refuseTestScopeOnRecordingCommand.
 	excludeTests bool
 	noProgress   bool
+	// scopeGoSum is the go.sum beside a scope fetch's go.mod, the anchor a
+	// private module is verified against. Empty for a positional fetch.
+	scopeGoSum string
 }
 
 func newFetchCmd(stdout, stderr io.Writer) *cobra.Command {
@@ -77,6 +82,9 @@ func newFetchCmd(stdout, stderr io.Writer) *cobra.Command {
 			f.vcsHosts = hosts
 
 			goModScope := f.gomod != "" || f.tool || f.project
+			if fetchesOneAgainstProject(args, f) {
+				return runFetchAgainstProject(cmd.Context(), args[0], f, stdout, stderr)
+			}
 			if goModScope {
 				if len(args) > 0 {
 					return fmt.Errorf("cannot combine a go.mod scope fetch (--gomod/--tool/--project) with a positional argument")
@@ -113,7 +121,7 @@ func newFetchCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd.Flags().BoolVar(&f.listVersions, "list-versions", false, "list available versions from the proxy and exit without fetching")
 	cmd.Flags().BoolVar(&f.tool, "tool", false, "fetch the tooling supply chain (the go.mod tool directives' closure) instead of a positional module@version")
 	cmd.Flags().BoolVar(&f.project, "project", false, "fetch the complete set: the project's code AND tooling")
-	cmd.Flags().StringVar(&f.gomod, "gomod", "", "path to a go.mod file to fetch a dependency scope from (default: ./go.mod)")
+	cmd.Flags().StringVar(&f.gomod, "gomod", "", "path to a go.mod file to fetch a dependency scope from (default: ./go.mod); with a module, the project whose go.sum verifies it")
 	cmd.Flags().StringVar(&f.policyPath, "policy", "", "path to depth policy YAML (default: search for .kanonarion/policy.yaml)")
 	registerRecordedTestScopeFlag(cmd, &f.excludeTests)
 	registerNoProgressFlag(cmd, &f.noProgress)
@@ -166,6 +174,9 @@ func runFetchScope(ctx context.Context, gomodPath string, scope depScope, f fetc
 		return nil
 	}
 	_, _ = fmt.Fprintf(stderr, "fetching %d %s modules from %s\n", len(coords), scope, gomodPath)
+	if goSum := filepath.Join(filepath.Dir(gomodPath), "go.sum"); statOK(goSum) {
+		f.scopeGoSum = goSum
+	}
 	var errs []error
 	for _, coord := range coords {
 		if ferr := fetchOne(ctx, coord, f, stdout, stderr); ferr != nil {
@@ -194,9 +205,9 @@ func runFetch(ctx context.Context, arg string, f fetchFlags, stdout, stderr io.W
 func fetchOne(ctx context.Context, arg string, f fetchFlags, stdout, stderr io.Writer) (err error) {
 	logger := buildLogger(logLevel, stderr)
 
-	path, version, err := parseModuleArg(arg)
+	path, version, err := parseFetchArg(arg, f)
 	if err != nil {
-		return fmt.Errorf("invalid argument %q: %w", arg, err)
+		return err
 	}
 
 	proxyAdapter, err := proxyadapter.New(f.goproxy, f.insecure)
@@ -217,53 +228,33 @@ func fetchOne(ctx context.Context, arg string, f fetchFlags, stdout, stderr io.W
 		return err
 	}
 
-	vcsClient := gitexec.New()
-	blobStore := localfs.New(storeRoot)
-
-	dbPath := storeRoot + "/mirror.db"
 	if merr := os.MkdirAll(storeRoot, 0o750); merr != nil {
 		return fmt.Errorf("creating store root: %w", merr)
 	}
-	rawStore, err := sqlite2.Open(dbPath)
+	// A writable open through the backend, so the store has a ledger from here on.
+	st, err := openStorage(storage.Request{
+		StoreRoot: storeRoot, Intent: storage.IntentCreate, SetAside: storeSetAside.report, Logger: logger, Config: activeConfig,
+	})
 	if err != nil {
 		return fmt.Errorf("opening fact store: %w", err)
 	}
-	rawStore.ReportSetAside(storeSetAside.report)
-	factStore, err := sqlite2.NewAuditingStore(rawStore, storeRoot+"/audit.jsonl")
-	if err != nil {
-		return fmt.Errorf("creating auditing store: %w", err)
+	// The container's refusal, so fetch cannot write into a store from a newer build.
+	if aerr := admitStorage(st, storeRoot); aerr != nil {
+		return errors.Join(aerr, storageCloser(st)())
 	}
 	defer func() {
-		if cerr := factStore.Close(); cerr != nil && err == nil {
+		if cerr := storageCloser(st)(); cerr != nil && err == nil {
 			err = fmt.Errorf("closing fact store: %w", cerr)
 		}
 	}()
-
-	// Retry transient checksum-database failures before they can downgrade the
-	// module's verification status, matching the walk path's wiring.
-	sumdbClient := sumdbretry.New(gosum.New(storeRoot+"/sumdb"), logger)
-	clk := clock.System{}
-
-	uc := application.NewFetchModuleUseCase(
-		proxyAdapter, vcsClient, blobStore, factStore,
-		sumdbClient, clk, clock.Monotonic{}, "", logger,
-	).WithSigner(noopsigner.New(), factStore).
-		WithAudit(factStore).
-		WithAllowVerificationDowngrade(allowVerificationDowngrade)
-
-	result, err := uc.Execute(ctx, application.FetchRequest{
-		Coordinate:    coord,
-		Force:         f.force,
-		SkipVCSVerify: f.skipVCSVerify,
-		VCSHosts:      f.vcsHosts,
-	})
+	result, err := executeFetchOne(ctx, st, proxyAdapter, coord, f, logger)
 	if err != nil {
-		return fmt.Errorf("fetching module: %w", err)
+		return err
 	}
 
 	// Check staleness for pinned versions. Usually one fast request; a lookup the
 	// proxy has not finished is re-asked for up to four minutes, narrated on stderr.
-	stale := fetchStalenessFor(ctx, commandStalenessPort(proxyAdapter, stderr, f.noProgress), coord, version, stderr)
+	stale := fetchStalenessFor(ctx, fetchStalenessPort(proxyAdapter, coord, f, stderr), coord, version, stderr)
 
 	if err := writeFetchResult(stdout, coord, version, result, stale); err != nil {
 		return err
@@ -273,6 +264,84 @@ func fetchOne(ctx context.Context, arg string, f fetchFlags, stdout, stderr io.W
 		return fmt.Errorf("verification failed: %s", result.Record.VerificationStatus)
 	}
 	return nil
+}
+
+// fetchesOneAgainstProject reports `fetch <module> --gomod <path>`: one module,
+// verified against that project's go.sum when it is private.
+func fetchesOneAgainstProject(args []string, f fetchFlags) bool {
+	return len(args) == 1 && f.gomod != "" && !f.tool && !f.project && !f.listVersions
+}
+
+// runFetchAgainstProject fetches one module with the go.sum beside --gomod as
+// the anchor a private module is verified against.
+func runFetchAgainstProject(ctx context.Context, arg string, f fetchFlags, stdout, stderr io.Writer) error {
+	if err := refuseInapplicableFlags("fetch <module>@<version> --gomod", testScopeNoScopeFlag(f.excludeTests)); err != nil {
+		return err
+	}
+	gomodPath, err := resolveGoModPath(f.gomod)
+	if err != nil {
+		return err
+	}
+	if goSum := filepath.Join(filepath.Dir(gomodPath), "go.sum"); statOK(goSum) {
+		f.scopeGoSum = goSum
+	}
+	return fetchOne(ctx, arg, f, stdout, stderr)
+}
+
+// parseFetchArg parses the module argument, refusing a private module named on
+// its own: a positional fetch has no go.sum to verify it against.
+func parseFetchArg(arg string, f fetchFlags) (string, string, error) {
+	path, version, err := parseModuleArg(arg)
+	if err != nil {
+		return "", "", fmt.Errorf("invalid argument %q: %w", arg, err)
+	}
+	if positional := f.gomod == "" && !f.tool && !f.project; positional || version == "latest" {
+		if perr := refusePrivateCoordinate(path, positional); perr != nil {
+			return "", "", perr
+		}
+	}
+	return path, version, nil
+}
+
+// executeFetchOne fetches coord through the proxy, or through the module
+// cache against the scope's go.sum when it is a private module.
+func executeFetchOne(ctx context.Context, st *storage.Storage, proxyAdapter *proxyadapter.Proxy, coord coordinate.ModuleCoordinate,
+	f fetchFlags, logger *slog.Logger) (application.FetchResult, error) {
+	// Retry transient checksum-database failures before they can downgrade the
+	// module's verification status, matching the walk path's wiring.
+	sumdbClient := sumdbretry.New(gosum.New(activeConfig.Storage.SumDBCacheDir(storeRoot)), logger)
+	uc, err := privateFetchUseCase(application.NewFetchModuleUseCase(
+		withPrivateRoute(proxyAdapter, "", f.scopeGoSum, logger), gitexec.New(), st.Blobs, st.Facts,
+		sumdbClient, clock.System{}, clock.Monotonic{}, "", logger,
+	).WithSigner(storageSigner(st), st.Attestations).
+		WithAudit(st.Audit).
+		WithAllowVerificationDowngrade(allowVerificationDowngrade), f.scopeGoSum, logger)
+	if err != nil {
+		return application.FetchResult{}, err
+	}
+	result, err := uc.Execute(ctx, application.FetchRequest{
+		Coordinate:    coord,
+		Force:         f.force,
+		SkipVCSVerify: f.skipVCSVerify,
+		VCSHosts:      f.vcsHosts,
+	})
+	if err != nil {
+		return application.FetchResult{}, fmt.Errorf("fetching module: %w", err)
+	}
+	return result, nil
+}
+
+// fetchStalenessPort asks the proxy, or the go command for a private module.
+func fetchStalenessPort(proxyAdapter *proxyadapter.Proxy, coord coordinate.ModuleCoordinate, f fetchFlags, stderr io.Writer) staleports.LatestResolver {
+	if privateModulePath(coord.Path()) {
+		return stalegolist.NewPrivate(filepath.Dir(f.scopeGoSum), f.goproxy)
+	}
+	return commandStalenessPort(proxyAdapter, stderr, f.noProgress)
+}
+
+func statOK(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 // fetchCoordinate is the coordinate to fetch, resolving @latest through the
@@ -399,6 +468,9 @@ func fetchStalenessFor(ctx context.Context, proxy staleports.LatestResolver, coo
 		// is no version to compare the pin against, so there is no comparison.
 		if lerr != nil {
 			_, _ = fmt.Fprintf(stderr, "staleness %s: %v\n", coord.Path(), lerr)
+		}
+		if errors.Is(lerr, staleports.ErrPrivateModule) {
+			return stalenessInfo{Unmeasured: stalenessPrivateModule}
 		}
 		return stalenessInfo{Unmeasured: stalenessLookupFailed}
 	}

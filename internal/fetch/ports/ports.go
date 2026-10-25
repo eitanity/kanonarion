@@ -150,6 +150,9 @@ type ModuleOrigin struct {
 	URL  string // canonical clone URL
 	Ref  string // e.g. "refs/tags/v1.8.1"
 	Hash string // full commit SHA
+	// Subdir is the module's directory in the repository, without any
+	// major-version subdirectory; empty is the root. Untrusted like the rest.
+	Subdir string
 }
 
 // ModuleDownload carries the artefacts from a proxy download.
@@ -201,9 +204,9 @@ type VCSClient interface {
 //
 //   - Addressed by artefact identity. The adapter's internal layout is its own
 //     business, but it is never persisted and never leaks into a record.
-//   - Verify before serve. Get produces bytes that hash to the requested
-//     identity or reports absence. Absence is not a failure; wrong bytes are a
-//     tamper finding.
+//   - Verify before serve. Get and GetPath produce bytes that hash to the
+//     requested identity or report absence. Absence is not a failure; wrong
+//     bytes are ErrBlobTampered, and the bytes are never handed out.
 //   - Materialise locally on demand, via BlobPathOptimizer, for the consumers
 //     that need a filesystem path. A remote backend must not pretend to have
 //     paths — it declines the optional interface instead.
@@ -215,8 +218,9 @@ type BlobStore interface {
 	// the same identity twice is a no-op the second time.
 	Put(ctx context.Context, identity BlobIdentity, content io.Reader) error
 
-	// Get opens the artefact for reading. Returns an error if the identity is
-	// not held.
+	// Get opens the artefact for reading, after hashing it against identity.
+	// Returns an error if the identity is not held, and an error matching
+	// ErrBlobTampered if the held bytes do not hash to it.
 	Get(ctx context.Context, identity BlobIdentity) (io.ReadCloser, error)
 
 	// Exists reports whether the artefact is present in the store.
@@ -232,8 +236,64 @@ type BlobStore interface {
 // grow by new optional interfaces like this one, never by widening BlobStore.
 type BlobPathOptimizer interface {
 	// GetPath returns the local filesystem path to the artefact identified by
-	// identity. Returns ErrBlobNotFound if it is not held.
+	// identity. Returns ErrBlobNotFound if it is not held, and an error matching
+	// ErrBlobTampered if the file does not hash to identity. The file is verified
+	// at the moment the path is handed out; a change made after that is not seen
+	// by this call, which is the accepted cost of handing out a path at all.
 	GetPath(ctx context.Context, identity BlobIdentity) (string, error)
+}
+
+// ErrBlobTampered is a blob store's refusal of held bytes that do not hash to
+// the identity they are stored under. It is distinct from absence: the bytes are
+// there and are not the bytes that were verified when they were stored.
+var ErrBlobTampered = errors.New("stored artefact does not hash to its identity")
+
+// BlobTamperedMarker is the phrase every tamper refusal carries, for a parent
+// reading a child process's stderr, where the error value does not cross.
+const BlobTamperedMarker = "does not hash to its identity"
+
+// BlobTamperedError carries what a refused read observed. It matches
+// ErrBlobTampered under errors.Is. Coordinate is unknown to the store and is
+// named by the consumer that read the artefact, through AttributeBlobTamper.
+type BlobTamperedError struct {
+	// Identity is the identity the bytes are stored under.
+	Identity BlobIdentity
+	// Observed is the h1 the held bytes hash to; empty when they do not hash.
+	Observed string
+	// Unhashable says why the held bytes could not be hashed at all.
+	Unhashable string
+	// Path is where the store holds the bytes.
+	Path string
+	// Coordinate is the module the artefact belongs to, when a consumer named it.
+	Coordinate coordinate.ModuleCoordinate
+}
+
+func (e *BlobTamperedError) Error() string {
+	observed := e.Observed
+	if observed == "" {
+		observed = "no h1: " + e.Unhashable
+	}
+	coord := "<module>@<version>"
+	if !e.Coordinate.IsZero() {
+		coord = e.Coordinate.String()
+	}
+	return fmt.Sprintf("stored artefact %s %s (observed %s): "+
+		"the store's copy was altered after it was verified; re-fetch it with kanonarion fetch %s --force",
+		e.Identity, BlobTamperedMarker, observed, coord)
+}
+
+// Is makes every BlobTamperedError match ErrBlobTampered.
+func (e *BlobTamperedError) Is(target error) bool { return target == ErrBlobTampered }
+
+// AttributeBlobTamper names coord on a tamper refusal in err's chain that does
+// not yet name a module, and returns err. The store knows only the identity; the
+// remedy the refusal prints needs the coordinate the consumer read it for.
+func AttributeBlobTamper(err error, coord coordinate.ModuleCoordinate) error {
+	var tampered *BlobTamperedError
+	if errors.As(err, &tampered) && tampered.Coordinate.IsZero() {
+		tampered.Coordinate = coord
+	}
+	return err
 }
 
 // BlobIdentity addresses an artefact by what it is. It is derived from the

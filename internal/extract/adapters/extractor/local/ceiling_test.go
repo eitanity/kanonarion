@@ -35,7 +35,7 @@ func TestCallgraphCeiling_AReachedCeilingIsRecordedAsSuchAndNotAsAKill(t *testin
 	}
 	chosen := &fakeSubprocessExecutor{err: errors.New("signal: killed")}
 
-	res, eerr := newCallgraphAdapter(reached, extractedOutcome()).Extract(t.Context(), coord, "callgraph", false, "")
+	res, eerr := newCallgraphAdapter(reached, extractedOutcome()).Extract(t.Context(), coord, "callgraph", false, "", false)
 	if eerr != nil {
 		t.Fatalf("Extract failed: %v", eerr)
 	}
@@ -51,8 +51,9 @@ func TestCallgraphCeiling_AReachedCeilingIsRecordedAsSuchAndNotAsAKill(t *testin
 	if !strings.Contains(res.Error, "stopped itself") {
 		t.Errorf("Error = %q, want it to say the analysis stopped itself at the ceiling", res.Error)
 	}
-	if !strings.Contains(res.Error, "--callgraph-memory-ceiling") {
-		t.Errorf("Error = %q, want the number a reader can raise named in it", res.Error)
+	// No walk is in hand, so no invocation can carry the flag that raises it.
+	if strings.Contains(res.Error, "--callgraph-memory-ceiling") {
+		t.Errorf("Error = %q names a flag outside an invocation", res.Error)
 	}
 	if !strings.Contains(res.Error, "13421772800") {
 		t.Errorf("Error = %q, want the child's own account of what it reached kept", res.Error)
@@ -60,7 +61,7 @@ func TestCallgraphCeiling_AReachedCeilingIsRecordedAsSuchAndNotAsAKill(t *testin
 
 	// The control that must stay different: the kernel choosing this process is
 	// not a ceiling anyone set, and its remedy is not a flag.
-	killed, eerr := newCallgraphAdapter(chosen, extractedOutcome()).Extract(t.Context(), coord, "callgraph", false, "")
+	killed, eerr := newCallgraphAdapter(chosen, extractedOutcome()).Extract(t.Context(), coord, "callgraph", false, "", false)
 	if eerr != nil {
 		t.Fatalf("Extract failed: %v", eerr)
 	}

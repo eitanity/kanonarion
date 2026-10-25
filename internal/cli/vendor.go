@@ -83,16 +83,18 @@ type vendorScope struct {
 // and findings are domain-sorted and no wall-clock field is emitted, so
 // identical inputs yield identical bytes.
 type vendorSection struct {
-	SchemaVersion   string          `json:"schema_version"`
-	Ecosystem       string          `json:"ecosystem"`
-	PipelineVersion string          `json:"pipeline_version"`
-	Project         string          `json:"project"`
-	VendorDir       string          `json:"vendor_dir"`
-	VendorOnly      bool            `json:"vendor_only"`
-	OverallStatus   string          `json:"overall_status"`
-	ContentHash     string          `json:"content_hash"`
-	Modules         []vendorModule  `json:"modules"`
-	Findings        []vendorFinding `json:"findings"`
+	SchemaVersion   string           `json:"schema_version"`
+	Ecosystem       string           `json:"ecosystem"`
+	PipelineVersion string           `json:"pipeline_version"`
+	Project         string           `json:"project"`
+	VendorDir       string           `json:"vendor_dir"`
+	VendorOnly      bool             `json:"vendor_only"`
+	OverallStatus   string           `json:"overall_status"`
+	ContentHash     string           `json:"content_hash"`
+	ConfigHash      string           `json:"config_hash,omitempty"`
+	ConfigOverrides []configOverride `json:"config_overrides,omitempty"`
+	Modules         []vendorModule   `json:"modules"`
+	Findings        []vendorFinding  `json:"findings"`
 	// FilesCompared is the total across every module: the size of the
 	// measurement the status rests on. "Clean" over a hundred modules means
 	// nothing until it says how many files were looked at, and a zero here
@@ -159,6 +161,7 @@ func toVendorSection(rec vendomain.Record) vendorSection {
 		VendorOnly:      rec.VendorOnly,
 		OverallStatus:   rec.OverallStatus,
 		ContentHash:     rec.ContentHash,
+		ConfigHash:      rec.ConfigHash,
 		Modules:         make([]vendorModule, 0, len(rec.Modules)),
 		Findings:        make([]vendorFinding, 0, len(rec.Findings)),
 		Scope:           toVendorScope(rec.Scope),
@@ -245,9 +248,14 @@ func runVendor(ctx context.Context, gomodFlag string, vendorOnly bool, stdout, s
 	defer releaseStore(cleanup)
 
 	// The flag OR the configured posture enables vendor-only mode.
+	overrides := vendorOnlyOverride(vendorOnly)
 	vendorOnly = vendorOnly || activeConfig.VendorPolicy.VendorOnly
 
-	rec, err := ctr.ExtractVendor.Extract(ctx, gomodPath, vendorOnly, activeConfig.VendorPolicy)
+	configHash, err := vendorGateConfig(ctr, gomodPath)
+	if err != nil {
+		return err
+	}
+	rec, err := ctr.ExtractVendor.Extract(ctx, gomodPath, vendorOnly, activeConfig.VendorPolicy, configHash)
 	if err != nil {
 		if errors.Is(err, vendports.ErrNotVendored) {
 			// An unvendored project is its own answer, and it is answered on
@@ -269,6 +277,10 @@ func runVendor(ctx context.Context, gomodFlag string, vendorOnly bool, stdout, s
 		return fmt.Errorf("scanning vendored project: %w", err)
 	}
 	section := toVendorSection(rec)
+	section.ConfigOverrides = overrides
+	if err := recordConfigOverrides(ctr, configHash, overrides); err != nil {
+		return err
+	}
 
 	if jsonOut {
 		enc := json.NewEncoder(stdout)
@@ -281,7 +293,28 @@ func runVendor(ctx context.Context, gomodFlag string, vendorOnly bool, stdout, s
 	if err := printVendorTable(stdout, section); err != nil {
 		return err
 	}
+	if err := writeConfigHashLine(stdout, section.ConfigHash, section.ConfigOverrides); err != nil {
+		return err
+	}
 	return vendorBlockingErr(section)
+}
+
+// vendorGateConfig observes the config hash, except for a project with no
+// vendor tree: no gate runs there, so the run must not record drift.
+func vendorGateConfig(ctr *Container, gomodPath string) (string, error) {
+	if v := detectBuildVendoringForGoMod(gomodPath); v.Known && !v.Vendored {
+		return "", nil
+	}
+	return observeGateConfig(ctr)
+}
+
+// vendorOnlyOverride names --vendor-only as an override where the
+// configuration did not already ask for vendor-only mode.
+func vendorOnlyOverride(flag bool) []configOverride {
+	if !flag || activeConfig.VendorPolicy.VendorOnly {
+		return nil
+	}
+	return []configOverride{{Flag: "--vendor-only", Value: "true"}}
 }
 
 func printVendorTable(stdout io.Writer, s vendorSection) error {

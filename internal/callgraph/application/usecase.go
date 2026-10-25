@@ -120,7 +120,19 @@ import (
 // nested module onto an absent in-tree directory, and leading a failure with the
 // go command's error on a dependency. A 0.9.0 record of
 // go.opentelemetry.io/otel@v1.44.0 or later is LoadFailed for a module that builds.
-const PipelineVersion = "0.10.0"
+//
+// Bumped to "0.11.0" when a record started carrying the build frame it was
+// extracted under and every read started selecting by frame. A 0.10.0 record
+// names no frame, so it cannot be served to a read that names one.
+//
+// Bumped to "0.12.0" when TinyGo's own packages started being analysed with
+// bodies under a TinyGo frame. A 0.11.0 TinyGo-frame record holds them as
+// bodiless externals, so it must not be served as the same derivation.
+//
+// Bumped to "0.13.0" when a TinyGo-frame record started carrying the calls
+// TinyGo's compiler inserts, the edges //go:linkname supplies and the interrupt
+// handlers installed by value. A 0.12.0 TinyGo-frame record lacks all three.
+const PipelineVersion = "0.13.0"
 
 // ExtractCallGraphUseCase extracts the call graph of a module and persists a
 // CallGraphRecord.
@@ -349,7 +361,7 @@ func (uc *ExtractCallGraphUseCase) resolveZipPath(ctx context.Context, req Extra
 	}
 	zipPath, cleanup, err := blobZipPath(ctx, uc.blobs, zipIdentity)
 	if err != nil {
-		return "", nil, fmt.Errorf("resolving blob path for %s: %w", factRecord.ContentLocation, err)
+		return "", nil, fmt.Errorf("resolving blob path for %s: %w", factRecord.ContentLocation, fetchports.AttributeBlobTamper(err, req.Coordinate))
 	}
 	return zipPath, cleanup, nil
 }
@@ -491,7 +503,10 @@ func (uc *ExtractCallGraphUseCase) recordExclusion(
 	artefactIdentity string,
 	sourceContentHash string,
 ) (ExtractResult, error) {
-	record := domain2.NewExcludedRecord(req.Coordinate, uc.analyser.AnalyserMetadata().Algorithm, uc.exclusions)
+	meta := uc.analyser.AnalyserMetadata()
+	record := domain2.NewExcludedRecord(req.Coordinate, meta.Algorithm, uc.exclusions)
+	// No child ran, so the frame is the one the analysis would have run under.
+	record.Frame = meta.Frame
 	record.ExtractedAt = uc.clock.Now().UTC()
 	record.PipelineVersion = uc.pipelineVersion
 	// An excluded module is still a decision about a specific artefact: the

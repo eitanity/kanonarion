@@ -14,6 +14,7 @@ import (
 	fetchsqlite "github.com/eitanity/kanonarion/internal/adapters/factstore/sqlite"
 	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
 	"github.com/eitanity/kanonarion/internal/composition"
+	stdlibsqlite "github.com/eitanity/kanonarion/internal/stdlib/adapters/store/sqlite"
 )
 
 // auditLines returns every audit envelope under storeRoot whose event_type
@@ -72,15 +73,12 @@ func TestOfflineStdlibAcquirer_WiresTheAssuranceLog(t *testing.T) {
 	}
 	defer func() { _ = handle.Close() }()
 
-	factStore, err := fetchsqlite.NewAuditingStore(
+	factStore := fetchsqlite.NewAuditingStore(
 		fetchsqlite.New(handle), filepath.Join(storeRoot, "audit.jsonl"))
-	if err != nil {
-		t.Fatalf("creating auditing fetch store: %v", err)
-	}
 
 	acquirer := composition.NewOfflineStdlibAcquirer(
-		handle, "", clock.System{}, factStore,
-		slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+		stdlibsqlite.New(handle), "", clock.System{}, factStore,
+		slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	ctx := context.Background()
 	// Forced, so the measurement is written rather than served: the event says a

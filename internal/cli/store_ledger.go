@@ -12,6 +12,7 @@ import (
 
 	factsqlite "github.com/eitanity/kanonarion/internal/adapters/factstore/sqlite"
 	"github.com/eitanity/kanonarion/internal/audit"
+	sqlitestorage "github.com/eitanity/kanonarion/internal/composition/storage/sqlite"
 	"github.com/eitanity/kanonarion/internal/recordstamp"
 )
 
@@ -155,6 +156,9 @@ type ledgerResult struct {
 }
 
 func runStoreLedger(root string, f storeLedgerFlags, asJSON bool, stdout io.Writer) error {
+	if err := requireSQLiteBackend("store ledger", "reads the sqlite backend's ledger"); err != nil {
+		return err
+	}
 	since, until, err := parseLedgerWindow(f)
 	if err != nil {
 		return err
@@ -165,7 +169,7 @@ func runStoreLedger(root string, f storeLedgerFlags, asJSON bool, stdout io.Writ
 		return err
 	}
 
-	path := factsqlite.AuditLogPath(root)
+	path := sqlitestorage.LedgerPath(root)
 	led, err := factsqlite.ReadLedger(path)
 	if err != nil {
 		return fmt.Errorf("reading the assurance log: %w", err)

@@ -33,7 +33,7 @@ jobs:
         # then triggers an in-CI GOTOOLCHAIN download to satisfy the directive —
         # needless and fragile under the hardened egress allowlist. Bump this in
         # lockstep with go.mod.
-        go: ["1.27.2"]
+        go: ["1.27.3"]
     steps:
       - name: Harden the runner
         uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2
@@ -57,6 +57,19 @@ jobs:
           go-version: ${{ matrix.go }}
           cache: true
 
+      # The restored module cache can miss a module, and the proxy has refused
+      # connections under the egress block; retry before anything compiles.
+      - name: Download modules
+        run: |
+          set -euo pipefail
+          for i in 1 2 3 4 5; do
+            if go mod download; then exit 0; fi
+            echo "::warning::module download failed (attempt $i of 5)"
+            sleep $((i * 10))
+          done
+          echo "::error::module download failed after 5 attempts"
+          exit 1
+
       # The release matrix in release.yml is the only place non-amd64 targets
       # are built, and it triggers on tag push — so the first machine able to
       # see platform-width breakage was the one publishing the release, and a
@@ -76,10 +89,11 @@ jobs:
       # Single instrumented run: the whole suite executes once under -race with
       # coverage collected in the same pass. atomic mode is required because
       # -race runs tests concurrently. This is both the race gate and the
-      # coverage source — there is no separate coverage job.
+      # coverage source — there is no separate coverage job. The cli package runs
+      # mostly serially and exceeds go test's 10m default on the hosted runner.
       - name: Run tests with race and coverage
         run: |
-          go test -race -count=1 \
+          go test -race -count=1 -timeout 30m \
             -coverprofile=coverage.out \
             -covermode=atomic \
             -coverpkg=./... \
@@ -137,6 +151,19 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      # The restored module cache can miss a module, and the proxy has refused
+      # connections under the egress block; retry before anything compiles.
+      - name: Download modules
+        run: |
+          set -euo pipefail
+          for i in 1 2 3 4 5; do
+            if go mod download; then exit 0; fi
+            echo "::warning::module download failed (attempt $i of 5)"
+            sleep $((i * 10))
+          done
+          echo "::error::module download failed after 5 attempts"
+          exit 1
+
       - name: Install golangci-lint
         run: |
           set -euo pipefail
@@ -184,8 +211,23 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      # The same script make lint runs.
-      - name: Check for restricted imports in extraction packages
+
+      # The restored module cache can miss a module, and the proxy has refused
+      # connections under the egress block; retry before anything compiles.
+      - name: Download modules
+        run: |
+          set -euo pipefail
+          for i in 1 2 3 4 5; do
+            if go mod download; then exit 0; fi
+            echo "::warning::module download failed (attempt $i of 5)"
+            sleep $((i * 10))
+          done
+          echo "::error::module download failed after 5 attempts"
+          exit 1
+      # The same script make lint runs: every package in the build, kanonarion's
+      # and its dependencies', on every release target, against
+      # scripts/restricted-imports.allow.
+      - name: Check restricted imports across the build against the allowlist
         run: bash scripts/restricted-imports.sh
 
   benchmarks:
@@ -214,6 +256,19 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+
+      # The restored module cache can miss a module, and the proxy has refused
+      # connections under the egress block; retry before anything compiles.
+      - name: Download modules
+        run: |
+          set -euo pipefail
+          for i in 1 2 3 4 5; do
+            if go mod download; then exit 0; fi
+            echo "::warning::module download failed (attempt $i of 5)"
+            sleep $((i * 10))
+          done
+          echo "::error::module download failed after 5 attempts"
+          exit 1
       - name: Run benchmarks
         run: |
           set -euo pipefail

@@ -480,6 +480,11 @@ func runLatestModules(ctx context.Context, modules []string, lookup stalenessLoo
 			if errors.Is(err, errStalenessOffline) {
 				return latestOfflineRefusal(modulePath)
 			}
+			if errors.Is(err, staleports.ErrPrivateModule) {
+				_, _ = fmt.Fprintf(stderr, "latest %s: %v\n", modulePath, err)
+				results = append(results, latestResult{Module: modulePath, StalenessUnmeasured: stalenessPrivateModule})
+				continue
+			}
 			// Nothing resolved at all: there is no answer to print.
 			return fmt.Errorf("querying latest for %s: %w", modulePath, err)
 		}
@@ -560,6 +565,9 @@ func writeLatestSingleLine(stdout io.Writer, r latestResult) error {
 	}
 	var line string
 	switch {
+	case r.Latest == "":
+		// Nothing resolved, which only a private module's row reaches.
+		line = r.Module + "  " + stalenessUnmeasuredLabel(r.StalenessUnmeasured)
 	case r.LatestDate.IsZero():
 		line = fmt.Sprintf("%s@%s", r.Module, r.Latest)
 	case days == 0:
@@ -634,6 +642,10 @@ func latestRowFor(ctx context.Context, lookup stalenessLookup, path, pinned stri
 				Pinned:              pinned,
 				StalenessUnmeasured: stalenessOfflineNoEntry,
 			}, nil
+		}
+		if errors.Is(lerr, staleports.ErrPrivateModule) {
+			_, _ = fmt.Fprintf(stderr, "latest %s: %v\n", path, lerr)
+			return latestResult{Module: path, Pinned: pinned, StalenessUnmeasured: stalenessPrivateModule}, nil
 		}
 		if lerr != nil {
 			_, _ = fmt.Fprintf(stderr, "latest %s: %v\n", path, lerr)

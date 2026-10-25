@@ -608,9 +608,20 @@ func (uc *ScanModuleUseCase) openModuleSource(ctx context.Context, fact fetchdom
 	if !hasZip {
 		return nil, fmt.Errorf("fact record for %s carries no module zip to scan", fact.Coordinate())
 	}
+	// The go.mod is read later only as a hint and an unreadable one is absorbed,
+	// so a refusal of it is taken here, where it ends the module's scan.
+	if goModIdentity, hasGoMod, gerr := fetchports.GoModIdentity(fact); gerr == nil && hasGoMod {
+		rc, gmerr := uc.blobs.Get(ctx, goModIdentity)
+		if errors.Is(gmerr, fetchports.ErrBlobTampered) {
+			return nil, fmt.Errorf("retrieving module go.mod: %w", fetchports.AttributeBlobTamper(gmerr, fact.Coordinate()))
+		}
+		if gmerr == nil {
+			_ = rc.Close() //nolint:errcheck // opened only to verify; nothing was read
+		}
+	}
 	blob, err := uc.blobs.Get(ctx, zipIdentity)
 	if err != nil {
-		return nil, fmt.Errorf("retrieving module content: %w", err)
+		return nil, fmt.Errorf("retrieving module content: %w", fetchports.AttributeBlobTamper(err, fact.Coordinate()))
 	}
 	return blob, nil
 }
@@ -634,17 +645,8 @@ func (uc *ScanModuleUseCase) resolveScanSnapshot(ctx context.Context, params Sca
 		return snapshot, nil
 	}
 	defer func() { _ = body.Close() }()
-	// Persist the snapshot if it's new
-	if err := uc.vulnStore.PutDatabaseSnapshot(ctx, snapshot, body); err != nil {
+	if snapshot, err = persistSnapshot(ctx, uc.vulnStore, uc.audit, snapshot, body, snapshotRouteModuleScan); err != nil {
 		return domain.DatabaseSnapshot{}, fmt.Errorf("persisting database snapshot: %w", err)
-	}
-	// Assurance log: the arrival of an advisory set is what "what did we know and
-	// when" turns on, and it was persisted silently. Emitted after the write, so
-	// a failed append says a stored snapshot is unlogged rather than discarding
-	// it. A body is handed over only when there is a new generation to store, so
-	// a reused snapshot never reaches here.
-	if err := emitSnapshotRecorded(uc.audit, snapshot, snapshotRouteModuleScan); err != nil {
-		return domain.DatabaseSnapshot{}, err
 	}
 	return snapshot, nil
 }
@@ -977,7 +979,7 @@ func (uc *ScanModuleUseCase) tryReuseCachedRecord(ctx context.Context, params Sc
 // discarded on exactly this path.
 func (uc *ScanModuleUseCase) logMetadataFallback(coord coordinate.ModuleCoordinate, reason domain.UnscanReason, category, detail string) {
 	if reason.ExpectedOutOfToolchain() {
-		uc.logger.Info("vuln-scan: metadata-only, version outside the project build (expected); use reachability --local for project-rooted reachability",
+		uc.logger.Info("vuln-scan: metadata-only, version outside the project build (expected); reachability over the working tree is project-rooted",
 			"coordinate", coord, "category", category, "detail", detail)
 		return
 	}
@@ -1389,6 +1391,8 @@ func (uc *ScanModuleUseCase) scanMetadataOnly(ctx context.Context, params ScanMo
 		status = domain.StatusAffected
 	case domain.FindingsRecordWithdrawn:
 		status = domain.StatusWithdrawn
+	case domain.FindingsRecordInconclusive:
+		status = domain.StatusInconclusive
 	case domain.FindingsRecordClean:
 		// No match: the caller's emptyStatus is the answer, and it is a coverage
 		// word on every entry point that is not a genuine clean.

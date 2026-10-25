@@ -52,7 +52,7 @@ func NewExtractVendorUseCase(cfg Config) *ExtractVendorUseCase {
 // ErrNotVendored is propagated unchanged so the caller can treat "no vendored
 // tree" per the requested mode.
 func (uc *ExtractVendorUseCase) Extract(
-	ctx context.Context, goModPath string, vendorOnly bool, policy configdomain.VendorPolicy,
+	ctx context.Context, goModPath string, vendorOnly bool, policy configdomain.VendorPolicy, configHash string,
 ) (domain.Record, error) {
 	lap := uc.stopwatch.Start()
 
@@ -83,6 +83,7 @@ func (uc *ExtractVendorUseCase) Extract(
 		ExtractedAt:       uc.clock.Now().UTC(),
 		SchemaVersion:     domain.VendorSchemaVersion,
 		PipelineVersion:   domain.PipelineVersion,
+		ConfigHash:        configHash,
 	}
 	rec.ContentHash = domain.Hash(mods, findings)
 
@@ -119,6 +120,7 @@ func auditEvent(r domain.Record) audit.Event {
 			"finding_count": len(r.Findings),
 			"status":        r.OverallStatus,
 			"content_hash":  r.ContentHash,
+			"config_hash":   r.ConfigHash,
 		},
 	}
 }

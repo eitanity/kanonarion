@@ -80,7 +80,7 @@ func newCallersCmd(stdout, stderr io.Writer) *cobra.Command {
 			if derr := checkDepthFlag(depth); derr != nil {
 				return derr
 			}
-			if berr := scopeFlags.bind(cmd); berr != nil {
+			if berr := scopeFlags.bindCallGraphRead(cmd); berr != nil {
 				return berr
 			}
 			logger := buildLogger(logLevel, stderr)
@@ -89,6 +89,9 @@ func newCallersCmd(stdout, stderr io.Writer) *cobra.Command {
 				return fmt.Errorf("initialising store: %w", err)
 			}
 			defer releaseStore(cleanup)
+			if aerr := adoptNamedWalkFrame(cmd.Context(), ctr.QueryWalks, scopeFlags.walkID); aerr != nil {
+				return aerr
+			}
 			sc, err := scopeFlags.resolve(cmd.Context(), ctr.QueryWalks)
 			if err != nil {
 				return err
@@ -186,7 +189,7 @@ func writeEdgeQueryNotices(ctx context.Context, stdout io.Writer, label, symbolI
 	if !jsonOut {
 		switch {
 		case pr.failedPkg != "":
-			if err := writeDroppedEdgesNotice(stdout, label, symbolID, pr); err != nil {
+			if err := writeDroppedEdgesNotice(ctx, stdout, label, symbolID, pr); err != nil {
 				return err
 			}
 		case pr.isPartial:
@@ -229,7 +232,7 @@ func newCalleesCmd(stdout, stderr io.Writer) *cobra.Command {
 			if derr := checkDepthFlag(depth); derr != nil {
 				return derr
 			}
-			if berr := scopeFlags.bind(cmd); berr != nil {
+			if berr := scopeFlags.bindCallGraphRead(cmd); berr != nil {
 				return berr
 			}
 			logger := buildLogger(logLevel, stderr)
@@ -238,6 +241,9 @@ func newCalleesCmd(stdout, stderr io.Writer) *cobra.Command {
 				return fmt.Errorf("initialising store: %w", err)
 			}
 			defer releaseStore(cleanup)
+			if aerr := adoptNamedWalkFrame(cmd.Context(), ctr.QueryWalks, scopeFlags.walkID); aerr != nil {
+				return aerr
+			}
 			sc, err := scopeFlags.resolve(cmd.Context(), ctr.QueryWalks)
 			if err != nil {
 				return err
@@ -373,12 +379,7 @@ func printEdgeRefs(kind, symbolID string, refs []ports.CallEdgeRef, jsonOut bool
 		if ref.IsTest {
 			testTag = "  [test]"
 		}
-		kindTag := ""
-		if ref.Kind.IsReference() {
-			// Said on the line rather than in a footnote: a reader scanning a
-			// caller list must not take a registration for an invocation.
-			kindTag = "  [reference — the symbol's value is taken here, not called]"
-		}
+		kindTag := edgeKindTag(ref.Kind)
 		if _, err := fmt.Fprintf(stdout, "  %s  [%s]%s%s  (%s@%s)\n",
 			other, string(ref.Confidence), kindTag, testTag,
 			ref.ModulePath, ref.ModuleVersion,
@@ -675,9 +676,29 @@ func writeTraversalTruncationNotice(stdout io.Writer, direction string, maxDepth
 
 // edgeKindLabel renders an edge kind for JSON consumers, naming the zero value
 // rather than emitting an empty string a reader would have to know to interpret.
+// The two TinyGo kinds keep their own names: each is a call, made by code the
+// source does not spell.
 func edgeKindLabel(k domain.EdgeKind) string {
-	if k.IsReference() {
+	switch {
+	case k.IsReference():
 		return "reference"
+	case k == domain.EdgeKindCompilerInserted, k == domain.EdgeKindLinkname:
+		return string(k)
 	}
 	return "call"
+}
+
+// edgeKindTag is what a caller or callee line says beside a non-call edge.
+func edgeKindTag(k domain.EdgeKind) string {
+	switch k {
+	case domain.EdgeKindReference:
+		// Said on the line rather than in a footnote: a reader scanning a
+		// caller list must not take a registration for an invocation.
+		return "  [reference — the symbol's value is taken here, not called]"
+	case domain.EdgeKindCompilerInserted:
+		return "  [compiler-inserted — TinyGo's compiler emits this call]"
+	case domain.EdgeKindLinkname:
+		return "  [linkname — //go:linkname supplies this body]"
+	}
+	return ""
 }

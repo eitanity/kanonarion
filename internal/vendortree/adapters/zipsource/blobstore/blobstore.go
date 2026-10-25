@@ -3,9 +3,8 @@
 //
 // The store addresses an artefact by the h1 hash of its bytes, so a lookup keyed
 // on the h1 go.sum records for a module version returns that artefact or nothing
-// at all. There is no separate verification step to forget: a zip reachable at
-// the go.sum h1's address is a zip whose bytes were measured to hash to the
-// value the project trusts, and any other bytes live at a different address.
+// at all. There is no separate verification step to forget: the store hashes the
+// held bytes against that h1 on every read and refuses bytes that do not match.
 package blobstore
 
 import (
@@ -18,6 +17,7 @@ import (
 	"io"
 	"os"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
 	"github.com/eitanity/kanonarion/internal/vendortree/ports"
@@ -69,6 +69,9 @@ func (s *Source) PublishedFiles(
 
 	r, closeFn, err := s.open(ctx, identity)
 	if err != nil {
+		if coord, cerr := coordinate.NewModuleCoordinate(modulePath, version); cerr == nil {
+			err = fetchports.AttributeBlobTamper(err, coord)
+		}
 		return nil, false, fmt.Errorf("opening the module zip for %s@%s: %w", modulePath, version, err)
 	}
 	defer closeFn()

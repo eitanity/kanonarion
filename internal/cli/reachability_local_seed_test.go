@@ -275,6 +275,9 @@ func TestVulnShow_ToolchainConflictNamesThePinsNotARescan(t *testing.T) {
 	if err == nil {
 		t.Fatalf("two toolchains disagreeing on one snapshot answered\n%s\n%s", stdout, stderr)
 	}
+	if code := ExitCodeForError(err); code != ExitIntegrity {
+		t.Errorf("exit %d, want %d: two records that disagree put the evidence in doubt", code, ExitIntegrity)
+	}
 	msg := err.Error()
 	for _, want := range []string{
 		"two Go toolchains scanned it",

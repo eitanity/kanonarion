@@ -74,6 +74,7 @@ func newWalkListCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd.Flags().StringVar(&module, "module", "", "filter by the module@version the walk is rooted at")
 	cmd.Flags().StringVar(&platform.goos, "goos", "", "filter by the recorded target operating system; pass with --goarch")
 	cmd.Flags().StringVar(&platform.goarch, "goarch", "", "filter by the recorded target architecture; pass with --goos")
+	cmd.Flags().StringVar(&platform.tinygo, "tinygo", "", "filter by the recorded TinyGo target, e.g. pico (needs the tinygo command on PATH)")
 	cmd.Flags().StringVar(&since, "since", "", "filter by start time (RFC3339)")
 	cmd.Flags().StringVar(&statusStr, "status", "", "filter by overall status (succeeded|partial|failed|cancelled)")
 	cmd.Flags().StringVar(&scopeStr, "scope", "", "filter by walk scope (code|tool|complete)")
@@ -91,7 +92,7 @@ func newWalkListCmd(stdout, stderr io.Writer) *cobra.Command {
 
 // walkListRowFilters are the walk-list flags that narrow or select rows. Paging
 // and output flags are not here: they still apply to one named walk.
-var walkListRowFilters = []string{"module", "target", "goos", "goarch", "since", "status", "scope", "tool", "latest", "latest-success"}
+var walkListRowFilters = []string{"module", "target", "goos", "goarch", "tinygo", "since", "status", "scope", "tool", "latest", "latest-success"}
 
 // refuseWalkIDRowFilters refuses a row filter beside --walk-id. The walk is
 // already named, so a filter would be ignored and the walk returned even when it
@@ -112,11 +113,19 @@ func refuseWalkIDRowFilters(cmd *cobra.Command) error {
 	return &exitError{code: ExitConfig, msg: fmt.Sprintf("--walk-id names one walk; it cannot be combined with %s", strings.Join(given, ", "))}
 }
 
-// walkListPlatform is the recorded-platform row filter --goos/--goarch ask for,
-// nil when neither was given. It is validated as every resolving command
-// validates the pair, so a mistyped half is refused by name rather than
-// answered with an empty listing.
+// walkListPlatform is the recorded-platform row filter --goos/--goarch or
+// --tinygo ask for, nil when none was given. The pair is validated as every
+// resolving command validates it, so a mistyped half is refused by name. A
+// TinyGo target is matched on its recorded name alone: a listing reads the
+// store, and the tinygo command need not be on this host to read it.
 func walkListPlatform(ctx context.Context, f buildTargetFlags) (*walkports.BuildEnvFilter, error) {
+	if f.tinygo != "" {
+		declare(goenv.Target{}, goenv.TinyGo{})
+		if _, err := (buildTargetFlags{goos: f.goos, goarch: f.goarch, tinygo: f.tinygo}).parse(); err != nil {
+			return nil, err
+		}
+		return &walkports.BuildEnvFilter{TinyGoTarget: f.tinygo}, nil
+	}
 	if err := resolveBuildTarget(ctx, buildTargetFlags{goos: f.goos, goarch: f.goarch}, "", ""); err != nil {
 		return nil, err
 	}
@@ -242,6 +251,8 @@ func showOneWalk(ctx context.Context, walkID string, uc QueryWalksUseCase, stdou
 		FailureCount:  domain.CountNodeFailures(rec),
 		GOOS:          rec.Graph.BuildEnv.GOOS,
 		GOARCH:        rec.Graph.BuildEnv.GOARCH,
+		TinyGoTarget:  rec.Graph.BuildEnv.TinyGoTarget,
+		TinyGoVersion: rec.Graph.BuildEnv.TinyGoVersion,
 	}
 	if jsonOut {
 		enc := json.NewEncoder(stdout)

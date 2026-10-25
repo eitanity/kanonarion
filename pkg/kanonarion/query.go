@@ -127,9 +127,11 @@ type QueryFIPSUseCase = fipsapp.QueryFIPSUseCase
 type Queries = composition.Queries
 
 // Open builds the read-consumption surface against the kanonarion store rooted
-// at storeRoot (the directory holding mirror.db and blobs; the standard default
-// is ~/.kanonarion). It opens the store with the binary's full migration set,
-// wires the read-side adapters through the DI composition root, and returns the
+// at storeRoot (the standard default is ~/.kanonarion). The storage.backend
+// value of <storeRoot>/config.yaml selects the backend among those registered
+// with RegisterBackend. With nothing registered, or no config.yaml, the SQLite
+// backend (mirror.db and blobs under storeRoot) is the implicit default. It
+// opens the store, wires the read-side adapters through the DI composition root, and returns the
 // constructed Queries together with a cleanup function that closes the store.
 // Callers MUST invoke cleanup when finished.
 //

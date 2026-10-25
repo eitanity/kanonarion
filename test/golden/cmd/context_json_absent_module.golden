@@ -13,12 +13,12 @@ exit 0
         "version": "v9.9.9"
       },
       "commands": {
-        "interface": "kanonarion interface-show example.com/absent@v9.9.9",
-        "call_graph": "kanonarion callgraph-show example.com/absent@v9.9.9",
+        "interface": "kanonarion fetch example.com/absent@v9.9.9 \u0026\u0026 kanonarion interface example.com/absent@v9.9.9",
+        "call_graph": "kanonarion fetch example.com/absent@v9.9.9 \u0026\u0026 kanonarion callgraph example.com/absent@v9.9.9",
         "call_graph_nav": "kanonarion callers \u003csymbol\u003e | kanonarion callees \u003csymbol\u003e",
-        "examples": "kanonarion examples-find \u003csymbol\u003e | kanonarion examples-show example.com/absent@v9.9.9 \u003cname\u003e",
-        "vulnerabilities": "kanonarion vuln-show example.com/absent@v9.9.9",
-        "license": "kanonarion license example.com/absent@v9.9.9",
+        "examples": "kanonarion fetch example.com/absent@v9.9.9 \u0026\u0026 kanonarion examples example.com/absent@v9.9.9",
+        "vulnerabilities": "kanonarion inspect example.com/absent@v9.9.9",
+        "license": "kanonarion fetch example.com/absent@v9.9.9 \u0026\u0026 kanonarion license example.com/absent@v9.9.9",
         "dependents": "kanonarion dependents example.com/absent@v9.9.9"
       },
       "verification": {
@@ -48,6 +48,9 @@ exit 0
         "node_count": 0,
         "edge_count": 0,
         "entry_point_count": null
+      },
+      "capability": {
+        "status": "not_run"
       },
       "examples": {
         "status": "not_run",

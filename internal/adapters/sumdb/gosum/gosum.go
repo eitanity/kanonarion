@@ -21,7 +21,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -157,10 +156,10 @@ func (c *Client) Lookup(_ context.Context, coord coordinate.ModuleCoordinate) po
 			Unavailability: ports.SumDBUnavailabilityPolicy,
 		}
 	}
-	if matchesNoSum(coord.Path()) {
+	if name, ok := goenv.NoSumDB(coord.Path()); ok {
 		return ports.SumDBResult{
 			Available:      false,
-			Reason:         "module matches GONOSUMCHECK/GOPRIVATE pattern",
+			Reason:         "module matches GONOSUMCHECK/GOPRIVATE pattern; the setting in force is " + name,
 			Unavailability: ports.SumDBUnavailabilityPolicy,
 		}
 	}
@@ -469,65 +468,15 @@ func resolveCacheDir(server string) string {
 }
 
 // matchesNoSum reports whether the module path is excluded from sumdb
-// checking by GONOSUMCHECK or GOPRIVATE.
+// checking; the rule is the shared private-module matcher's.
 func matchesNoSum(modulePath string) bool {
-	for _, pattern := range noSumPatterns() {
-		pattern = strings.TrimSpace(pattern)
-		if pattern == "" {
-			continue
-		}
-		if matchesPathPattern(pattern, modulePath) {
-			return true
-		}
-	}
-	return false
+	_, ok := goenv.NoSumDB(modulePath)
+	return ok
 }
 
-func noSumPatterns() []string {
-	var patterns []string
-	if v := goenv.Value("GOPRIVATE"); v != "" {
-		patterns = append(patterns, strings.Split(v, ",")...)
-	}
-	// GONOSUMCHECK in its boolean form is not a pattern list and must not be
-	// read as one: as a pattern, "1" matches the module path "1" and nothing
-	// else, so an operator who switched the checksum database off got it left
-	// on for every module they own.
-	if v := goenv.Value("GONOSUMCHECK"); v != "" && !isBooleanTrue(v) {
-		patterns = append(patterns, strings.Split(v, ",")...)
-	}
-	if v := goenv.Value("GONOSUMDB"); v != "" {
-		patterns = append(patterns, strings.Split(v, ",")...)
-	}
-	return patterns
-}
+func noSumPatterns() []string { return goenv.NoSumDBPatterns() }
 
 // noSumCheckDisablesAll reports whether GONOSUMCHECK carries its legacy boolean
 // meaning — switch the checksum database off for everything — rather than a
 // pattern list.
-func noSumCheckDisablesAll() bool { return isBooleanTrue(goenv.Value("GONOSUMCHECK")) }
-
-// isBooleanTrue reports whether v is one of the spellings of "yes" that Go's
-// own boolean environment variables accept. A value that is not one of them is
-// a pattern list, which is the variable's other historical meaning.
-func isBooleanTrue(v string) bool {
-	return slices.Contains([]string{"1", "t", "true", "y", "yes", "on"}, strings.ToLower(strings.TrimSpace(v)))
-}
-
-// matchesPathPattern reports whether path equals pattern, has pattern as a
-// prefix (followed by /), or matches the glob pattern.
-func matchesPathPattern(pattern, path string) bool {
-	if pattern == path {
-		return true
-	}
-	if strings.HasPrefix(path, pattern+"/") {
-		return true
-	}
-	// Support simple wildcard prefix matching: *.corp.com matches sub.corp.com
-	if strings.HasPrefix(pattern, "*.") {
-		suffix := pattern[1:] // ".corp.com"
-		if strings.HasSuffix(path, suffix) || path == pattern[2:] {
-			return true
-		}
-	}
-	return false
-}
+func noSumCheckDisablesAll() bool { return goenv.IsBooleanTrue(goenv.Value("GONOSUMCHECK")) }

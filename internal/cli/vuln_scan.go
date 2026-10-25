@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/driver"
 	"github.com/eitanity/kanonarion/internal/recordstamp"
 
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
@@ -54,6 +55,7 @@ func newVulnScanCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use: "vuln-scan [walk-id]",
 		Annotations: map[string]string{
+			annotationWalkIDArgs:  "0",
 			annotationStoreIntent: StoreIntentCreate,
 			annotationNetworkUse:  NetworkAlways,
 		},
@@ -75,6 +77,9 @@ it. It is reported on its own and counted in no roll-up.`,
   kanonarion vuln-scan --target windows/amd64`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if rerr := refuseInapplicableFlags("vuln-scan --tinygo", binaryPrePassUnderTinyGo(f)); rerr != nil {
+				return rerr
+			}
 			// With neither a walk-id nor --module the scan is the project in
 			// the current directory, as it is for inspect, context and audit.
 			bare := f.moduleCoord == "" && len(args) == 0
@@ -83,15 +88,15 @@ it. It is reported on its own and counted in no roll-up.`,
 				if len(args) > 0 {
 					return fmt.Errorf("a go.mod scope scan (--gomod/--tool/--project) and a positional walk-id are mutually exclusive")
 				}
-				return runVulnScanScope(cmd.Context(), f, stdout, stderr)
+				return withAdvisoryRemedy(cmd.Context(), runVulnScanScope(cmd.Context(), f, stdout, stderr), scanOffline(f.fresh))
 			}
 			if f.moduleCoord != "" && len(args) > 0 {
 				return fmt.Errorf("--module and a positional walk-id are mutually exclusive")
 			}
 			if f.moduleCoord != "" {
-				return runVulnScanByModule(cmd.Context(), f, stdout, stderr)
+				return withAdvisoryRemedy(cmd.Context(), runVulnScanByModule(cmd.Context(), f, stdout, stderr), scanOffline(f.fresh))
 			}
-			return runVulnScanByWalkID(cmd.Context(), args[0], f, stdout, stderr)
+			return withAdvisoryRemedy(cmd.Context(), runVulnScanByWalkID(cmd.Context(), args[0], f, stdout, stderr), scanOffline(f.fresh))
 		},
 	}
 
@@ -126,7 +131,46 @@ func runVulnScanByWalkID(ctx context.Context, walkID string, f vulnScanFlags, st
 	if rerr := refuseInapplicableFlags("vuln-scan <walk-id>", refused); rerr != nil {
 		return rerr
 	}
+	if rerr := refuseTinyGoWalkByID(ctx, walkID, f.goBinary, stderr); rerr != nil {
+		return rerr
+	}
 	return runVulnScan(ctx, walkID, f.force, f.fresh, f.enableReachability, f.callGraphWorkers, f.binaryModePrePass, jsonOut, f.goBinary, f.operator, "", f.policyPath, application2.ServeSurfaceVulnScan, f.noVendor, f.noProgress, true, stdout, stderr)
+}
+
+// refuseTinyGoWalkByID refuses a walk recorded under a TinyGo frame before any
+// child runs: the frame reaches the scanner only through --tinygo on the
+// manifest path, so a walk-id scan would analyse it under the host's frame.
+// A walk that cannot be read is left to the scan, which reports it.
+func refuseTinyGoWalkByID(ctx context.Context, walkID, goBinary string, stderr io.Writer) error {
+	rec, ok := readWalkByID(ctx, walkID, goBinary, stderr)
+	env := rec.Graph.BuildEnv
+	if !ok || env.TinyGoTarget == "" {
+		return nil
+	}
+	gomod := "<path>"
+	if rec.ProjectDir != "" {
+		gomod = filepath.Join(rec.ProjectDir, "go.mod")
+	}
+	return &exitError{code: ExitConfig, msg: fmt.Sprintf(
+		"vuln-scan <walk-id> cannot scan a walk recorded under %s: a TinyGo frame reaches the scan only through the manifest; run vuln-scan --gomod %s --tinygo %s",
+		walkdomain.TinyGoFrameText(env.TinyGoTarget, env.GOOS, env.GOARCH), gomod, env.TinyGoTarget)}
+}
+
+// readWalkByID is the stored walk, or false when the store or the walk cannot
+// be read.
+func readWalkByID(ctx context.Context, walkID, goBinary string, stderr io.Writer) (walkdomain.WalkRecord, bool) {
+	logger := buildLogger(logLevel, stderr)
+	ctr, cleanup, err := NewContainer(storeRoot, "", goBinary, false, activeConfig, logger)
+	if err != nil {
+		return walkdomain.WalkRecord{}, false
+	}
+	defer func() {
+		if cerr := cleanup(); cerr != nil {
+			logger.Warn("vuln-scan: store cleanup failed", "error", cerr)
+		}
+	}()
+	rec, err := ctr.QueryWalks.GetWalk(ctx, walkID)
+	return rec, err == nil
 }
 
 // runVulnScanScope finds the latest succeeded project walk for the requested
@@ -251,7 +295,7 @@ func scanWalkForCurrentManifest(
 	// scanned for the ones that can, exactly as `audit` and `inspect` treat their
 	// own walks. A hard failure still stops here.
 	result, werr := runWalkProject(ctx, gomodPath, f.force, true, 0, f.operator, f.policyPath, false, scope,
-		walkdomain.WalkDepthFull, "", false, false, progress, ctr.ExecuteWalk, nil, io.Discard, stderr)
+		walkdomain.WalkDepthFull, false, false, progress, ctr.ExecuteWalk, nil, io.Discard, stderr)
 	if werr != nil {
 		return "", werr
 	}
@@ -289,6 +333,7 @@ func selectProjectWalkToScan(
 		OverallStatus: &succeeded,
 		BuildEnv:      &platform,
 		Toolchain:     env.toolchainFilter(),
+		TinyGoVersion: env.tinyGoVersionFilter(),
 		Limit:         1,
 	})
 	if err != nil {
@@ -370,6 +415,9 @@ type vulnScanRunFacts struct {
 	// states the same fact in its own document, and a second count over the same
 	// run is a second thing to be wrong.
 	Reachability vulnScanReachability
+	// Counts is the run's module tally, so `audit` can say how much of a partial
+	// run was analysed without re-reading the run.
+	Counts vuldomain.WalkScanCounts
 }
 
 // vulnScanSnapshotJSON names the advisory database generation an answer was
@@ -378,10 +426,12 @@ type vulnScanRunFacts struct {
 type vulnScanSnapshotJSON struct {
 	Source  string `json:"source"`
 	Version string `json:"version"`
+	// Origin is the mirror the bytes came from; absent for vuln.go.dev itself.
+	Origin string `json:"origin,omitempty"`
 }
 
 func vulnScanSnapshotOf(s vuldomain.DatabaseSnapshot) vulnScanSnapshotJSON {
-	return vulnScanSnapshotJSON{Source: s.Source(), Version: s.Version()}
+	return vulnScanSnapshotJSON{Source: s.Source(), Version: s.Version(), Origin: s.Origin()}
 }
 
 // vulnScanToolchainJSON is the toolchain axis on the machine surface: the same
@@ -415,6 +465,9 @@ type vulnScanToolchainJSON struct {
 	// Statement is the sentence the reader is shown, carried verbatim so the
 	// document and the screen say the same thing in the same words.
 	Statement string `json:"statement"`
+	// TinyGo is, on a TinyGo walk only, the TinyGo release in the same shape:
+	// never judged, since no advisory source kanonarion reads covers it.
+	TinyGo *vulnScanToolchainJSON `json:"tinygo,omitempty"`
 }
 
 // vulnScanToolchainAxis states the toolchain judgment for a run: on stderr when
@@ -458,6 +511,8 @@ func scanRunToolchainJudgment(ctx context.Context, ctr *Container, run vuldomain
 // toolchainSectionOf projects a judgment onto the machine surface, rendering its
 // statement through the same writer the reader sees.
 func toolchainSectionOf(j vuldomain.ToolchainJudgment) vulnScanToolchainJSON {
+	tinygo := j.TinyGo
+	j.TinyGo = nil
 	var statement strings.Builder
 	if err := writeToolchainJudgment(&statement, j); err != nil {
 		// The renderer writes to a buffer that cannot fail; a failure here would
@@ -474,6 +529,24 @@ func toolchainSectionOf(j vuldomain.ToolchainJudgment) vulnScanToolchainJSON {
 		Covering:          toolchainAdvisoryIDs(j.Covering),
 		WithdrawnCovering: toolchainAdvisoryIDs(j.WithdrawnCovering),
 		Statement:         strings.TrimRight(statement.String(), "\n"),
+		TinyGo:            tinygoToolchainSection(tinygo, j.Snapshot),
+	}
+}
+
+// tinygoToolchainSection is the TinyGo release in the toolchain section's shape,
+// nil on any other walk.
+func tinygoToolchainSection(t *vuldomain.TinyGoToolchain, snapshot vuldomain.DatabaseSnapshot) *vulnScanToolchainJSON {
+	if t == nil {
+		return nil
+	}
+	return &vulnScanToolchainJSON{
+		Status:            string(vuldomain.ToolchainUnjudged),
+		Version:           t.Version,
+		Snapshot:          vulnScanSnapshotOf(snapshot),
+		Reason:            vuldomain.TinyGoToolchainReason,
+		Covering:          []string{},
+		WithdrawnCovering: []string{},
+		Statement:         tinygoToolchainLine(*t),
 	}
 }
 
@@ -579,52 +652,30 @@ func runVulnScanReporting(ctx context.Context, walkID string, force, fresh, enab
 	// scan — and that stream is the reason the flag exists.
 	progressOut := progressWriter(stderr, noProgress)
 
-	// --fresh refreshes the advisory database and nothing else. It happens before
-	// the reuse question below, which is asked against whatever database the
-	// refresh settled on.
-	if rerr := refreshScanSnapshot(ctx, ctr, walkID, fresh, stderr); rerr != nil {
-		return vulnScanRunFacts{}, rerr
-	}
-
-	// A scan of the same walk against the same advisory snapshot has already
-	// answered this question. Re-running govulncheck over the whole build list
-	// would reproduce the stored verdicts at the cost of the run — the dominant
-	// cost of the command — so the stored run is served instead, and the report
-	// says so rather than letting a served answer read as a fresh measurement.
-	// --force is the way to insist on measuring; a --fresh that downloaded a new
-	// database re-scans on its own, because the stored run no longer answers
-	// against it.
-	//
-	// The project directory goes with the question. Whether a stored run may be
-	// served depends on whether that directory still builds what the walk
-	// resolved, and that judgement belongs to the use case that owns the reuse
-	// decision — this call site only has to ask about the tree it would have
-	// scanned.
-	if facts, served, rerr := serveReusableScanRun(ctx, ctr, walkID, projectDir, force, jsonOut, narrateRun, wantRunFacts, surface, stdout, stderr); rerr != nil || served {
-		return facts, rerr
-	}
-
-	_, _ = fmt.Fprintf(progressOut, "Scanning walk %s...\n", walkID)
-
+	// The stage itself — refresh, then serve the stored run that already
+	// answers unless --force, else measure — is the driver's, so the library's
+	// coordinate analysis decides reuse exactly as this command does. Serving
+	// and narration stay here.
 	rollups := newVulnScanRollups()
 	// Counted off the same per-module feed the roll-ups are built from, so the
 	// figure covers every record this run wrote rather than the subset that
 	// reached a roll-up.
 	reach := vulnScanReachability{SourceReadByThisRun: true}
-
-	run, err := ctr.ScanWalk.Scan(ctx, application2.ScanWalkParams{
-		WalkID: walkID,
-		Force:  force,
-		// The refresh above already settled which database this run is judged
-		// against, and stored it; the scan resolves that stored snapshot. Passing
-		// the flag on would check the database a second time in one invocation.
-		Fresh:              false,
-		EnableReachability: enableReachability,
-		CallGraphWorkers:   callGraphWorkers,
-		BinaryModePrePass:  binaryModePrePass,
-		Operator:           operator,
-		ProjectDir:         projectDir,
-		NoVendor:           noVendor,
+	var served vulnScanRunFacts
+	run, reused, err := driver.ScanWalk(ctx, ctr.ScanWalk, driver.WalkScan{
+		WalkID:            walkID,
+		Force:             force,
+		Fresh:             fresh,
+		Reachability:      enableReachability,
+		CallGraphWorkers:  callGraphWorkers,
+		BinaryModePrePass: binaryModePrePass,
+		Operator:          operator,
+		// The project directory goes with the reuse question: a stored run may
+		// be served only while that directory still builds what the walk
+		// resolved.
+		ProjectDir: projectDir,
+		NoVendor:   noVendor,
+		Surface:    surface,
 		Progress: func(coord coordinate.ModuleCoordinate, record vuldomain.VulnerabilityRecord, current, total int) {
 			// Only the line is suppressed; the bucketing below always runs, because
 			// the roll-ups it feeds are the result, printed to stdout.
@@ -632,9 +683,29 @@ func runVulnScanReporting(ctx context.Context, walkID string, force, fresh, enab
 			rollups.add(coord, record)
 			reach.Answers += recordReachabilityVerdicts(record)
 		},
+	}, driver.ScanHooks{
+		Refreshed: func(refresh application2.SnapshotRefresh, rerr error) error {
+			if _, werr := fmt.Fprintf(stderr, "%s\n", advisoryRefreshLine(refresh, rerr)); werr != nil {
+				return fmt.Errorf("writing output: %w", werr)
+			}
+			return nil
+		},
+		Serve: func(prior vuldomain.WalkScanRun) error {
+			var serr error
+			served, serr = serveStoredScanRun(ctx, prior, ctr, jsonOut, narrateRun, wantRunFacts, surface, stdout, stderr)
+			return serr
+		},
+		Scanning: func() { _, _ = fmt.Fprintf(progressOut, "Scanning walk %s...\n", walkID) },
 	})
+	if reused {
+		return served, err
+	}
+	var scanFailed *driver.ScanFailedError
+	if errors.As(err, &scanFailed) {
+		return vulnScanRunFacts{}, stepError(ctx, "vuln scan", scanFailed.Err)
+	}
 	if err != nil {
-		return vulnScanRunFacts{}, stepError(ctx, "vuln scan", err)
+		return vulnScanRunFacts{}, err
 	}
 
 	// The toolchain axis goes to stderr, beside the result. It is also the
@@ -646,11 +717,11 @@ func runVulnScanReporting(ctx context.Context, walkID string, force, fresh, enab
 	}
 
 	if perr := printFreshScanResult(ctx, ctr.NegativeSearch, run, rollups, reach, toolchain,
-		nativeRollupOver(ctx, ctr.QueryNative, nativeWalkCoords(ctx, ctr.QueryWalks, run.WalkID)), jsonOut, stdout); perr != nil {
+		withTinyGoCodeOf(ctx, ctr.QueryWalks, run.WalkID, nativeRollupOver(ctx, ctr.QueryNative, nativeWalkCoords(ctx, ctr.QueryWalks, run.WalkID))), jsonOut, stdout); perr != nil {
 		return vulnScanRunFacts{}, perr
 	}
 	return vulnScanRunFacts{RunID: run.ID, Snapshot: vulnScanSnapshotOf(run.Snapshot), Reused: false,
-			Toolchain: toolchain, Reachability: reach},
+			Toolchain: toolchain, Reachability: reach, Counts: run.Counts},
 		vulnScanCoverageExit(run)
 }
 
@@ -666,36 +737,6 @@ func useGoDir(goDir string) error {
 		return fmt.Errorf("unsetting GOROOT: %w", err)
 	}
 	return nil
-}
-
-// refreshScanSnapshot refreshes the advisory database when --fresh asks, and
-// says what the refresh settled on.
-func refreshScanSnapshot(ctx context.Context, ctr *Container, walkID string, fresh bool, stderr io.Writer) error {
-	if fresh {
-		refresh, rerr := ctr.ScanWalk.RefreshSnapshot(ctx, walkID)
-		if _, werr := fmt.Fprintf(stderr, "%s\n", advisoryRefreshLine(refresh, rerr)); werr != nil {
-			return fmt.Errorf("writing output: %w", werr)
-		}
-		if rerr != nil {
-			return fmt.Errorf("refreshing the advisory database: %w", rerr)
-		}
-	}
-	return nil
-}
-
-// serveReusableScanRun serves the stored run that already answers the walk
-// against the current snapshot, unless --force insists on measuring; served
-// reports that one did.
-func serveReusableScanRun(ctx context.Context, ctr *Container, walkID, projectDir string, force, jsonOut, narrateRun, wantRunFacts bool, surface string, stdout, stderr io.Writer) (vulnScanRunFacts, bool, error) {
-	if !force {
-		if prior, ok, rerr := ctr.ScanWalk.ReusableRun(ctx, walkID, projectDir); rerr != nil {
-			return vulnScanRunFacts{}, false, fmt.Errorf("checking for a reusable scan run: %w", rerr)
-		} else if ok {
-			facts, serr := serveStoredScanRun(ctx, prior, ctr, jsonOut, narrateRun, wantRunFacts, surface, stdout, stderr)
-			return facts, true, serr
-		}
-	}
-	return vulnScanRunFacts{}, false, nil
 }
 
 // advisoryRefreshLine renders what a --fresh refresh established, in one line.
@@ -714,25 +755,31 @@ func advisoryRefreshLine(r application2.SnapshotRefresh, err error) string {
 		return fmt.Sprintf("advisory database: refresh failed (%v); the stored database is unchanged and this run is judged against it", err)
 	}
 	source, version := r.Snapshot.Source(), r.Snapshot.Version()
+	// A configured mirror is what was asked, so the line names it beside the
+	// database it mirrors.
+	via := ""
+	if mirror := activeConfig.VulnDB.Mirror(); mirror != "" {
+		via = " (mirror " + mirror + ")"
+	}
 	switch {
 	case r.StampErr != nil:
-		return fmt.Sprintf("advisory database: %s published generation unreadable (%v); downloaded the database, now at %s",
-			source, r.StampErr, version)
+		return fmt.Sprintf("advisory database: %s%s published generation unreadable (%v); downloaded the database, now at %s",
+			source, via, r.StampErr, version)
 	case r.IndexErr != nil:
-		return fmt.Sprintf("advisory database: %s advanced %s -> %s, but the advisories could not be compared (%v); downloaded the new database",
-			source, r.PriorVersion, r.PublishedVersion, r.IndexErr)
+		return fmt.Sprintf("advisory database: %s%s advanced %s -> %s, but the advisories could not be compared (%v); downloaded the new database",
+			source, via, r.PriorVersion, r.PublishedVersion, r.IndexErr)
 	case r.Outcome == application2.RefreshUnchanged:
-		return fmt.Sprintf("advisory database: checked %s and found it unchanged at %s; nothing was downloaded and the stored snapshot was kept",
-			source, version)
+		return fmt.Sprintf("advisory database: checked %s%s and found it unchanged at %s; nothing was downloaded and the stored snapshot was kept",
+			source, via, version)
 	case r.Outcome == application2.RefreshIndexUnchanged:
 		return fmt.Sprintf(
-			"advisory database: %s advanced %s -> %s; the advisories listed for all %d modules in this walk are identical between the two, so the run judged against %s remains current for this walk; nothing was downloaded",
-			source, r.PriorVersion, r.PublishedVersion, r.ModulesCompared, r.PriorVersion)
+			"advisory database: %s%s advanced %s -> %s; the advisories listed for all %d modules in this walk are identical between the two, so the run judged against %s remains current for this walk; nothing was downloaded",
+			source, via, r.PriorVersion, r.PublishedVersion, r.ModulesCompared, r.PriorVersion)
 	case r.PriorVersion == "":
-		return fmt.Sprintf("advisory database: no snapshot was stored; downloaded %s@%s", source, version)
+		return fmt.Sprintf("advisory database: no snapshot was stored; downloaded %s@%s%s", source, version, via)
 	default:
-		return fmt.Sprintf("advisory database: %s advanced %s -> %s and the advisories changed for a module in this walk; downloaded the new database",
-			source, r.PriorVersion, version)
+		return fmt.Sprintf("advisory database: %s%s advanced %s -> %s and the advisories changed for a module in this walk; downloaded the new database",
+			source, via, r.PriorVersion, version)
 	}
 }
 
@@ -741,10 +788,11 @@ func advisoryRefreshLine(r application2.SnapshotRefresh, err error) string {
 // now or from the records a stored run wrote, so a served report is assembled by
 // the same code as a measured one and cannot drift from it.
 type vulnScanRollups struct {
-	affected    []vulnScanAffected
-	withdrawn   []vulnScanAffected
-	failed      []string
-	unscannable *unscannableRollup
+	affected     []vulnScanAffected
+	withdrawn    []vulnScanAffected
+	inconclusive []vulnScanAffected
+	failed       []string
+	unscannable  *unscannableRollup
 }
 
 func newVulnScanRollups() *vulnScanRollups {
@@ -768,6 +816,8 @@ func (r *vulnScanRollups) add(coord coordinate.ModuleCoordinate, record vuldomai
 		r.affected = append(r.affected, vulnScanAffected{coord: coord.Path() + "@" + coord.Version(), record: record})
 	case vuldomain.FindingsRecordWithdrawn:
 		r.withdrawn = append(r.withdrawn, vulnScanAffected{coord: coord.Path() + "@" + coord.Version(), record: record})
+	case vuldomain.FindingsRecordInconclusive:
+		r.inconclusive = append(r.inconclusive, vulnScanAffected{coord: coord.Path() + "@" + coord.Version(), record: record})
 	case vuldomain.FindingsRecordClean:
 		// No advisory matched: neither findings roll-up names it.
 	}
@@ -792,7 +842,7 @@ func (r *vulnScanRollups) add(coord coordinate.ModuleCoordinate, record vuldomai
 // sets only an unserialised field, so nothing stored changes.
 func printFreshScanResult(ctx context.Context, searcher negativeSearcher, run vuldomain.WalkScanRun, rollups *vulnScanRollups, reach vulnScanReachability, toolchain vulnScanToolchainJSON, native *nativeWalkRollup, jsonOut bool, stdout io.Writer) error {
 	rollups.searchNegatives(ctx, searcher)
-	return printVulnScanResult(run, rollups.affected, rollups.withdrawn, rollups.failed, rollups.unscannable, reach, toolchain, native, jsonOut, stdout)
+	return printVulnScanResult(run, rollups.affected, rollups.withdrawn, rollups.inconclusive, rollups.failed, rollups.unscannable, reach, toolchain, native, jsonOut, stdout)
 }
 
 // searchNegatives puts the affected and withdrawn records through searcher,
@@ -862,12 +912,12 @@ func serveStoredScanRun(ctx context.Context, run vuldomain.WalkScanRun, ctr *Con
 		return vulnScanRunFacts{}, terr
 	}
 
-	if perr := printVulnScanResult(run, rollups.affected, rollups.withdrawn, rollups.failed, rollups.unscannable, reach, toolchain,
-		nativeRollupOver(ctx, ctr.QueryNative, nativeWalkCoords(ctx, ctr.QueryWalks, run.WalkID)), jsonOut, stdout); perr != nil {
+	if perr := printVulnScanResult(run, rollups.affected, rollups.withdrawn, rollups.inconclusive, rollups.failed, rollups.unscannable, reach, toolchain,
+		withTinyGoCodeOf(ctx, ctr.QueryWalks, run.WalkID, nativeRollupOver(ctx, ctr.QueryNative, nativeWalkCoords(ctx, ctr.QueryWalks, run.WalkID))), jsonOut, stdout); perr != nil {
 		return vulnScanRunFacts{}, perr
 	}
 	return vulnScanRunFacts{RunID: run.ID, Snapshot: vulnScanSnapshotOf(run.Snapshot), Reused: true,
-			Toolchain: toolchain, Reachability: reach},
+			Toolchain: toolchain, Reachability: reach, Counts: run.Counts},
 		vulnScanCoverageExit(run)
 }
 
@@ -940,6 +990,8 @@ func vulnScanStatusLabel(record vuldomain.VulnerabilityRecord) string {
 		return string(vuldomain.StatusAffected) + " — " + label
 	case vuldomain.FindingsRecordWithdrawn:
 		return string(vuldomain.StatusWithdrawn) + " — " + label
+	case vuldomain.FindingsRecordInconclusive:
+		return string(vuldomain.StatusInconclusive) + " — " + label
 	case vuldomain.FindingsRecordClean:
 		return label
 	}
@@ -995,10 +1047,43 @@ func scanCompletionSummary(run vuldomain.WalkScanRun) string {
 		coverage = "Complete"
 	}
 	findings := "Clean"
-	if run.FindingsStatus == vuldomain.FindingsAffected {
+	switch run.FindingsStatus {
+	case vuldomain.FindingsAffected:
 		findings = fmt.Sprintf("Affected (%d)", run.Counts.Affected)
+		if n := run.Counts.Inconclusive; n > 0 {
+			findings += fmt.Sprintf(", %d module(s) not established", n)
+		}
+	case vuldomain.FindingsInconclusive:
+		findings = fmt.Sprintf("Inconclusive (%d module(s) not established)", run.Counts.Inconclusive)
+	case vuldomain.FindingsClean:
 	}
 	return coverage + ", " + findings
+}
+
+// writeTinyGoNote names, under a judged stdlib finding of a TinyGo build, the
+// affected packages TinyGo supplies.
+func writeTinyGoNote(w io.Writer, f vuldomain.VulnerabilityFinding) {
+	if f.TinyGoNote != "" {
+		_, _ = fmt.Fprintf(w, "      under TinyGo: %s\n", f.TinyGoNote)
+	}
+}
+
+// writeInconclusiveSection lists the modules whose findings were not
+// established. Not established is neither a finding nor a clear, so it has its
+// own section and its own word on the summary line.
+func writeInconclusiveSection(w io.Writer, inconclusive []vulnScanAffected) {
+	if len(inconclusive) == 0 {
+		return
+	}
+	_, _ = fmt.Fprintf(w, "Not established under the TinyGo frame (%d module(s), counted neither as findings nor as clean):\n", len(inconclusive))
+	for _, a := range inconclusive {
+		_, _ = fmt.Fprintf(w, "  %s\n", a.coord)
+		for _, f := range a.record.Findings {
+			if f.NotEstablished {
+				_, _ = fmt.Fprintf(w, "    %s: %s — %s\n", f.ID, f.TinyGoNote, f.Summary)
+			}
+		}
+	}
 }
 
 // printVulnScanResult writes the scan result to stdout. Progress output has
@@ -1010,7 +1095,7 @@ func scanCompletionSummary(run vuldomain.WalkScanRun) string {
 // the run's stored shape is unchanged and the keys are added beside it, so a
 // consumer that cannot read the stderr statements still learns what the
 // reachability verdicts rest on and what the toolchain was judged to be.
-func printVulnScanResult(run vuldomain.WalkScanRun, affected, withdrawn []vulnScanAffected, failedCoords []string, unscannable *unscannableRollup, reach vulnScanReachability, toolchain vulnScanToolchainJSON, native *nativeWalkRollup, jsonOut bool, stdout io.Writer) error {
+func printVulnScanResult(run vuldomain.WalkScanRun, affected, withdrawn, inconclusive []vulnScanAffected, failedCoords []string, unscannable *unscannableRollup, reach vulnScanReachability, toolchain vulnScanToolchainJSON, native *nativeWalkRollup, jsonOut bool, stdout io.Writer) error {
 	if jsonOut {
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
@@ -1043,6 +1128,7 @@ func printVulnScanResult(run vuldomain.WalkScanRun, affected, withdrawn []vulnSc
 				}
 				reachability := reachabilityLabel(f, " [not reachable in call graph]")
 				_, _ = fmt.Fprintf(stdout, "    %s%s%s%s: %s\n", f.ID, aliases, fixedIn, reachability, f.Summary)
+				writeTinyGoNote(stdout, f)
 			}
 		}
 	}
@@ -1066,6 +1152,8 @@ func printVulnScanResult(run vuldomain.WalkScanRun, affected, withdrawn []vulnSc
 			}
 		}
 	}
+
+	writeInconclusiveSection(stdout, inconclusive)
 
 	_, _ = fmt.Fprintf(stdout, "Scan completed: %s  Run ID: %s\n", scanCompletionSummary(run), run.ID)
 	// Listed whenever any module failed, not only on a Partial run. A run is
@@ -1264,6 +1352,7 @@ func newVulnScanRescanCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use: "vuln-scan-rescan <walk-id>",
 		Annotations: map[string]string{
+			annotationWalkIDArgs:   "0",
 			annotationStoreIntent:  StoreIntentCreate,
 			annotationNetworkUse:   NetworkAvoidable,
 			annotationOfflineFlags: "--snapshot-source,--snapshot-version",
@@ -1376,7 +1465,11 @@ func runScanRescan(ctx context.Context, walkID string, f vulnScanRescanFlags, st
 	// walk recorded. The pre-flight says so before the most expensive run the CLI
 	// offers, on the narration channel, so the answer is not read as being about
 	// the toolchain standing here now.
-	if berr := writeRescanBuildPreflight(ctx, stderr, ctr.QueryWalks, walkID); berr != nil {
+	pin := ""
+	if f.snapshotSource != "" {
+		pin = f.snapshotSource + "@" + f.snapshotVersion
+	}
+	if berr := writeRescanBuildPreflight(ctx, stderr, ctr.QueryWalks, walkID, pin); berr != nil {
 		return berr
 	}
 
@@ -1398,7 +1491,8 @@ func runScanRescan(ctx context.Context, walkID string, f vulnScanRescanFlags, st
 	}
 
 	ctr.SetAside.to(stderr)
-	return rescanWith(ctx, ctr.RescanWalk, req, f.policyPath, f.noProgress, stdout, stderr)
+	return withAdvisoryRemedy(ctx, rescanWith(ctx, ctr.RescanWalk, req, f.policyPath, f.noProgress, stdout, stderr),
+		rescanOffline(walkID))
 }
 
 // rescanWith drives an already-resolved re-scan and owns the command's output
@@ -1438,7 +1532,15 @@ func rescanWith(
 		return err
 	}
 
-	run, err := rescan.Rescan(ctx, req)
+	// Through the driver the library's Rescan entry is, so the two cannot ask
+	// the re-scan different questions.
+	run, err := driver.NewRescanUseCase(rescan).Run(ctx, driver.RescanRequest{
+		WalkID:       req.WalkID,
+		Snapshot:     req.Snapshot,
+		Reachability: req.EnableReachability,
+		Operator:     req.Operator,
+		Progress:     req.Progress,
+	})
 	if err != nil {
 		// A frame the re-scan cannot reproduce is the one failure here that has a
 		// route out, and the route is a different command — so it is named. The
@@ -1464,7 +1566,7 @@ func rescanWith(
 	} else {
 		_, _ = fmt.Fprintf(stdout, "Re-scan completed: %s\n", scanCompletionSummary(run))
 		_, _ = fmt.Fprintf(stdout, "Run ID: %s\n", run.ID)
-		_, _ = fmt.Fprintf(stdout, "Snapshot: %s@%s\n", run.Snapshot.Source(), run.Snapshot.Version())
+		_, _ = fmt.Fprintf(stdout, "Snapshot: %s\n", snapshotLabel(run.Snapshot))
 	}
 	// The re-scan reports the same two axes and owes the same exit code. A
 	// re-derivation that could not analyse part of the build list has not

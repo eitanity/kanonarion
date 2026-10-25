@@ -13,11 +13,11 @@ exit 0
         "version": "v1.0.0"
       },
       "commands": {
-        "interface": "kanonarion interface-show example.com/shallow@v1.0.0",
-        "call_graph": "kanonarion callgraph-show example.com/shallow@v1.0.0",
+        "interface": "kanonarion interface example.com/shallow@v1.0.0",
+        "call_graph": "kanonarion fetch example.com/shallow@v1.0.0 \u0026\u0026 kanonarion callgraph example.com/shallow@v1.0.0",
         "call_graph_nav": "kanonarion callers \u003csymbol\u003e | kanonarion callees \u003csymbol\u003e",
-        "examples": "kanonarion examples-find \u003csymbol\u003e | kanonarion examples-show example.com/shallow@v1.0.0 \u003cname\u003e",
-        "vulnerabilities": "kanonarion vuln-show example.com/shallow@v1.0.0",
+        "examples": "kanonarion examples example.com/shallow@v1.0.0",
+        "vulnerabilities": "kanonarion vuln-scan 01ARZ3NDEKTSV4RRFFQ69G5FAV",
         "license": "kanonarion license example.com/shallow@v1.0.0",
         "dependents": "kanonarion dependents example.com/shallow@v1.0.0"
       },
@@ -53,6 +53,9 @@ exit 0
         "node_count": 0,
         "edge_count": 0,
         "entry_point_count": null
+      },
+      "capability": {
+        "status": "not_run"
       },
       "examples": {
         "status": "not_run",

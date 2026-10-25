@@ -6,8 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
 
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
 )
@@ -58,9 +56,8 @@ func runContextGoMod(ctx context.Context, f contextFlags, scope depScope, stdout
 		return writeEmptyContextScope(f, scope, envelope, array, stream, stdout)
 	}
 
-	dbPath := filepath.Join(storeRoot, "mirror.db")
-	if _, serr := os.Stat(dbPath); os.IsNotExist(serr) {
-		return fmt.Errorf("store not found at %s: run a kanonarion command to initialise it", dbPath)
+	if serr := requireExistingStore(storeRoot); serr != nil {
+		return serr
 	}
 
 	ctr, cleanup, err := NewContainer(storeRoot, "", "", false, activeConfig, logger)
@@ -198,6 +195,8 @@ func contextGoModDocument(ctx context.Context, ctr *Container, mod scopeModule, 
 		}
 	}
 
+	callGraph, capability := buildCallGraph(ctx, coord, ctr.QueryCallGraph, f.entryPointsFull, f.packageFilter)
+	verification := buildVerification(ctx, coord, ctr.QueryFetch)
 	out := contextOutput{
 		Module: contextModuleInfo{
 			Path:    coord.Path(),
@@ -207,13 +206,14 @@ func contextGoModDocument(ctx context.Context, ctr *Container, mod scopeModule, 
 			Replace: replaceOf(mod),
 		},
 		DependencyScope: scopeField,
-		Commands:        buildCommandsWithWalk(coord, cmdWalkID),
-		Verification:    buildVerification(ctx, coord, ctr.QueryFetch),
+		Commands:        buildCommandsWithWalk(coord, cmdWalkID, verification, basis),
+		Verification:    verification,
 		Provenance:      buildProvenance(coord),
 		Dependencies:    buildDependencies(ctx, coord, ctr.QueryWalks, basis),
 		License:         buildLicense(ctx, coord, ctr.QueryLicense, ctr.StdlibCustody),
 		Interface:       buildInterface(ctx, coord, ctr.QueryInterface, compact, f.packageFilter),
-		CallGraph:       buildCallGraph(ctx, coord, ctr.QueryCallGraph, f.entryPointsFull, f.packageFilter),
+		CallGraph:       callGraph,
+		Capability:      capability,
 		Examples:        buildExamples(ctx, coord, ctr.QueryExamples, compact, f.packageFilter),
 		Vulnerabilities: vulns,
 		Native:          deriveNativeCoverage(ctx, ctr.QueryNative, coord),

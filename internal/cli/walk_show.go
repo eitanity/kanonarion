@@ -14,6 +14,7 @@ func newWalkShowCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use: "walk-show <id>",
 		Annotations: map[string]string{
+			annotationWalkIDArgs:  "0",
 			annotationStoreIntent: StoreIntentRead,
 			annotationNetworkUse:  NetworkNever,
 		},
@@ -40,7 +41,7 @@ func runWalkShow(ctx context.Context, id string, uc QueryWalksUseCase, stdout, s
 			return walkIDMiss(ctx, uc, id, stderr)
 		}
 		if isWalkIntegrity(err) {
-			return &exitError{code: ExitIntegrity, msg: fmt.Sprintf("walk record %q failed integrity check", id)}
+			return walkIntegrityRefusal(err, fmt.Sprintf("walk record %q failed integrity check", id))
 		}
 		if none := walkNotServable(err); none != nil {
 			return none

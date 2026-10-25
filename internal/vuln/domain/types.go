@@ -20,7 +20,17 @@ const (
 	ScanModeSource ScanMode = "source"
 	// ScanModeBinary builds a test binary then scans its symbol table. Much faster; no call-graph precision.
 	ScanModeBinary ScanMode = "binary"
+	// ScanModeModule matches advisories against the module graph alone. It is
+	// what a TinyGo closure that compiles C gets, because the host toolchain
+	// cannot load its packages; no package or symbol is examined.
+	ScanModeModule ScanMode = "module"
 )
+
+// ScanModes is every mode a scan can record, so renderers and tests walk one
+// list rather than restating it.
+func ScanModes() []ScanMode {
+	return []ScanMode{ScanModeSource, ScanModeBinary, ScanModeModule}
+}
 
 // VulnerabilityStatus describes the outcome of a module's vulnerability scan as
 // a single word.
@@ -52,6 +62,10 @@ const (
 	StatusWithdrawn   VulnerabilityStatus = "Withdrawn"
 	StatusUnscannable VulnerabilityStatus = "Unscannable"
 	StatusScanFailed  VulnerabilityStatus = "ScanFailed"
+	// StatusInconclusive means advisories matched and none could be judged
+	// against this build: TinyGo supplies the code they describe. It is neither
+	// Clean nor Affected.
+	StatusInconclusive VulnerabilityStatus = "Inconclusive"
 )
 
 // RecordCoverageStatus answers "was this module analysed?" — one of the two axes
@@ -99,6 +113,9 @@ const (
 	// and the withdrawn ones remain visible per finding.
 	FindingsRecordWithdrawn RecordFindingsStatus = "Withdrawn"
 	FindingsRecordClean     RecordFindingsStatus = "Clean"
+	// FindingsRecordInconclusive means every live match is not established
+	// against this build; see VulnerabilityFinding.NotEstablished.
+	FindingsRecordInconclusive RecordFindingsStatus = "Inconclusive"
 )
 
 // DetermineRecordCoverageStatus projects a collapsed status onto the coverage
@@ -111,7 +128,7 @@ func DetermineRecordCoverageStatus(status VulnerabilityStatus) RecordCoverageSta
 		return CoverageUnscannable
 	case StatusScanFailed:
 		return CoverageFailedScan
-	case StatusClean, StatusAffected, StatusWithdrawn:
+	case StatusClean, StatusAffected, StatusWithdrawn, StatusInconclusive:
 		// Withdrawn joins the two analysed words: an advisory can only be known
 		// retracted for a module whose advisory set was read, so the word reports a
 		// findings outcome and says nothing against coverage.
@@ -171,6 +188,8 @@ func DetermineRecordFindingsStatus(status VulnerabilityStatus) RecordFindingsSta
 		return FindingsRecordAffected
 	case StatusWithdrawn:
 		return FindingsRecordWithdrawn
+	case StatusInconclusive:
+		return FindingsRecordInconclusive
 	default:
 		return FindingsRecordClean
 	}
@@ -179,12 +198,14 @@ func DetermineRecordFindingsStatus(status VulnerabilityStatus) RecordFindingsSta
 // DetermineFindingsAxis answers the findings axis from a finding set.
 //
 // A matched advisory that has been retracted upstream is not a finding against
-// the module, and it is not an absence either. So the set decides three ways:
+// the module, and it is not an absence either. So the set decides four ways:
 //
 //   - no advisory matched — Clean.
 //   - at least one matched advisory is live — Affected. One live advisory decides
 //     it however many retracted ones sit beside it; those stay on the record and
 //     carry their own withdrawal dates.
+//   - no live advisory is established against this build, and one is not
+//     established (NotEstablished) — Inconclusive.
 //   - every matched advisory is withdrawn — Withdrawn.
 //
 // A finding whose advisory enrichment failed carries no withdrawal date and is
@@ -195,10 +216,20 @@ func DetermineFindingsAxis(findings []VulnerabilityFinding) RecordFindingsStatus
 	if len(findings) == 0 {
 		return FindingsRecordClean
 	}
+	inconclusive := false
 	for _, f := range findings {
-		if !f.IsWithdrawn() {
+		switch {
+		case f.IsWithdrawn():
+		case f.NotEstablished:
+			// A finding this build does not compile the code of is neither a
+			// finding against it nor an absence of one.
+			inconclusive = true
+		default:
 			return FindingsRecordAffected
 		}
+	}
+	if inconclusive {
+		return FindingsRecordInconclusive
 	}
 	return FindingsRecordWithdrawn
 }
@@ -247,6 +278,8 @@ func DetermineRecordOverallStatus(coverage RecordCoverageStatus, findings Record
 			return StatusAffected
 		case FindingsRecordWithdrawn:
 			return StatusWithdrawn
+		case FindingsRecordInconclusive:
+			return StatusInconclusive
 		default:
 			return StatusClean
 		}
@@ -674,6 +707,13 @@ type VulnerabilityFinding struct {
 	// Empty means either that reachability was not requested, or that it was
 	// requested and answered — Reachable says which.
 	ReachabilityNote string `json:"reachability_note,omitzero"`
+	// NotEstablished marks a finding whose advisory describes code this build
+	// does not compile: under a TinyGo frame TinyGo supplies the affected
+	// packages. It is neither Affected nor Clean; TinyGoNote says why.
+	NotEstablished bool `json:"not_established,omitzero"`
+	// TinyGoNote names, on a stdlib finding of a TinyGo build, which affected
+	// packages TinyGo supplies and so what the finding was judged on.
+	TinyGoNote string `json:"tinygo_note,omitzero"`
 	// References are the advisory's own links: the pair of a reference TYPE and a
 	// URL, exactly as the OSV document carries them.
 	//
@@ -941,6 +981,9 @@ type ProjectScanResult struct {
 	// because the snapshot reaches the adapter by value: only the caller can put
 	// the reading on the snapshot the records it goes on to build will name.
 	AdvisoryCount int
+	// ScanMode is the mode govulncheck ran in, decided by the adapter from the
+	// tree; empty reads as source, which is all a result without it could be.
+	ScanMode ScanMode
 }
 
 // StdlibModulePath is govulncheck's pseudo-module path for Go standard-library
@@ -962,6 +1005,9 @@ const (
 	WalkStatusAffected WalkScanStatus = "Affected"
 	WalkStatusPartial  WalkScanStatus = "Partial"
 	WalkStatusFailed   WalkScanStatus = "ScanFailed"
+	// WalkStatusInconclusive is a complete run with no affected module and at
+	// least one whose findings were not established under a TinyGo frame.
+	WalkStatusInconclusive WalkScanStatus = "Inconclusive"
 )
 
 // CoverageStatus answers "was every module in the build list analysed?" — one of
@@ -983,6 +1029,9 @@ type FindingsStatus string
 const (
 	FindingsAffected FindingsStatus = "Affected"
 	FindingsClean    FindingsStatus = "Clean"
+	// FindingsInconclusive is a run with no affected module and at least one
+	// Inconclusive module: neither Affected nor Clean.
+	FindingsInconclusive FindingsStatus = "Inconclusive"
 )
 
 // WalkScanCounts is the per-outcome module breakdown a walk scan produces. It is
@@ -996,6 +1045,9 @@ type WalkScanCounts struct {
 	Affected    int `json:"affected"`
 	Unscannable int `json:"unscannable"`
 	Failed      int `json:"failed"`
+	// Inconclusive counts analysed modules whose findings were not established;
+	// omitempty, so every run without one keeps its bytes and seal.
+	Inconclusive int `json:"inconclusive,omitempty"`
 }
 
 // WalkScanRun records the aggregate results of scanning every module in a walk.

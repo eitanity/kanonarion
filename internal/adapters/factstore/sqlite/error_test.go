@@ -14,10 +14,7 @@ func TestAuditingStore_PutError_ClosedDB(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	store, err := sqlite2.NewAuditingStore(inner, filepath.Join(dir, "audit.jsonl"))
-	if err != nil {
-		t.Fatalf("NewAuditingStore: %v", err)
-	}
+	store := sqlite2.NewAuditingStore(inner, filepath.Join(dir, "audit.jsonl"))
 
 	// Close the DB so PutFetchRecord fails.
 	if cerr := store.Close(); cerr != nil {

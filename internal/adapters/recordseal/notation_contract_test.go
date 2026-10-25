@@ -102,6 +102,8 @@ func populated[R any]() R {
 var validFills = map[reflect.Type]reflect.Value{
 	reflect.TypeFor[callgraphdomain.ExportDirective](): reflect.ValueOf(
 		callgraphdomain.ExportDirective{Kind: callgraphdomain.ExportWasm, Name: "x"}),
+	reflect.TypeFor[callgraphdomain.InterruptHandler](): reflect.ValueOf(
+		callgraphdomain.InterruptHandler{Kind: callgraphdomain.HandlerInterruptNew, Site: callgraphdomain.SourcePosition{File: "x.go", Line: 1}}),
 }
 
 // fill sets v to a non-zero value, descending into composites.

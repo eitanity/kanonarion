@@ -8,6 +8,9 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/eitanity/kanonarion/internal/adapters/yamlkeys"
+	"github.com/eitanity/kanonarion/internal/composition"
+	"github.com/eitanity/kanonarion/internal/config"
 	configyaml "github.com/eitanity/kanonarion/internal/config/adapters/store/yaml"
 	walkadapterpolicy "github.com/eitanity/kanonarion/internal/walk/adapters/policy/localfile"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
@@ -61,16 +64,6 @@ func runPolicyValidate(ctx context.Context, path string, asJSON bool, stdout io.
 	return runPolicyValidateFile(path, asJSON, stdout)
 }
 
-// governanceMarkers are the top-level keys that identify a config-schema
-// governance file as opposed to a depth-policy file. `policy
-// validate` routes to the matching schema so the two coherent schemas stay
-// independently validated rather than one leniently accepting the other.
-var governanceMarkers = []string{
-	"license_policy", "directive_policy", "godebug_policy",
-	"vendor_policy", "fips_policy", "preferences", "license_overrides",
-	"copyright_declarations",
-}
-
 // policyValidation is one file's outcome. Results are collected before
 // anything is written so --json can emit exactly one array across a whole
 // directory; the error is kept as a value, not a string, because the caller
@@ -119,12 +112,12 @@ func validatePolicyFile(path string) policyValidation {
 	var validateErr error
 	if isGovernanceSchema(data) {
 		res.schema = "governance"
-		_, validateErr = configyaml.Parse(data)
+		_, validateErr = configyaml.Parse(data, composition.BackendSections()...)
 	} else {
 		_, validateErr = walkadapterpolicy.Parse(data)
 	}
 	if validateErr != nil {
-		res.err = fmt.Errorf("invalid policy (%s schema): %w", res.schema, validateErr)
+		res.err = fmt.Errorf("invalid policy (%s schema): %w", res.schema, yamlkeys.InFile(validateErr, path))
 	}
 	return res
 }
@@ -149,15 +142,17 @@ func runPolicyValidateFile(path string, asJSON bool, stdout io.Writer) error {
 	return nil
 }
 
-// isGovernanceSchema reports whether the YAML document has any top-level key
-// that identifies it as a config-schema governance file.
+// isGovernanceSchema reports whether the YAML document has any top-level
+// config-schema section, so `policy validate` routes it to that schema. Every
+// section counts: one left out would be refused as a depth-policy key, in words
+// that do not match the loader's.
 func isGovernanceSchema(data []byte) bool {
 	var doc map[string]any
 	if err := yaml.Unmarshal(data, &doc); err != nil {
 		return false
 	}
-	for _, m := range governanceMarkers {
-		if _, ok := doc[m]; ok {
+	for key := range doc {
+		if key != "version" && config.IsKnownSection(key) {
 			return true
 		}
 	}

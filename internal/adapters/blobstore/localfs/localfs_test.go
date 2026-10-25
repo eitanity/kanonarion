@@ -1,12 +1,15 @@
 package localfs_test
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"strings"
 	"testing"
 
 	"github.com/eitanity/kanonarion/internal/adapters/blobstore/localfs"
+	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
+	"github.com/eitanity/kanonarion/internal/fetch/ports"
 )
 
 func TestStore_PutGetExists(t *testing.T) {
@@ -14,9 +17,9 @@ func TestStore_PutGetExists(t *testing.T) {
 	store := localfs.New(dir)
 	ctx := context.Background()
 
-	content := "hello, blob store"
-	identity := testIdentity("put-get-exists")
-	if err := store.Put(ctx, identity, strings.NewReader(content)); err != nil {
+	data, identity := fetchtest.ModuleZip(t, "example.com/m", "v1.0.0", map[string]string{"go.mod": "module example.com/m\n"})
+	content := string(data)
+	if err := store.Put(ctx, identity, bytes.NewReader(data)); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
 
@@ -53,12 +56,12 @@ func TestStore_Idempotent(t *testing.T) {
 	dir := t.TempDir()
 	store := localfs.New(dir)
 	ctx := context.Background()
-	identity := testIdentity("idempotent")
+	identity := fetchtest.GoModBlob(t, "data")
 
 	if err := store.Put(ctx, identity, strings.NewReader("data")); err != nil {
 		t.Fatalf("first Put: %v", err)
 	}
-	if err := store.Put(ctx, identity, strings.NewReader("data")); err != nil {
+	if err := store.Put(ctx, identity, strings.NewReader("other data")); err != nil {
 		t.Fatalf("second Put: %v", err)
 	}
 
@@ -84,8 +87,8 @@ func TestStore_KindSeparatesArtefactsOfEqualHash(t *testing.T) {
 	store := localfs.New(dir)
 	ctx := context.Background()
 
-	zip := testIdentity("same-hash")
-	goMod := testGoModIdentity("same-hash")
+	goMod := fetchtest.GoModBlob(t, "go.mod bytes")
+	zip := fetchtest.Blob(ports.BlobKindZip, goMod.Hash())
 
 	if err := store.Put(ctx, zip, strings.NewReader("zip bytes")); err != nil {
 		t.Fatalf("Put zip: %v", err)

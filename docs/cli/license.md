@@ -434,7 +434,7 @@ four kinds of absence and only one of them is filled by extracting the build:
 | kind | why no record | what produces one |
 |---|---|---|
 | `not_extracted` | a published module nothing has extracted yet | the walk's extraction under a `--walk-id` scope, `kanonarion license <coordinate>` otherwise |
-| `local_replace` | the build resolves it from a directory, so a fetch by coordinate never reaches its source | `walk --analyse-local` then `extract`, where this run could read the `go.mod` declaring the replace |
+| `local_replace` | the build resolves it from a directory; a `--gomod` or `--package` scope lists it as `<path>@local`, and nothing has analysed that directory yet | `walk --gomod` then `extract`, which file it as `<path>@local`, where this run could read the `go.mod` declaring the replace |
 | `local_root` | the build's own main module, which is not published | `walk --gomod ./go.mod --analyse-root` then `extract` |
 | `stdlib` | it ships with the toolchain and holds no licence record by design | **nothing** — its identity is read with `kanonarion license stdlib@<version>` |
 
@@ -446,7 +446,7 @@ scope: walk 01M0YV8A16NMFS4DSPMRVW905A (396 module(s))
 3 module(s) in scope hold no licence record among the generations listed:
   github.com/grafana/loki/pkg/push@v0.0.0-20250630054201-94c0ba7b0952
     replaced by the local path ./pkg/push: what builds is that directory, not this coordinate, so extracting the coordinate never produces its record
-    to produce it: run 'kanonarion walk --gomod /path/to/go.mod --analyse-local' then 'kanonarion extract <walk-id>' to analyse github.com/grafana/loki/pkg/push from the local path this build replaces it with
+    to produce it: run 'kanonarion walk --gomod /path/to/go.mod' then 'kanonarion extract <walk-id>' to analyse github.com/grafana/loki/pkg/push@local from the local path this build replaces it with
   github.com/grafana/loki/v3@local
     the build's own main module, which is not a published module, so extraction by coordinate never reaches it
     to produce it: run 'kanonarion walk --gomod ./go.mod --analyse-root' then 'kanonarion extract <walk-id>' to analyse the project's own licence
@@ -570,6 +570,8 @@ whose licence would be the target, it exits `4`).
 
 A record whose stored bytes do **not** hash to its seal has been altered, and
 every command that meets one refuses at exit `10`, as before.
+
+A record whose seal verifies but which is filed under another coordinate, or under a column value its seal does not state, is refused at exit `10` too, naming the table: `licence-list` and `licence --history` refuse, `licence` warns and extracts the coordinate again, and nothing removes the row, because the ledger is append-only.
 
 ## Assurance log
 

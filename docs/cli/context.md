@@ -13,7 +13,7 @@ kanonarion context <dir> [--symbol] [--reachability] [--exclude-tests] [flags]
 
 `context` aggregates every stored record for a module - verification,
 provenance, direct dependencies, license, public interface, call graph,
-examples, and vulnerabilities - into a single response. It is the primary entry point for
+capability, examples, and vulnerabilities - into a single response. It is the primary entry point for
 an agent that needs to understand a dependency before using or modifying it.
 
 With no positional module and no `--walk-id`, `context` defaults to
@@ -34,17 +34,18 @@ composes: `kanonarion inspect` followed by `kanonarion context` covers every
 enumerated module. To cover a full transitive closure of an arbitrary walk use
 `context --walk-id <id>` instead.
 
-All sections are always present in the output. A section that has not been
-run yet reports `"status": "not_run"` rather than being absent. A section
-that encountered a store error reports `"status": "read_error"` with an
-`"error"` field. This makes the output structurally stable: a consumer can
-always read `out.dependencies.status` without checking whether the key
-exists.
+All sections are always present. A section nothing has run for reports
+`"status": "not_run"`; one whose every stored record predates this build's
+pipeline reports `superseded`, its `error` naming the pipelines and the command
+that re-derives it; a store error reports `read_error`, and records that
+disagree `conflict`, naming them in `error`.
 
 The `dependencies` section is drawn from the walk the rest of the document is
 based on - the walk the vulnerability section names as its `walk basis`, the
 walk `--walk-id` names, or the project walk `--gomod` anchors to - wherever that
-walk holds the module. One document therefore reports one build. Where the
+walk holds the module. One document therefore reports one build. A walk named
+with `--walk-id` also supplies the build frame the call-graph sections and the
+route classifications are read in. Where the
 document names no walk at all, the section falls back to the walks rooted at the
 module itself and picks the one the shared default rule picks. It reports
 `not_run` only when no walk in either route holds the module, and
@@ -140,7 +141,8 @@ a per-dependency `test_only`, both emitted always, `false` included:
 
 ### Text (default)
 
-Full mode (`--full`) renders each section with a heading and detail:
+Full mode (`--full`) renders each section with a heading and detail; Capability
+follows Call Graph, and Native Code closes the document as in compact mode:
 
 ```
 go.uber.org/goleak@v1.3.0
@@ -219,15 +221,13 @@ read-error branches use for `(failed: …)`:
   Examples:        0 (ExtractionFailed: zip corrupt)
 ```
 
-This is the same fact `--json` carries in each section's `error` field, so the
-two outputs no longer disagree about what is known. It matters for telling an
-unusable analysis environment from a fault in the module: both render as the
-same status word, and only the reason separates them.
+This is the fact `--json` carries in each section's `error` field. It tells an
+unusable analysis environment from a fault in the module, which share a status
+word.
 
-A record that recorded no reason prints the bare status word — `(LoadFailed)`.
-That is not a rendering gap: records written before a stage recorded its reason
-state nothing, and no reason is invented for them. The reason is a fact about the
-record, not about the coordinate, so re-deriving the record is what supplies one.
+A record that recorded no reason prints the bare status word — `(LoadFailed)`:
+records written before a stage recorded its reason state none. Re-deriving the
+record supplies one.
 
 A multi-line reason is folded onto the section's single row. It is never
 truncated.
@@ -410,12 +410,6 @@ In JSON it is `module.replace`:
 The key is **absent** where no directive applies, and on the coordinate and
 `--walk-id` forms, which read no manifest.
 
-Headed by the require entry instead — which is what the scope resolution used to
-report — every section of the document answered about a coordinate the store
-holds nothing under: `not_fetched`, `license: not_run`, and `the walk does not
-hold github.com/PaesslerAG/gval@v1.2.1`, for a module that build had fetched,
-licensed and scanned under its replacement.
-
 A `replace` to a **local path** has no replacement coordinate at all: the module
 is named by its require entry, and `replace.local_path` names the directory the
 build compiles instead.
@@ -495,13 +489,13 @@ suggests a fork of `<canonical>` - verify"* - never a verdict.
 
 | Field | Type | Description |
 |---|---|---|
-| `status` | string | `not_run` / `set_aside` / `read_error` / detector status (e.g. `Detected`, `Unclassified`) |
+| `status` | string | `not_run` / `superseded` / `set_aside` / `conflict` / `read_error` / detector status (e.g. `Detected`, `Unclassified`) |
 | `spdx` | string | Primary SPDX identifier; empty when `status` is `Unclassified` |
 | `low_confidence_spdx` | string | A recognisable but sub-threshold licence fragment, set only when `spdx` is empty. Present when a root licence file was found and a known licence was partially matched but coverage fell below the substantive floor - e.g. a truncated AGPL-3.0 whose only matching span is the "how to apply" appendix |
 | `low_confidence_coverage` | float\|null | Coverage fraction (0.0-1.0) of the `low_confidence_spdx` match. Always present; `null` when no sub-threshold fragment was matched, which is every confidently classified module |
 | `extracted_at` | string | RFC3339 extraction timestamp |
 | `custody` | object | Standard library only - the chain of custody its licence identity comes from (see below) |
-| `error` | string | Set when `status` is `read_error` or `set_aside`, or extraction detail |
+| `error` | string | Set when `status` is `read_error`, `superseded`, `set_aside` or `conflict`, or extraction detail |
 | `set_aside` | array | Stored licence generations the read left out because this build cannot reproduce them: `kind`, `coordinate`, `pipeline_version`, `content_hash`, `reason`. Absent when none. See [licence](license.md#a-stored-record-this-build-cannot-verify) |
 
 An `Unclassified` status means a licence file **was** found at the module root
@@ -547,8 +541,7 @@ measurement carried one - the same two words `audit` prints for the same node.
 
 | Field | Type | Description |
 |---|---|---|
-| `status` | string | `not_run` / `superseded` / `read_error` / extractor status |
-| | | `superseded`: every stored generation predates this build's extraction logic, so none is served. `error` carries the statement and the re-extraction to run. |
+| `status` | string | `not_run` / `superseded` / `conflict` / `read_error` / extractor status |
 | `packages` | array | Public packages (internal, `main` and out-of-frame excluded) |
 | `packages[].import_path` | string | Import path |
 | `packages[].types` | array | Exported type signatures (doc only with `--full`) |
@@ -558,13 +551,15 @@ measurement carried one - the same two words `audit` prints for the same node.
 | `packages[].vars` | array | Exported variable names, with type if present |
 | `extracted_at` | string | RFC3339 extraction timestamp |
 | `build_frame` | string | The build the API was measured in, or `unrecorded` |
-| `error` | string | Set when `status` is `read_error` |
+| `error` | string | Set when `status` is `read_error`, `superseded` or `conflict` |
 
 ### `call_graph`
 
 | Field | Type | Description |
 |---|---|---|
-| `status` | string | `not_run` / `read_error` / extractor status |
+| `status` | string | `not_run` / `superseded` / `other_frame` / `conflict` / `read_error` / extractor status. `other_frame` means the graph is held only under build frames other than the read's; text prints `(held under wasip1/wasm — read with --target wasip1/wasm)` |
+| `held_frames` | array | On `other_frame`: the frames the graph is held under |
+| `read_with` | array | On `other_frame`: the flag that reads each held frame |
 | `algorithm` | string | Analysis algorithm used (e.g. `CHA`) |
 | `node_count` | int | Total call graph nodes. Always present; `0` is a real extraction result — a module analysed at a fidelity that records no nodes |
 | `edge_count` | int | Total call graph edges. Always present at `0` for the same reason as `node_count` |
@@ -572,13 +567,28 @@ measurement carried one - the same two words `audit` prints for the same node.
 | `entry_points` | array | Flat list of entry point IDs (only with `--entry-points-full`) |
 | `entry_point_count` | int\|null | Entry points in the package `--package` named. Always present; `null` without that flag, where no single-package count is derived and `entry_points_by_package` carries the breakdown |
 | `extracted_at` | string | RFC3339 extraction timestamp |
-| `error` | string | Set when `status` is `read_error` |
+| `error` | string | Set when `status` is `read_error`, `superseded` or `conflict` |
+
+### `capability`
+
+`capability` reduced to counts, from the record `call_graph` read: default
+roots (tests excluded), whole module whatever `--package` names. `status`,
+`held_frames` and `read_with` are `call_graph`'s, whose `error` holds the
+statement and remedy; counts exist only for an `Extracted` or `Partial` graph.
+Text hides suppressed labels, as `capability` does.
+
+| Field | Type | Description |
+|---|---|---|
+| `capabilities`, `row_count`, `partial`, `caveat`, `unanalyzed_callees`, `test_roots` | | As in `capability --json` |
+| `rows_by_capability` | object | Labelled calls per label; they sum to `row_count` |
+| `sensitive_calls_count`, `collects_and_egresses_count`, `init_reaches_both_count` | int | Lengths of the `capability --json` lists so named |
+| `command` | string | `kanonarion capability <module>@<version>`, the full record |
 
 ### `examples`
 
 | Field | Type | Description |
 |---|---|---|
-| `status` | string | `not_run` / `set_aside` / `read_error` / `Found` / `None` |
+| `status` | string | `not_run` / `superseded` / `set_aside` / `conflict` / `read_error` / `Found` / `None` |
 | `count` | int | Number of examples (after any `--package` filter). Always present; `0` is the measurement that the module has none |
 | `examples` | array | Example entries |
 | `examples[].name` | string | Example function name |
@@ -587,7 +597,7 @@ measurement carried one - the same two words `audit` prints for the same node.
 | `examples[].output` | string | `// Output:` block contents |
 | `examples[].doc` | string | Doc comment (omitted unless `--full`) |
 | `extracted_at` | string | RFC3339 extraction timestamp |
-| `error` | string | Set when `status` is `read_error` or `set_aside` |
+| `error` | string | Set when `status` is `read_error`, `superseded`, `set_aside` or `conflict` |
 | `set_aside` | array | Stored example generations the read left out because this build cannot reproduce them, as for `license`. Absent when none. See [examples](examples.md#a-stored-record-this-build-cannot-verify) |
 
 ### `vulnerabilities`
@@ -651,9 +661,7 @@ stderr, so `--json` / `--stream` stdout is unaffected.
 
 Read the annotation accordingly: `[walk: affected via …]` names affected peers in
 the closure of the build that produced this answer, not in the newest build that
-happens to cover the module. Another walk may hold a different answer for the
-same module; the answer moves only when better-founded evidence lands, not when a
-neighbouring project walks a tree containing it. A walk older than the ten most
+happens to cover the module. A walk older than the ten most
 recent — the window whose runs are loaded — still serves its record and names
 itself as the basis, but has no run context to report, so no walk status word or
 peer annotation appears. To ask about a specific build, pass `--walk-id` or
@@ -661,8 +669,8 @@ peer annotation appears. To ask about a specific build, pass `--walk-id` or
 
 | Field | Type | Description |
 |---|---|---|
-| `status` | string | `not_run` / `superseded` / `set_aside` / `read_error` / scan status (`Clean`, `Affected`, `Withdrawn`, `Unscannable`, `ScanFailed`) |
-| | | `superseded`: the store holds records for this module only at pipeline versions this build no longer serves. `error` carries the statement, the generations held, and the re-scan to run. It is not `not_run`: the scan ran. |
+| `status` | string | `not_run` / `superseded` / `set_aside` / `conflict` / `read_error` / scan status (`Clean`, `Affected`, `Withdrawn`, `Unscannable`, `ScanFailed`) |
+| | | `superseded`: the store holds records for this module only at pipeline versions this build no longer serves. `error` carries the statement, the generations held, and the re-scan to run. |
 | | | `set_aside`: every record this build reads for this module was written in a canonical shape it cannot reproduce. `error` names each by `content_hash`. See [vuln](vuln.md#a-stored-record-this-build-cannot-verify). |
 | `set_aside` | array | Stored generations the section's reads left out because this build cannot reproduce them: `kind`, `coordinate` (or `id`), `pipeline_version`, `database_snapshot`, `content_hash`, `reason`. Absent when none |
 | `findings` | array | CVE findings |
@@ -676,13 +684,6 @@ peer annotation appears. To ask about a specific build, pass `--walk-id` or
 | `findings[].reachable` | bool\|null | reachability answer. Always present; `null` when no reachability analysis answered for this finding — `soundness` cannot stand in for it, since it reads `not stated` for a positive answer too |
 | `findings[].soundness` | string | How thorough the search behind a **negative** was: `confirmed`, `inferred`, `unconfirmed`, `unsearchable`, `disputed`, or `not stated` where there is no absence to qualify. Always present. Derived at read time, so it is on records scanned long before the field existed. See [reachability](reachability.md#a-negative-states-how-sound-the-search-behind-it-was) |
 | `findings[].soundness_reason` | string | The basis for that rung in the producing analyser's own terms. Absent where no rung is stated |
-
-A retracted advisory stays in `findings` as the historical fact, so a module whose
-every advisory was withdrawn reports `status: Withdrawn` with its findings intact
-rather than reading as never-affected. It does **not** appear in any peer's
-`walk_affected`, which names only modules something must be done about. In text
-output the tally beside the status counts the two apart — `Withdrawn (1 retracted)`,
-or `Affected (2 finding(s), 1 retracted)` for a mixture.
 | `walk_status` | string | The walk run's collapsed `overall_status` (`AllClean` / `Affected` / `Partial` / `ScanFailed`), carried as a compatibility summary. It collapses two independent axes into one word, so read `walk_coverage` for coverage rather than deriving it here |
 | `walk_coverage` | string | The coverage axis of the walk run, set only when the run left modules unanalysed (`Partial` or `Failed`). Independent of findings: it surfaces alongside `walk_affected`, so an incomplete-coverage run that also carries an affected peer states both |
 | `walk_affected` | array | Affected walk peers (`module@version`) that lie in **this module's own transitive dependency closure**, sorted; empty/omitted when no affected peer is reachable from this module |
@@ -695,7 +696,14 @@ or `Affected (2 finding(s), 1 retracted)` for a mixture.
 | `snapshot_retrieved_at` | string | When that snapshot was fetched. Absent when the record's snapshot carries no retrieval time |
 | `snapshot_age_days` | int\|null | How old the snapshot was when the answer was validated. Always present; `0` is the freshest answer the field has — validated against a snapshot pulled the same day — and `null` means the snapshot carries no retrieval time to measure from |
 | `extracted_at` | string | RFC3339 scan timestamp |
-| `error` | string | Set when `status` is `read_error`, `superseded` or `set_aside` |
+| `error` | string | Set when `status` is `read_error`, `superseded`, `set_aside` or `conflict` |
+
+A retracted advisory stays in `findings` as the historical fact, so a module whose
+every advisory was withdrawn reports `status: Withdrawn` with its findings intact
+rather than reading as never-affected. It does **not** appear in any peer's
+`walk_affected`, which names only modules something must be done about. In text
+output the tally beside the status counts the two apart — `Withdrawn (1 retracted)`,
+or `Affected (2 finding(s), 1 retracted)` for a mixture.
 
 The walk-level annotation carries two independent axes and prints each when it
 says something this module's own line does not, together when both do:
@@ -729,6 +737,7 @@ fully-clean, complete walk adds no annotation to a clean module.
 | `--gomod <path>` | `./go.mod` when no module/`--walk-id` given | Emit context for every module in the `go.mod`'s code scope; under `--json` that is one object with the documents in `modules` |
 | `--target <GOOS/GOARCH>` | _(this host's platform)_ | Select the walk taken for this build target, e.g. `--target windows/amd64`. Applies to the `--gomod` route; refused by name on `--walk-id`, which names a walk that already recorded its platform. A refusal raised under a declared target prints a remedy carrying it. See [Declaring the build target](walk.md#declaring-the-build-target---target) |
 | `--goos` / `--goarch` | _(this host's)_ | The two halves of `--target`, for a caller holding them separately. Both are required, and neither combines with `--target` |
+| `--tinygo <target>` | _(none)_ | Select the walk taken with `--tinygo <target>`, e.g. `--tinygo pico`; the `tinygo` command on `PATH` defines the target. Mutually exclusive with `--target`, `--goos` and `--goarch`. See [Declaring a TinyGo target](walk.md#declaring-a-tinygo-target---tinygo) |
 | `--tool` | false | Scope to the tooling supply chain (the `go.mod` tool directives' closure). Mutually exclusive with `--project`. `--gomod` only: refused by name on the coordinate, `--walk-id` and local-path forms |
 | `--project` | false | Scope to the complete set: the project's code **and** tooling (the full Go build list). Mutually exclusive with `--tool`. `--gomod` only: refused by name on the coordinate, `--walk-id` and local-path forms |
 | `--walk-id <id>` | | Emit context for every module in the walk; under `--json` that is one object with the documents in `modules` |
@@ -809,8 +818,6 @@ kanonarion context go.uber.org/goleak@v1.3.0 --json \
 - **Requires:** at minimum a fetched module (`kanonarion fetch`). Run
   `kanonarion extract` to populate interface, call graph, examples, and
   vulnerability sections.
-- **`dependencies` section requires:** a stored walk where this module was the
-  root target (`kanonarion walk <module>@<version>`).
 - **Drill deeper:** use `walk_id` from the `dependencies` section with
   `kanonarion walk-show` (full transitive closure) or `kanonarion dependents`
   (reverse dependency query).
@@ -833,8 +840,6 @@ kanonarion context go.uber.org/goleak@v1.3.0 --json \
   is an absence of resolution rather than a measurement. Under `--json` it is the
   section's `pre_modules_caveat` object. See
   [pre-modules modules](conventions.md#modules-resolved-under-pre-modules-semantics).
-- If multiple walks exist for the same module, the most recent one (by
-  `started_at`) is used.
 - All section timestamps are UTC RFC3339.
 - Compact output is the default, designed for inline agent prompts where token
   budget is tight. For storage or detailed review, pass `--full` to restore full

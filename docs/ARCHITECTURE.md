@@ -74,6 +74,7 @@ in a use case.
 | Ingest | fetch | `internal/fetch` | Fetch and verify a single module version |
 | Ingest | walk | `internal/walk` | Resolve and fetch the full transitive closure |
 | Ingest | stdlib | `internal/stdlib` | Establish the Go standard library's chain of custody (go.dev/dl tarball, checksum, VCS anchor, licence) |
+| Ingest | tinygo | `internal/tinygo` | Measure a TinyGo release archive against the digest GitHub publishes for it |
 | Extract | extract | `internal/extract` | Orchestrate per-module extraction stages |
 | Extract | iface | `internal/iface` | Extract the public API surface |
 | Extract | callgraph | `internal/callgraph` | Build the intra-module call graph |
@@ -125,6 +126,16 @@ the walk context never imports stdlib), where `audit` and `sbom` read them. The
 anchor is deliberately weaker than a sumdb transparency-log entry and recorded as
 such. *Adapters:* `godev` (manifest + tarball), `gitlsremote` (commit),
 `licenseident` (SPDX), `store/sqlite`, `walkbridge`.
+
+**tinygo** - measures the archive TinyGo publishes on GitHub for a release and
+host platform: its published SHA-256, the SHA-256 of the bytes downloaded and,
+when they match, the SHA-256 of every file under its `src/`. The archive is not
+kept; one measurement per release and asset is, append-only. The walk checks a
+TinyGo build's compiled files against TinyGo's module zip, fetched like any
+module, and asks this context (through `walkports.TinyGoReleaseAcquirer` and
+the `walkbridge` adapter) only for the files the zip does not carry. Offline it
+serves a held measurement and reaches nothing. *Adapters:* `github` (release
+listing + archive), `store/sqlite`, `walkbridge`.
 
 ### Extract
 
@@ -302,7 +313,8 @@ ports; it has no application layer of its own.
 Infrastructure used by more than one context lives under `internal/adapters/`
 rather than being re-declared per context:
 
-- `blobstore` - SHA-256 content-addressed blob storage (module zips)
+- `blobstore` - blob storage for module zips and go.mod files, addressed by
+  their h1 hash and verified against it on every read
 - `factstore` - `FactRecord` persistence in SQLite, wrapped by the
   `AuditingStore` that appends the assurance log
 - `proxy` - module proxy client (`proxy.golang.org` or `$GOPROXY`)
@@ -361,8 +373,17 @@ cross-context import ban because their whole job is composition:
 - **`internal/composition`** - the neutral composition root shared by the CLI
   and the public façade. It owns `Migrations()` (the schema's migration set),
   `NewQueries(storeRoot)` (wires the read stores and every `Query*` use case),
-  and `NewDriver(storeRoot)` (wires the fetch/verify, local walk-extract, and
-  validate-and-ingest pipelines).
+  and `NewDriver(storeRoot)` (wires the write pipelines every driver composes).
+- **`internal/composition/storage`** - the `Storage` value every root builds
+  from: one field per record store, plus the blob store, audit sink,
+  attestation store and signer. A backend produces it. Backends are registered
+  by the binary's `main` (`storage.Register`, never from `init`) as a
+  `Backend`: a name, its own `config.yaml` section and that section's defaults,
+  and an `Open` function. `storage.backend` in `config.yaml` selects one, and
+  `OpenConfigured` opens it with its section; every CLI command and both library
+  roots open their store this way. The SQLite backend
+  (`storage/sqlite`) is always available and is the default. `config init`
+  writes each registered backend's section, commented out.
 - **`internal/driver`** - cross-context use cases that sit above the contexts,
   such as `LocalWalkExtractUseCase` (walk a local working tree, then run its
   extraction stages). It depends on narrow runner interfaces so it unit-tests
@@ -464,15 +485,13 @@ The read/serve verification path records what was *read*, using the generic
   status.
 - `verification_failed` - the read/serve path rejected a record: served without
   a positive trust anchor, or a stored record that failed re-verification
-  fail-closed. This is the single highest-value security event - a tampered or
-  mismatched blob being refused. Payload adds the rejection `reason`; the exact
+  fail-closed. Payload adds the rejection `reason`; the exact
   `verification_status` travels alongside it, so a hard mismatch is never
   conflated with an un-analysed/unknown outcome.
 
 Both use cases take the audit sink optionally (`WithAudit`, mirroring
 `WithSigner`); the composition root wires the shared `AuditingStore`. An emit
-failure fails the read: the assurance log can never silently miss what was
-served, and a rejected read never loses the fact that it was rejected.
+failure fails the read.
 
 The vulnerability scan records what was *found*, using the same envelope:
 
@@ -496,8 +515,8 @@ The vulnerability scan records what was *found*, using the same envelope:
 The governance contexts record what was *classified*, one event per detected
 signal so that an add, a removal or a change between two scans is readable off
 the log without a bespoke diff schema. Each of those payloads names the project,
-where the signal was found, its classification, and the policy outcome it
-evaluated to:
+where the signal was found, its classification, the policy outcome it
+evaluated to, and the `config_hash` it was evaluated under:
 
 - `replace_directive_observed` and `exclude_directive_observed` - one per
   `replace` or `exclude` directive, with the old and new path/version, whether
@@ -512,6 +531,13 @@ evaluated to:
   vendor-only, module and finding counts, overall status, content hash);
   finding-level detail is in the persisted record, and it is the sequence of
   scans that makes a tree's drift history first-class.
+
+The configuration's hash is recorded when it moves. `config_changed` (key, old
+and new hash) is appended by `config set`. `config_drift_observed` (old and new
+hash, `observed_at: first_use`) is appended by the first gate-evaluating command
+after an edit kanonarion did not make, so it dates the observation, not the
+edit. `config_override` names a flag that changed a gate for one run, its value
+and the hash it overrode.
 
 Licence extraction records what was *classified* (`license_extracted`: module,
 version, resolved primary SPDX, overall status, identity source), and the walk

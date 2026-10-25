@@ -22,6 +22,7 @@ import (
 	exapp "github.com/eitanity/kanonarion/internal/example/application"
 	exdomain "github.com/eitanity/kanonarion/internal/example/domain"
 	"github.com/eitanity/kanonarion/internal/failurecause"
+	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
 	"github.com/eitanity/kanonarion/internal/gotoolchain"
 	ifaceapp "github.com/eitanity/kanonarion/internal/iface/application"
 	ifacedomain "github.com/eitanity/kanonarion/internal/iface/domain"
@@ -279,10 +280,10 @@ func (a *AdapterExtractor) awaitCallgraphHeadroom(ctx context.Context) bool {
 	}
 }
 
-func (a *AdapterExtractor) Extract(ctx context.Context, coord coordinate.ModuleCoordinate, stage string, force bool, walkID string) (ports.StageResult, error) {
+func (a *AdapterExtractor) Extract(ctx context.Context, coord coordinate.ModuleCoordinate, stage string, force bool, walkID string, localDependency bool) (ports.StageResult, error) {
 	switch stage {
 	case "license":
-		res, err := a.license.Execute(ctx, licapp.ExtractRequest{Coordinate: coord, Force: force})
+		res, err := a.license.Execute(ctx, licapp.ExtractRequest{Coordinate: coord, Force: force, LocalDependency: localDependency})
 		if err != nil {
 			return ports.StageResult{}, fmt.Errorf("license extraction failed: %w", err)
 		}
@@ -337,6 +338,20 @@ func (a *AdapterExtractor) Extract(ctx context.Context, coord coordinate.ModuleC
 	}
 }
 
+// tamperRefusal returns the line in which a child that exited with the integrity
+// code refused a stored artefact as altered.
+func tamperRefusal(execErr error, stderr []byte) (string, bool) {
+	if !childproc.ExitedIntegrity(execErr) {
+		return "", false
+	}
+	for _, line := range strings.Split(string(stderr), "\n") {
+		if strings.Contains(line, fetchports.BlobTamperedMarker) {
+			return strings.TrimSpace(line), true
+		}
+	}
+	return "", false
+}
+
 // extractCallgraphSubprocess runs the callgraph stage by spawning a child
 // process. The child runs the full callgraph extraction and persists the record
 // to the store. The parent reads the record back on success.
@@ -376,6 +391,12 @@ func (a *AdapterExtractor) extractCallgraphSubprocess(ctx context.Context, coord
 	// The child's writes are this run's writes. Without folding its count in, a
 	// run whose children waited repeatedly for the store lock reports none.
 	sqlitestore.AddRetries(sqlitestore.ContentionNoticeIn(string(stderr)))
+	// A child that refused a stored artefact as altered wrote nothing; the run
+	// stops on it as it does for an in-process stage, rather than recording a
+	// failed stage and carrying on.
+	if line, ok := tamperRefusal(execErr, stderr); ok {
+		return ports.StageResult{}, fmt.Errorf("callgraph stage: %w: %s", fetchports.ErrBlobTampered, line)
+	}
 	// A child that exited Partial wrote its graph; the record read below is what
 	// classifies it. Reading that exit as a fault made every incompletely
 	// analysable module a failed stage.
@@ -468,7 +489,8 @@ func buildSubprocessErrorDetail(execErr error, stderr []byte, walkID string) (st
 		// while the kernel choosing a victim is neither. Both are the host rather
 		// than the module, so neither may be cached as a property of the bytes.
 		return "the analysis reached the memory ceiling this host allows one analysis and stopped " +
-				"itself; give it more with --callgraph-memory-ceiling, or analyse this module on its own" + suffix,
+				"itself; " + memoryCeilingRemedy(walkID) +
+				"analyse this module on its own" + suffix,
 			failurecause.Environment, cgdomain.CallGraphStatusOutOfMemory
 	case killedBySignal(execErr):
 		// Neither deadline fired, so something outside this process ended the
@@ -484,7 +506,8 @@ func buildSubprocessErrorDetail(execErr error, stderr []byte, walkID string) (st
 		// anything, so the only account of it that can exist is the one its
 		// parent writes afterwards.
 		return "the analysis was ended by the operating system before it finished, which is " +
-				"usually memory: lower --callgraph-workers, or analyse this module on its own" + suffix,
+				"usually memory: " + fewerWorkersRemedy(walkID) +
+				"analyse this module on its own" + suffix,
 			failurecause.Environment, cgdomain.CallGraphStatusOutOfMemory
 	}
 
@@ -509,9 +532,26 @@ func killedBySignal(err error) bool {
 // not have to go and find the id of the run they are already inside.
 func raiseCeilingRemedy(walkID string) string {
 	if walkID == "" {
-		return "give it longer with --callgraph-timeout"
+		return "give it longer"
 	}
 	return fmt.Sprintf("give it longer with: kanonarion extract %s --stages callgraph --callgraph-timeout 4h", walkID)
+}
+
+// memoryCeilingRemedy and fewerWorkersRemedy re-run this walk's callgraph stage,
+// or say nothing when no walk is in hand: an adapter cannot know which command
+// is running, so it names a flag only inside a full invocation.
+func memoryCeilingRemedy(walkID string) string {
+	if walkID == "" {
+		return ""
+	}
+	return fmt.Sprintf("give it more with: kanonarion extract %s --stages callgraph --callgraph-memory-ceiling <bytes>; or ", walkID)
+}
+
+func fewerWorkersRemedy(walkID string) string {
+	if walkID == "" {
+		return ""
+	}
+	return fmt.Sprintf("run fewer at once with: kanonarion extract %s --stages callgraph --callgraph-workers 1; or ", walkID)
 }
 
 // limitedStage fails a stage whose record met an analyser limit binding this

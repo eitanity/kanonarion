@@ -14,7 +14,10 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/adapters/childproc"
 	"github.com/eitanity/kanonarion/internal/adapters/interrupt"
+	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
 	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
+	sqlitestorage "github.com/eitanity/kanonarion/internal/composition/storage/sqlite"
+	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 )
 
 func newRootCmd(stdout, stderr io.Writer) *cobra.Command {
@@ -32,7 +35,7 @@ func newRootCmd(stdout, stderr io.Writer) *cobra.Command {
 		// silence cobra's own error/usage printing here.
 		SilenceUsage:  true,
 		SilenceErrors: true,
-		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			// 1. Resolve store root (flag > env var > default).
 			if !cmd.Flags().Changed("store-root") {
 				if envStore := os.Getenv("KANONARION_STORE"); envStore != "" {
@@ -50,12 +53,16 @@ func newRootCmd(stdout, stderr io.Writer) *cobra.Command {
 			// sites that print a no-network refusal — the proxy adapter is
 			// built in a dozen of them — have no command to ask.
 			offlineRemedy = renderOfflineRemedy(cmd)
+			invokedCommand = cmd.CommandPath()
+			invokedCmd, invokedArgs = cmd, args
+			frameExcludes.enable(cmd)
 			if err := declareGoproxyFlag(cmd); err != nil {
 				return err
 			}
 			if err := requireStoreRoot(storeRoot); err != nil {
 				return err
 			}
+			recordseal.SetStoreLocation(sqlitestorage.DatabasePath(storeRoot))
 
 			// 3. Load config from store root. A store with no config file
 			// resolves to the built-in defaults and is not an error. A file
@@ -66,7 +73,7 @@ func newRootCmd(stdout, stderr io.Writer) *cobra.Command {
 			// one typo would make the file unfixable by the tool that wrote it.
 			activeConfig, activeConfigErr = loadStoreConfig(storeRoot)
 			if activeConfigErr != nil && !usableWithRejectedConfig(cmd) {
-				return &exitError{code: ExitConfig, msg: activeConfigErr.Error()}
+				return &exitError{code: ExitConfig, msg: withFlagRemedy(activeConfigErr).Error()}
 			}
 
 			// 4. Apply config defaults for flags not explicitly set (flag > config > default).
@@ -94,6 +101,7 @@ func newRootCmd(stdout, stderr io.Writer) *cobra.Command {
 					return fmt.Errorf("writing config rejection notice: %w", err)
 				}
 			}
+			walkIDLookup.arm(cmd, args, stderr)
 			return nil
 		},
 	}
@@ -101,6 +109,7 @@ func newRootCmd(stdout, stderr io.Writer) *cobra.Command {
 	root.SetErr(stderr)
 	root.SetVersionTemplate("kanonarion {{.Version}}\n")
 	root.PersistentFlags().StringVar(&storeRoot, "store-root", defaultStoreRoot(), "root directory for blobs and SQLite")
+	root.PersistentFlags().StringVar(&configFlag, "config", "", "configuration file (default <store-root>/config.yaml; env KANONARION_CONFIG)")
 	root.PersistentFlags().StringVar(&logLevel, "log-level", defaultLogLevel, "log level: debug|info|warn|error")
 	root.PersistentFlags().BoolVar(&jsonOut, "json", false, "emit output as JSON")
 
@@ -151,7 +160,7 @@ func newRootCmd(stdout, stderr io.Writer) *cobra.Command {
 		newSBOMCmd(stdout, stderr),
 		newSBOMShowCmd(stdout, stderr),
 		newSBOMListCmd(stdout, stderr),
-		newConfigCmd(stdout),
+		newConfigCmd(stdout, stderr),
 		newStoreCmd(stdout, stderr),
 		newContextCmd(stdout, stderr),
 		newReachabilityCmd(stdout, stderr),
@@ -246,6 +255,7 @@ func Run(args []string, stdout, stderr io.Writer) error {
 	// them.
 	sqlitestore.ResetRetries()
 	interrupt.Reset()
+	fetchdomain.SetPrivateModuleRule(privateModulePath)
 	defer func() {
 		if notice := sqlitestore.ContentionNotice(sqlitestore.Retries()); notice != "" {
 			_, _ = fmt.Fprint(stderr, notice)
@@ -255,9 +265,14 @@ func Run(args []string, stdout, stderr io.Writer) error {
 	root := newRootCmd(stdout, stderr)
 	installDefaultSubcommands(root)
 	root.SetArgs(args)
-	err := root.ExecuteContext(ctx)
+	err := surfaceBlobRefusal(root.ExecuteContext(ctx))
+	if refusal, ok := errors.AsType[*walkIDRefusal](err); ok {
+		err = refusal
+	}
+	err = withFlagRemedy(err)
 	storeSetAside.flush(stderr, err)
 	storeNotSearched.flush(stderr)
+	frameExcludes.flush(stderr)
 	if err == nil {
 		// A signal that arrived after the work was done stopped nothing.
 		return nil

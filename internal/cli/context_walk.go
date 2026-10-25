@@ -42,9 +42,8 @@ func runContextWalk(ctx context.Context, f contextFlags, stdout, stderr io.Write
 
 	logger := buildLogger(logLevel, stderr)
 
-	dbPath := filepath.Join(storeRoot, "mirror.db")
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
-		return fmt.Errorf("store not found at %s: run a kanonarion command to initialise it", dbPath)
+	if err := requireExistingStore(storeRoot); err != nil {
+		return err
 	}
 
 	ctr, cleanup, err := NewContainer(storeRoot, "", "", false, activeConfig, logger)
@@ -52,6 +51,10 @@ func runContextWalk(ctx context.Context, f contextFlags, stdout, stderr io.Write
 		return fmt.Errorf("initialising store: %w", err)
 	}
 	defer releaseStore(cleanup)
+	// The walk supplies the call-graph frame every section reads in.
+	if aerr := adoptNamedWalkFrame(ctx, ctr.QueryWalks, f.walkID); aerr != nil {
+		return aerr
+	}
 
 	rec, err := contextWalkRecord(ctx, ctr.QueryWalks, f.walkID, stderr)
 	if err != nil {
@@ -103,18 +106,21 @@ func printContextWalkText(ctx context.Context, ctr *Container, nodes []walkdomai
 		if vulns.Status == sectionStatusNotRun {
 			cmdWalkID = f.walkID
 		}
+		callGraph, capability := buildCallGraph(ctx, coord, ctr.QueryCallGraph, f.entryPointsFull, f.packageFilter)
+		verification := buildVerification(ctx, coord, ctr.QueryFetch)
 		out := contextOutput{
 			Module:          contextModuleInfo{Path: coord.Path(), Version: coord.Version()},
-			Verification:    buildVerification(ctx, coord, ctr.QueryFetch),
+			Verification:    verification,
 			Provenance:      buildProvenance(coord),
 			Dependencies:    buildDependencies(ctx, coord, ctr.QueryWalks, basis),
 			License:         buildLicense(ctx, coord, ctr.QueryLicense, ctr.StdlibCustody),
 			Interface:       buildInterface(ctx, coord, ctr.QueryInterface, compact, f.packageFilter),
-			CallGraph:       buildCallGraph(ctx, coord, ctr.QueryCallGraph, f.entryPointsFull, f.packageFilter),
+			CallGraph:       callGraph,
+			Capability:      capability,
 			Examples:        buildExamples(ctx, coord, ctr.QueryExamples, compact, f.packageFilter),
 			Vulnerabilities: vulns,
 			Native:          deriveNativeCoverage(ctx, ctr.QueryNative, coord),
-			Commands:        buildCommandsWithWalk(coord, cmdWalkID),
+			Commands:        buildCommandsWithWalk(coord, cmdWalkID, verification, basis),
 		}
 		if err := printContextText(out, compact, stdout); err != nil {
 			return err
@@ -154,17 +160,21 @@ func writeContextWalkJSON(ctx context.Context, ctr *Container, rec walkdomain.Wa
 		if vulns.Status == sectionStatusNotRun {
 			cmdWalkID = f.walkID
 		}
+		callGraph, capability := buildCallGraph(ctx, coord, ctr.QueryCallGraph, f.entryPointsFull, f.packageFilter)
+		verification := buildVerification(ctx, coord, ctr.QueryFetch)
 		out := contextOutput{
 			Module:          contextModuleInfo{Path: coord.Path(), Version: coord.Version()},
-			Verification:    buildVerification(ctx, coord, ctr.QueryFetch),
+			Verification:    verification,
+			Provenance:      buildProvenance(coord),
 			Dependencies:    buildDependencies(ctx, coord, ctr.QueryWalks, basis),
 			License:         buildLicense(ctx, coord, ctr.QueryLicense, ctr.StdlibCustody),
 			Interface:       buildInterface(ctx, coord, ctr.QueryInterface, compact, f.packageFilter),
-			CallGraph:       buildCallGraph(ctx, coord, ctr.QueryCallGraph, f.entryPointsFull, f.packageFilter),
+			CallGraph:       callGraph,
+			Capability:      capability,
 			Examples:        buildExamples(ctx, coord, ctr.QueryExamples, compact, f.packageFilter),
 			Vulnerabilities: vulns,
 			Native:          deriveNativeCoverage(ctx, ctr.QueryNative, coord),
-			Commands:        buildCommandsWithWalk(coord, cmdWalkID),
+			Commands:        buildCommandsWithWalk(coord, cmdWalkID, verification, basis),
 		}
 		if f.stream {
 			if err := enc.Encode(out); err != nil {
@@ -357,18 +367,21 @@ func runContextWalkSizeOnly(
 		if vulns.Status == sectionStatusNotRun {
 			cmdWalkID = f.walkID
 		}
+		callGraph, capability := buildCallGraph(ctx, coord, cgUC, f.entryPointsFull, f.packageFilter)
+		verification := buildVerification(ctx, coord, fetchUC)
 		out := contextOutput{
 			Module:          contextModuleInfo{Path: coord.Path(), Version: coord.Version()},
-			Verification:    buildVerification(ctx, coord, fetchUC),
+			Verification:    verification,
 			Provenance:      buildProvenance(coord),
 			Dependencies:    buildDependencies(ctx, coord, walkUC, basis),
 			License:         buildLicense(ctx, coord, licUC, stdlibCustody),
 			Interface:       buildInterface(ctx, coord, ifaceUC, compact, f.packageFilter),
-			CallGraph:       buildCallGraph(ctx, coord, cgUC, f.entryPointsFull, f.packageFilter),
+			CallGraph:       callGraph,
+			Capability:      capability,
 			Examples:        buildExamples(ctx, coord, exUC, compact, f.packageFilter),
 			Vulnerabilities: vulns,
 			Native:          deriveNativeCoverage(ctx, nativeUC, coord),
-			Commands:        buildCommandsWithWalk(coord, cmdWalkID),
+			Commands:        buildCommandsWithWalk(coord, cmdWalkID, verification, basis),
 		}
 		if err := report.add(coord.String(), out); err != nil {
 			return err

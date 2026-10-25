@@ -21,6 +21,18 @@ type walkBuildEnv struct {
 	platform walkports.BuildEnvFilter
 	// toolchain is `go env GOVERSION`, empty when the probe could not answer.
 	toolchain string
+	// tinyGoVersion is the declared TinyGo release, empty when none was
+	// declared. Standard reads exclude TinyGo walks through platform instead.
+	tinyGoVersion string
+}
+
+// tinyGoVersionFilter is the TinyGo half of the toolchain axis: nil when no
+// TinyGo target was declared, which leaves the filter as it was.
+func (e walkBuildEnv) tinyGoVersionFilter() *string {
+	if e.tinyGoVersion == "" {
+		return nil
+	}
+	return &e.tinyGoVersion
 }
 
 // toolchainFilter is the toolchain as a walk filter: nil when the probe failed.
@@ -52,10 +64,11 @@ func (e walkBuildEnv) toolchainFilter() *string {
 // filter that guessed would exclude the walks it was meant to find.
 func currentWalkBuildEnv(ctx context.Context, goBinary, projectDir string, logger *slog.Logger) walkBuildEnv {
 	resolved := declaredTarget.OrHost()
-	goVersion, _, _ := gotoolchain.New(goBinary, logger).WithTarget(declaredTarget).BuildEnvironment(ctx, projectDir)
+	goVersion, _, _ := gotoolchain.New(goBinary, logger).WithTarget(declaredTarget).WithTinyGo(declaredTinyGo).BuildEnvironment(ctx, projectDir)
 	return walkBuildEnv{
-		platform:  walkports.BuildEnvFilter{GOOS: resolved.GOOS(), GOARCH: resolved.GOARCH()},
-		toolchain: goVersion,
+		platform:      walkports.BuildEnvFilter{GOOS: resolved.GOOS(), GOARCH: resolved.GOARCH(), TinyGoTarget: declaredTinyGo.Target()},
+		toolchain:     goVersion,
+		tinyGoVersion: declaredTinyGo.Version(),
 	}
 }
 

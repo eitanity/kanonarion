@@ -141,6 +141,13 @@ func Migrations() []sqlitestore.Migration {
 		// smaller graph than the record they came from holds. No purge and no
 		// pipeline bump: the blob is read, never rewritten.
 		{Module: "walk", Version: 11, SQL: `SELECT 1`, Fn: backfillNodeCount},
+		// The declared TinyGo target and release, projected from the sealed
+		// build environment like goos/goarch. No back-fill: no stored walk
+		// carries them, and the empty string is the recorded "not a TinyGo walk".
+		{Module: "walk", Version: 12, SQL: `ALTER TABLE walks ADD COLUMN tinygo_target TEXT NOT NULL DEFAULT '';
+        ALTER TABLE walks ADD COLUMN tinygo_version TEXT NOT NULL DEFAULT '';
+        DROP INDEX IF EXISTS walks_platform_idx;
+        CREATE INDEX walks_platform_idx ON walks(target_path, target_version, scope, goos, goarch, tinygo_target)`},
 	}
 }
 
@@ -354,8 +361,8 @@ INSERT INTO walks (
     started_at, completed_at, overall_status,
     pipeline_version, operator, content_hash,
     node_count, failure_count, scope, depth, project_dir, identity_hash,
-    goos, goarch, go_version, serialised
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    goos, goarch, go_version, tinygo_target, tinygo_version, serialised
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (id) DO UPDATE SET
     target_path      = excluded.target_path,
     target_version   = excluded.target_version,
@@ -374,6 +381,8 @@ ON CONFLICT (id) DO UPDATE SET
     goos             = excluded.goos,
     goarch           = excluded.goarch,
     go_version       = excluded.go_version,
+    tinygo_target    = excluded.tinygo_target,
+    tinygo_version   = excluded.tinygo_version,
     serialised       = excluded.serialised`
 
 	_, err = s.db.DB().ExecContext(ctx, q,
@@ -386,7 +395,8 @@ ON CONFLICT (id) DO UPDATE SET
 		// Projected from the sealed record, never from the running process: a
 		// column that reported the host would answer for a cross-compiled walk in
 		// a frame that walk never resolved.
-		rec.Graph.BuildEnv.GOOS, rec.Graph.BuildEnv.GOARCH, rec.Graph.BuildEnv.GoVersion, blob,
+		rec.Graph.BuildEnv.GOOS, rec.Graph.BuildEnv.GOARCH, rec.Graph.BuildEnv.GoVersion,
+		rec.Graph.BuildEnv.TinyGoTarget, rec.Graph.BuildEnv.TinyGoVersion, blob,
 	)
 	if err != nil {
 		return fmt.Errorf("inserting walk record: %w", err)
@@ -470,14 +480,20 @@ func scanPresentIDs(rows *sql.Rows, present map[string]bool) (retErr error) {
 // whose bytes hash to their seal in a shape this build cannot reproduce is
 // *recordseal.NothingServable: a walk has no other generation to serve instead.
 func (s *Store) GetWalk(ctx context.Context, id string) (domain.WalkRecord, error) {
-	const q = `SELECT serialised, content_hash, project_dir, identity_hash FROM walks WHERE id = ?`
+	const q = `SELECT serialised, content_hash, project_dir, identity_hash,
+	                  target_path, target_version, scope, pipeline_version,
+	                  goos, goarch, go_version, tinygo_target, tinygo_version
+	           FROM walks WHERE id = ?`
 	row := s.db.DB().QueryRowContext(ctx, q, id)
 
 	var blob []byte
 	var storedHash string
 	var projectDir string
 	var identityHash string
-	if err := row.Scan(&blob, &storedHash, &projectDir, &identityHash); errors.Is(err, sql.ErrNoRows) {
+	var cols walkColumns
+	if err := row.Scan(&blob, &storedHash, &projectDir, &identityHash,
+		&cols.targetPath, &cols.targetVersion, &cols.scope, &cols.pipeline,
+		&cols.goos, &cols.goarch, &cols.goVersion, &cols.tinyGoTarget, &cols.tinyGoVersion); errors.Is(err, sql.ErrNoRows) {
 		return domain.WalkRecord{}, walkports.ErrWalkNotFound
 	} else if err != nil {
 		return domain.WalkRecord{}, fmt.Errorf("querying walk record: %w", err)
@@ -508,6 +524,9 @@ func (s *Store) GetWalk(ctx context.Context, id string) (domain.WalkRecord, erro
 		return domain.WalkRecord{}, &recordseal.NothingServable{Kind: RecordKind, ID: id,
 			Aside: &recordseal.SetAside{Rows: []recordseal.SetAsideRow{row}}}
 	}
+	if merr := cols.check(id, rec); merr != nil {
+		return domain.WalkRecord{}, merr
+	}
 	// The project directory rides beside the sealed blob, not inside it: the
 	// canonical form the hash covers has no such field, so a column that differs
 	// between two checkouts of one project cannot make their walks differ. It is
@@ -519,6 +538,42 @@ func (s *Store) GetWalk(ctx context.Context, id string) (domain.WalkRecord, erro
 	// verification it plays no part in.
 	rec.IdentityHash = identityHash
 	return rec, nil
+}
+
+// walkColumns are the columns a listing selects walks by. Every walk read ends
+// in GetWalk, so comparing them here covers whichever of them chose the walk.
+type walkColumns struct {
+	targetPath, targetVersion, scope, pipeline           string
+	goos, goarch, goVersion, tinyGoTarget, tinyGoVersion string
+}
+
+// misfiledRemedy is what clears a misfiled walk row. Nothing rewrites a stored
+// walk, so the row answers every read of its id until the store is restored.
+const misfiledRemedy = "no kanonarion command clears it: a walk row is never rewritten, so every read of this walk id meets it; " +
+	"restore the store from a copy taken before the row was moved, or walk the project again for a new walk id"
+
+// check compares the walk's id and columns with the values sealed in rec.
+func (c walkColumns) check(id string, rec domain.WalkRecord) error {
+	scope := string(rec.Scope)
+	if scope == "" {
+		scope = string(domain.WalkScopeCode)
+	}
+	env := rec.Graph.BuildEnv
+	err := recordseal.CheckFiled(RecordKind, "walks", misfiledRemedy,
+		recordseal.Key(id, rec.ID),
+		recordseal.Column("target", "target", c.targetPath+"@"+c.targetVersion, rec.Target.String()),
+		recordseal.Column("scope", "scope", c.scope, scope),
+		recordseal.Column("pipeline_version", "pipeline_version", c.pipeline, rec.PipelineVersion),
+		recordseal.Column("goos", "graph.build_env.goos", c.goos, env.GOOS),
+		recordseal.Column("goarch", "graph.build_env.goarch", c.goarch, env.GOARCH),
+		recordseal.Column("go_version", "graph.build_env.go_version", c.goVersion, env.GoVersion),
+		recordseal.Column("tinygo_target", "graph.build_env.tinygo_target", c.tinyGoTarget, env.TinyGoTarget),
+		recordseal.Column("tinygo_version", "graph.build_env.tinygo_version", c.tinyGoVersion, env.TinyGoVersion),
+	)
+	if err != nil {
+		return fmt.Errorf("%w: %w", walkports.ErrWalkIntegrity, err)
+	}
+	return nil
 }
 
 // ListWalks returns summaries ordered by started_at descending.
@@ -546,6 +601,7 @@ func (s *Store) ListWalks(ctx context.Context, filter walkports.WalkFilter) ([]w
 			&sum.NodeCount, &sum.FailureCount,
 			&scope, &depth, &sum.IdentityHash,
 			&sum.GOOS, &sum.GOARCH, &sum.GoVersion,
+			&sum.TinyGoTarget, &sum.TinyGoVersion,
 		); serr != nil {
 			return nil, fmt.Errorf("scanning walk summary: %w", serr)
 		}
@@ -596,7 +652,7 @@ func buildListQuery(f walkports.WalkFilter) (string, []any) {
 		// walks microseconds apart indistinguishable.
 		q = `SELECT id, target_path, target_version, started_at, completed_at,
 	             overall_status, node_count, failure_count, scope, depth, identity_hash,
-	             goos, goarch, go_version
+	             goos, goarch, go_version, tinygo_target, tinygo_version
 	      FROM walks w1
 	      WHERE ` + sqlitestore.SortableStamp("w1.started_at") + ` = (
 	          SELECT MAX(` + sqlitestore.SortableStamp("w2.started_at") + `) FROM walks w2
@@ -604,11 +660,12 @@ func buildListQuery(f walkports.WalkFilter) (string, []any) {
 	          AND w2.scope = w1.scope
 	          AND w2.goos = w1.goos AND w2.goarch = w1.goarch
 	          AND w2.go_version = w1.go_version
+	          AND w2.tinygo_target = w1.tinygo_target AND w2.tinygo_version = w1.tinygo_version
 	      )`
 	} else {
 		q = `SELECT id, target_path, target_version, started_at, completed_at,
 	             overall_status, node_count, failure_count, scope, depth, identity_hash,
-	             goos, goarch, go_version
+	             goos, goarch, go_version, tinygo_target, tinygo_version
 	      FROM walks`
 	}
 	conditions, args := walkFilterConditions(f)
@@ -674,11 +731,17 @@ func walkFilterConditions(f walkports.WalkFilter) ([]string, []any) {
 		args = append(args, *f.IdentityHash)
 	}
 	if f.BuildEnv != nil {
-		// One clause, both axes, matched exactly. An empty component is not
+		// One clause, the pair and the TinyGo target, matched exactly; a TinyGo
+		// name given without a pair matches on the name. An empty component is not
 		// widened to "any": that is what a nil filter is for, and widening here
 		// would hand a platform-filtered caller a frame-unrecorded walk.
-		conditions = append(conditions, "goos = ? AND goarch = ?")
-		args = append(args, f.BuildEnv.GOOS, f.BuildEnv.GOARCH)
+		if f.BuildEnv.IsTinyGoNameOnly() {
+			conditions = append(conditions, "tinygo_target = ?")
+			args = append(args, f.BuildEnv.TinyGoTarget)
+		} else {
+			conditions = append(conditions, "goos = ? AND goarch = ? AND tinygo_target = ?")
+			args = append(args, f.BuildEnv.GOOS, f.BuildEnv.GOARCH, f.BuildEnv.TinyGoTarget)
+		}
 	}
 	if f.Toolchain != nil {
 		// Matched exactly, for the reason BuildEnv is: the empty string names the
@@ -687,6 +750,10 @@ func walkFilterConditions(f walkports.WalkFilter) ([]string, []any) {
 		// another. A caller that wants any toolchain leaves the field nil.
 		conditions = append(conditions, "go_version = ?")
 		args = append(args, *f.Toolchain)
+	}
+	if f.TinyGoVersion != nil {
+		conditions = append(conditions, "tinygo_version = ?")
+		args = append(args, *f.TinyGoVersion)
 	}
 	if f.Depth != nil {
 		// Full walks are stored as "" in the DB (omitempty convention).

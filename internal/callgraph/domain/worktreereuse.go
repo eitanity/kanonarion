@@ -14,6 +14,9 @@ type WorktreeIdentity struct {
 	// which is where it is stored and which explains why it is never compared
 	// against the digest of what was analysed.
 	ScanDigest string
+	// Frame is the build frame the analysis would run under. One tree holds a
+	// record per frame, and each run reuses only its own.
+	Frame BuildFrame
 }
 
 // IsZero reports whether nothing about the tree was established.
@@ -22,7 +25,7 @@ func (i WorktreeIdentity) IsZero() bool { return i.Root == "" || i.ScanDigest ==
 // WorktreeRecordAnswersFor reports whether a stored record already answers what
 // an analysis of this tree would ask, so the analysis need not be run again.
 //
-// Four things must hold, and each of them is a way the answer could otherwise be
+// Five things must hold, and each of them is a way the answer could otherwise be
 // about something else:
 //
 //   - The record was produced from a working tree. A graph built from a
@@ -34,6 +37,8 @@ func (i WorktreeIdentity) IsZero() bool { return i.Root == "" || i.ScanDigest ==
 //     field existed carries none, and absence cannot show that two runs were
 //     handed the same tree. The first run after this field lands therefore
 //     re-derives, and every run after that reuses.
+//   - It was extracted under the same build frame. Build constraints decide
+//     which files compile, so a host graph is no answer about wasip1.
 //   - It is servable at all. A record the analysis environment cut short — one
 //     that failed for want of a toolchain, or came back incomplete because a
 //     dependency was absent from this host's module cache — describes the run and
@@ -58,6 +63,9 @@ func WorktreeRecordAnswersFor(existing CallGraphRecord, identity WorktreeIdentit
 		return false
 	}
 	if existing.WorktreeScanDigest == "" || existing.WorktreeScanDigest != identity.ScanDigest {
+		return false
+	}
+	if !SameFrame(existing.Frame, identity.Frame) {
 		return false
 	}
 	return RecordIsCacheable(existing)

@@ -8,6 +8,7 @@ exit 0
     "test_scope": "included"
   },
   "module_count": 2,
+  "config_hash": "sha256:a37af31e289032660d55309642f99f5ed7112a1715b72fdda9716a29cc7eb7cd",
   "walk": {
     "resolved": true,
     "id": "$ULID",
@@ -22,6 +23,10 @@ exit 0
       "source": "vuln.go.dev",
       "version": "2026-02-14T00:00:00Z"
     }
+  },
+  "vulnerability_scan": {
+    "status": "reused",
+    "run": "vscan-$ULID-1772323200000000000"
   },
   "reachability_basis": {
     "answers": 1,
@@ -154,6 +159,7 @@ Starting extraction for walk $ULID...
 derivation:
   walk $ULID: re-resolved and found identical to the walk taken 2026-03-01T00:00:00Z; that record was reused
   vulnerability scan: reused run vscan-$ULID-1772323200000000000 of 2026-03-01T00:00:00Z against snapshot vuln.go.dev@2026-02-14T00:00:00Z; nothing was re-scanned, and its 1 reachability answer came from the source that run read, which this run did not re-read (--force to re-measure)
+  config: sha256:a37af31e289032660d55309642f99f5ed7112a1715b72fdda9716a29cc7eb7cd
 toolchain:
   $GOVERSION was not judged against the advisory database's toolchain key: the snapshot's module index carries no toolchain key
 verification coverage over 3 module(s):

@@ -148,6 +148,9 @@ type ModuleOrigin struct {
 	VCSRef string
 	// VCSCommit is the commit the cross-verification read.
 	VCSCommit string
+	// VCSSubdir is the directory of the repository the module zip was compared
+	// with: "." for the root, empty where the record names none.
+	VCSSubdir string
 }
 
 // IsZero reports whether no origin was recorded.

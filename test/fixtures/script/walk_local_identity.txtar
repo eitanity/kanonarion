@@ -1,0 +1,104 @@
+# A project's own modules read from disk are walked under their own identity,
+# <path>@local, never as the published module of the same version.
+
+env GOPROXY=off
+
+# Inside a go.work: member a replaces c with ../c (go reports ./c, relative to
+# the go.work directory) and imports member b. All three are read from disk.
+cd $WORK/ws/a
+kanonarion walk --gomod ./go.mod --json --store-root=$WORK/store-ws
+stdout '"overall_status":0'
+stdout '"path":"example.com/tri/b","version":"local"},"direct_dependency":true,"error_detail":"","resolution_source":"local_workspace_member"'
+stdout '"local_path":"./c","original_coordinate":\{"path":"example.com/tri/c","version":"v1.2.3"\},"resolution_source":"local_replace"'
+stdout '"module_path":"example.com/tri/c","module_version":"local"'
+stdout '"module_path":"example.com/tri/b","module_version":"local"'
+! stdout '"coordinate":\{"path":"example.com/tri/c","version":"v1.2.3"\}'
+
+# The go.mod scope names the member and the replacement as the walk does; with
+# nothing extracted yet both are listed for review, not the published require.
+! kanonarion notice --gomod ./go.mod --store-root=$WORK/store-ws
+stderr 'scope: go.mod ./go.mod \(2 module\(s\)\)'
+stderr 'example.com/tri/b@local'
+stderr 'example.com/tri/c@local'
+! stderr 'example.com/tri/c@v1.2.3: replaced by local path'
+
+# --analyse-local is accepted and says it changes nothing.
+kanonarion walk --gomod ./go.mod --analyse-local --store-root=$WORK/store-ws
+stderr 'note: --analyse-local has no effect'
+
+# Outside a workspace the replace path is read against the go.mod directory and
+# recorded as written.
+cd $WORK/nows/d
+kanonarion walk --gomod ./go.mod --json --store-root=$WORK/store-nows
+stdout '"overall_status":0'
+stdout '"local_path":"../c","original_coordinate":\{"path":"example.com/tri/c","version":"v1.2.3"\},"resolution_source":"local_replace"'
+stdout '"verification_detail":"local directory ../c \(local source, nothing to verify\)"'
+
+-- ws/go.work --
+go 1.22
+
+use (
+	./a
+	./b
+)
+-- ws/a/go.mod --
+module example.com/tri/a
+
+go 1.22
+
+require example.com/tri/c v1.2.3
+
+replace example.com/tri/c v1.2.3 => ../c
+-- ws/a/main.go --
+package main
+
+import (
+	"fmt"
+
+	"example.com/tri/b"
+	"example.com/tri/c"
+)
+
+func main() { fmt.Println(b.B(), c.C()) }
+-- ws/b/go.mod --
+module example.com/tri/b
+
+go 1.22
+-- ws/b/b.go --
+package b
+
+func B() string { return "b" }
+-- ws/c/go.mod --
+module example.com/tri/c
+
+go 1.22
+-- ws/c/c.go --
+package c
+
+func C() string { return "c" }
+-- nows/d/go.mod --
+module example.com/tri/d
+
+go 1.22
+
+require example.com/tri/c v1.2.3
+
+replace example.com/tri/c v1.2.3 => ../c
+-- nows/d/main.go --
+package main
+
+import (
+	"fmt"
+
+	"example.com/tri/c"
+)
+
+func main() { fmt.Println(c.C()) }
+-- nows/c/go.mod --
+module example.com/tri/c
+
+go 1.22
+-- nows/c/c.go --
+package c
+
+func C() string { return "c" }

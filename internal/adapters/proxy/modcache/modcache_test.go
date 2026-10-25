@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
@@ -70,6 +71,26 @@ func TestInfo_ReadsCacheInfo(t *testing.T) {
 	}
 	if info.Origin != nil {
 		t.Errorf("Origin = %+v, want nil (no VCS provenance in modcache mode)", info.Origin)
+	}
+}
+
+// The cached .info Time is decoded as the instant it names, and an .info with
+// none decodes to the zero time, which the record keeps as unknown.
+func TestInfo_DecodesTime(t *testing.T) {
+	for body, want := range map[string]time.Time{
+		`{"Version":"v1.2.3","Time":"2026-09-08T16:29:55.5Z"}`: time.Date(2026, 9, 8, 16, 29, 55, 500000000, time.UTC),
+		`{"Version":"v1.2.3"}`:                                 {},
+	} {
+		dir := t.TempDir()
+		coord := newCoord(t, "github.com/example/mod", "v1.2.3")
+		seedEntry(t, dir, coord, ".info", []byte(body))
+		info, err := New(dir, "", "", nil).Info(context.Background(), coord)
+		if err != nil {
+			t.Fatalf("Info(%s): %v", body, err)
+		}
+		if !info.Time.Equal(want) || info.Time.IsZero() != want.IsZero() {
+			t.Errorf("Info(%s).Time = %v, want %v", body, info.Time, want)
+		}
 	}
 }
 

@@ -26,7 +26,7 @@ type taxonomyFile struct {
 // init from the embedded bytes; a malformed embedded file is a build-time
 // asset error surfaced as an init panic (it can only happen if the committed
 // data file is broken, which a test guards against).
-var taxonomy = mustLoadTaxonomy()
+var taxonomy = mustLoadTaxonomy(taxonomyJSON)
 
 // TaxonomyVersion is the revision string of the embedded taxonomy. It is
 // recorded on every Record and folded into the pipeline fingerprint so a
@@ -38,8 +38,8 @@ type loadedTaxonomy struct {
 	tiers   map[string]Tier
 }
 
-func mustLoadTaxonomy() loadedTaxonomy {
-	lt, err := loadTaxonomy(taxonomyJSON)
+func mustLoadTaxonomy(raw []byte) loadedTaxonomy {
+	lt, err := loadTaxonomy(raw)
 	if err != nil {
 		panic(fmt.Sprintf("godebug: embedded taxonomy.json is invalid: %v", err))
 	}

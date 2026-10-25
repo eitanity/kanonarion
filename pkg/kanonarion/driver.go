@@ -9,11 +9,11 @@ import (
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 )
 
-// Driver/serving surface (§1). The verified single-coordinate
-// fetch/serve use case is the ONLY individually exported write use case: it
-// powers a gating module proxy that serves only approved packages and
-// fetches-and-verifies on miss. The bulk extraction pipeline stays behind the
-// composition root, so its orchestration shape is free to change.
+// Driver/serving surface (§1). The write entries are whole operations — serve
+// one coordinate, walk and extract a working tree, analyse a published
+// version as inspect does, re-scan a stored walk — and never the stage use
+// cases they compose, which stay behind the composition root so their
+// orchestration shape is free to change.
 
 // ServeModuleUseCase resolves a single ModuleCoordinate to a servable blob,
 // fetching and verifying on a miss and returning a BlobIdentity the caller streams
@@ -114,18 +114,62 @@ type LocalWalkExtractRequest = driver.LocalWalkExtractRequest
 // added within a major version (§4).
 type LocalWalkExtractResult = driver.LocalWalkExtractResult
 
+// CoordinateAnalysisUseCase runs, for one published module version, what
+// `kanonarion inspect <module>@<version>` runs — the walk, the extraction
+// stages and the vulnerability scan — writing to the driver's storage. The
+// CLI builds its stage requests from the same functions. Driver.CoordinateAnalysis
+// holds it.
+//
+// Stability: driver use case (called by consumers); unstable pre-v1. May gain
+// methods within a major version (§4).
+type CoordinateAnalysisUseCase = driver.CoordinateAnalysisUseCase
+
+// CoordinateAnalysisRequest is the input to CoordinateAnalysisUseCase.Run: the
+// coordinate, whether to force past stored records, the extraction stage
+// subset (empty runs every stage), and the scan's reachability, advisory
+// refresh and operator.
+//
+// Stability: request struct (passed by consumers); unstable pre-v1. Fields may
+// be added within a major version (§4).
+type CoordinateAnalysisRequest = driver.CoordinateAnalysisRequest
+
+// CoordinateAnalysisResult is the output of CoordinateAnalysisUseCase.Run: the
+// WalkRecord, ExtractionRun and WalkScanRun, and whether the walk and the scan
+// were served from the store.
+//
+// Stability: result type (received by consumers); unstable pre-v1. Fields may be
+// added within a major version (§4).
+type CoordinateAnalysisResult = driver.CoordinateAnalysisResult
+
+// RescanUseCase re-scans a stored walk against a fresh or pinned advisory
+// snapshot and returns the new WalkScanRun, as `kanonarion vuln-scan-rescan
+// <walk-id>` does; the command runs through it. Driver.Rescan holds it.
+//
+// Stability: driver use case (called by consumers); unstable pre-v1. May gain
+// methods within a major version (§4).
+type RescanUseCase = driver.RescanUseCase
+
+// RescanRequest is the input to RescanUseCase.Run: the walk id, an optional
+// pinned DatabaseSnapshot, reachability, the operator and an optional
+// per-module progress callback.
+//
+// Stability: request struct (passed by consumers); unstable pre-v1. Fields may
+// be added within a major version (§4).
+type RescanRequest = driver.RescanRequest
+
 // Driver is the write/serving surface (§1): a pointer to every driver
-// use case, constructed together against one store handle. It carries the
-// verified fetch/serve driver and the local walk→extract driver; further drivers
-// join as fields within a major version.
+// use case, constructed together against one store handle. Its
+// StalenessResolver method builds the staleness resolver over the store's
+// ledger. Further drivers join as fields within a major version.
 //
 // Stability: result of the public driver composition entrypoint; unstable
 // pre-v1. Fields may be added within a major version (§4).
 type Driver = composition.Driver
 
 // OpenDriver builds the write/serving surface against the kanonarion store
-// rooted at storeRoot (the directory holding mirror.db and blobs; the standard
-// default is ~/.kanonarion). It wires the fetch pipeline — proxy, VCS, sumdb,
+// rooted at storeRoot (the standard default is ~/.kanonarion). The backend is
+// selected as Open selects it: storage.backend in <storeRoot>/config.yaml among
+// the registered backends, the SQLite backend when none is named. It wires the fetch pipeline — proxy, VCS, sumdb,
 // blob store, fact store — with the OSS no-op Signer, and returns the
 // constructed Driver together with a cleanup function that closes the store.
 // Callers MUST invoke cleanup when finished.

@@ -127,8 +127,7 @@ func getDependentsWalk(ctx context.Context, walks QueryWalksUseCase, walkID stri
 		return walkdomain.WalkRecord{}, walkIDMiss(ctx, walks, walkID, stderr)
 	}
 	if isWalkIntegrity(err) {
-		return walkdomain.WalkRecord{}, &exitError{code: ExitIntegrity,
-			msg: fmt.Sprintf("walk record %q failed integrity check", walkID)}
+		return walkdomain.WalkRecord{}, walkIntegrityRefusal(err, fmt.Sprintf("walk record %q failed integrity check", walkID))
 	}
 	if none := walkNotServable(err); none != nil {
 		return walkdomain.WalkRecord{}, none
@@ -262,11 +261,13 @@ func buildsHolding(ctx context.Context, walks QueryWalksUseCase, rec walkdomain.
 		return nil
 	}
 	seen := map[string]struct{}{
-		buildKey(rec.Scope, rec.Graph.BuildEnv.GOOS, rec.Graph.BuildEnv.GOARCH): {},
+		buildKey(rec.Scope, walkports.BuildEnvFilter{GOOS: rec.Graph.BuildEnv.GOOS, GOARCH: rec.Graph.BuildEnv.GOARCH,
+			TinyGoTarget: rec.Graph.BuildEnv.TinyGoTarget}): {},
 	}
 	var out []holdingBuild
 	for _, s := range summaries {
-		key := buildKey(s.Scope, s.GOOS, s.GOARCH)
+		platform := walkports.BuildEnvFilter{GOOS: s.GOOS, GOARCH: s.GOARCH, TinyGoTarget: s.TinyGoTarget}
+		key := buildKey(s.Scope, platform)
 		if _, ok := seen[key]; ok {
 			continue
 		}
@@ -276,7 +277,7 @@ func buildsHolding(ctx context.Context, walks QueryWalksUseCase, rec walkdomain.
 			continue
 		}
 		out = append(out, holdingBuild{
-			label:  fmt.Sprintf("%s on %s", walkScopeLabel(s.Scope), walkports.BuildEnvFilter{GOOS: s.GOOS, GOARCH: s.GOARCH}),
+			label:  fmt.Sprintf("%s on %s", walkScopeLabel(s.Scope), platform),
 			flag:   scopeWalkFlagHint(depScope(s.Scope)),
 			walkID: s.ID,
 			rank:   scopeBreadth(s.Scope),
@@ -312,8 +313,8 @@ func scopeBreadth(scope walkdomain.WalkScope) int {
 }
 
 // buildKey identifies one build of a project: a scope resolved for a platform.
-func buildKey(scope walkdomain.WalkScope, goos, goarch string) string {
-	return string(scope) + "|" + goos + "/" + goarch
+func buildKey(scope walkdomain.WalkScope, platform walkports.BuildEnvFilter) string {
+	return string(scope) + "|" + platform.String()
 }
 
 // joinHoldingBuilds renders the builds that hold the coordinate, each with the

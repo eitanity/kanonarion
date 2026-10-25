@@ -48,11 +48,11 @@ func TestGenerationDerivation_StringNamesGateAndOutcome(t *testing.T) {
 		want string
 	}{
 		{"worktree forced", domain.DerivationFor(domain.ReuseGateWorktree, true),
-			"worktree reuse gate bypassed (--force)"},
+			"worktree reuse gate bypassed (forced)"},
 		{"ledger gated", domain.DerivationFor(domain.ReuseGateLedger, false),
 			"ledger reuse gate consulted, held nothing restating this analysis"},
 		{"gate unnamed", domain.GenerationDerivation{Outcome: domain.GateOutcomeBypassed},
-			"unnamed reuse gate bypassed (--force)"},
+			"unnamed reuse gate bypassed (forced)"},
 		{"outcome unnamed", domain.GenerationDerivation{Gate: domain.ReuseGateLedger},
 			"ledger reuse gate, outcome not recorded"},
 		{"outcome from a later version", domain.GenerationDerivation{Gate: domain.ReuseGateLedger, Outcome: "invented"},

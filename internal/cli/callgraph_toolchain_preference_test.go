@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -90,6 +91,7 @@ func prefRecord(t *testing.T, spec prefSpec) cgdomain.CallGraphRecord {
 		ExtractedAt:      at,
 		PipelineVersion:  cgapp.PipelineVersion,
 		Toolchain:        spec.toolchain,
+		Frame:            hostFrame(),
 	}
 	var h cgdomain.CallGraphRecordHasher
 	sealed, err := h.SetContentHash(r)
@@ -275,7 +277,7 @@ func TestToolchainPreference_ResolvesWhereTheFlagIsRead(t *testing.T) {
 func TestStoredToolchainPreference_RoundTripsThroughConfig(t *testing.T) {
 	root := t.TempDir()
 	var buf bytes.Buffer
-	if err := runConfigSet(root, "callgraph.toolchain", "go1.26.6", false, &buf); err != nil {
+	if err := runConfigSet(root, "callgraph.toolchain", "go1.26.6", false, &buf, io.Discard); err != nil {
 		t.Fatalf("runConfigSet: %v", err)
 	}
 

@@ -65,8 +65,11 @@ func TestWalker_ProjectMode_AnalyseLocalRoot_PromotesRootToLocalAnalysed(t *test
 	if root.ResolutionSource != domain.ResolutionLocalAnalysed {
 		t.Errorf("root source = %s, want local_analysed", root.ResolutionSource)
 	}
-	if root.LocalPath != "/work/project" {
-		t.Errorf("root LocalPath = %q, want the project dir", root.LocalPath)
+	if root.LocalPath != "" {
+		t.Errorf("root LocalPath = %q, want none: the project dir is provenance, not identity", root.LocalPath)
+	}
+	if len(lf.calls) != 1 || lf.calls[0].absPath != "/work/project" || lf.calls[0].writtenPath != "" {
+		t.Errorf("local fetcher calls = %+v, want one read of /work/project recorded as the working tree", lf.calls)
 	}
 }
 

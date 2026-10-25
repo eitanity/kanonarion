@@ -30,7 +30,7 @@ of data is never presented as an answer):
 
 | Condition | Outcome |
 |-----------|---------|
-| No licence record for the root | Exit 4 (not found) with a diagnostic naming the command that produces it (`walk --gomod ./go.mod --analyse-root` + `extract` for a local root, `walk --gomod <path> --analyse-local` + `extract` for a module the build replaces with a local path, `license <mod@ver>` otherwise) |
+| No licence record for the root | Exit 4 (not found) with a diagnostic naming the command that produces it (`walk --gomod ./go.mod --analyse-root` + `extract` for a local root, `walk --gomod <path>` + `extract` for a module the build replaces with a local path, which files it as `<path>@local`, `license <mod@ver>` otherwise) |
 | Record exists but no SPDX identity (proprietary / `Unclassified` root) | Exit 2: the record is a valid outcome but cannot serve as an implicit SPDX target - pass `--target-license` explicitly |
 
 ## The answering walk
@@ -54,8 +54,8 @@ licence position across scopes or platforms — a `code` walk and a `complete`
 walk of one tree carry different module sets and therefore different positions
 — and the way to re-read an older answer without re-walking.
 
-A walk id the store does not hold, or one rooted at a different project, is
-refused with exit 20 and the refusal names `walk-list --module <coord>`. The
+A walk id rooted at a different project is refused with exit 20 and the
+refusal names `walk-list --module <coord>`. The
 positional slot takes a coordinate, so a walk id typed there is refused with the
 `--walk-id` invocation spelled out.
 

@@ -123,3 +123,30 @@ func main() { C.callFromC() }
 		t.Errorf("ExportDirective = %+v, want %+v", n.ExportDirective, want)
 	}
 }
+
+// //export and //go:export on a declaration without a body import a foreign
+// symbol, so the standard load records no directive for either.
+func TestExportDirective_ABodilessExportIsAnImport(t *testing.T) {
+	rec := analyseFiles(t, map[string]string{
+		"go.mod": "module example.com/cgtestmod\n\ngo 1.21\n",
+		"imports/imports.go": `package imports
+
+//export strlen
+func strlen(p *byte) uintptr
+
+//go:export memcmp
+func memcmp(a, b *byte, n uintptr) int
+
+func Use(p *byte) int { return int(strlen(p)) + memcmp(p, p, 1) }
+`,
+	})
+	for _, id := range []string{"example.com/cgtestmod/imports.strlen", "example.com/cgtestmod/imports.memcmp"} {
+		n, ok := nodeByID(rec, id)
+		if !ok {
+			t.Fatalf("no node %s", id)
+		}
+		if !n.ExportDirective.IsZero() {
+			t.Errorf("%s directive = %+v, want none: it has no body", id, n.ExportDirective)
+		}
+	}
+}

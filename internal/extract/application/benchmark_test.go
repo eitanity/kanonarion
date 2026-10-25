@@ -20,7 +20,7 @@ type slowExtractor struct {
 	delay time.Duration
 }
 
-func (s *slowExtractor) Extract(_ context.Context, _ coordinate.ModuleCoordinate, stage string, _ bool, _ string) (ports.StageResult, error) {
+func (s *slowExtractor) Extract(_ context.Context, _ coordinate.ModuleCoordinate, stage string, _ bool, _ string, _ bool) (ports.StageResult, error) {
 	time.Sleep(s.delay)
 	return ports.StageResult{Status: domain.StageSucceeded, RecordID: "rec-" + stage}, nil
 }

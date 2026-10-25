@@ -9,6 +9,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	dirdomain "github.com/eitanity/kanonarion/internal/directive/domain"
 	dirports "github.com/eitanity/kanonarion/internal/directive/ports"
+	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 )
 
 // licenceRemedyBuild is the build a missing-licence diagnostic is written
@@ -29,6 +30,23 @@ import (
 type licenceRemedyBuild struct {
 	goModPath     string
 	localReplaced map[string]struct{}
+	// localSources names, by module path, where a walk read each module it
+	// recorded at <path>@local other than its root: a replacement's path as
+	// written, or a go.work member's directory. Empty without a walk.
+	localSources map[string]string
+}
+
+// localSource reports where a dependency read from disk comes from. The
+// walk's own record answers first; a go.mod replace answers when there is no
+// walk to read.
+func (b licenceRemedyBuild) localSource(coord coordinate.ModuleCoordinate) (string, bool) {
+	if src, ok := b.localSources[coord.Path()]; ok {
+		return src, true
+	}
+	if b.replacesLocally(coord) {
+		return "the local path this build replaces it with", true
+	}
+	return "", false
 }
 
 // licenceRemedyBuildFor reads goModPath through the directive parser — the
@@ -70,7 +88,47 @@ func licenceRemedyBuildForWalk(ctx context.Context, ctr *Container, walkID strin
 	if err != nil || rec.ProjectDir == "" {
 		return licenceRemedyBuild{}
 	}
-	return licenceRemedyBuildFor(ctr.DirectiveParser, filepath.Join(rec.ProjectDir, "go.mod"))
+	build := licenceRemedyBuildFor(ctr.DirectiveParser, filepath.Join(rec.ProjectDir, "go.mod"))
+	if build.goModPath == "" {
+		return build
+	}
+	for _, n := range rec.Graph.Nodes {
+		if !n.Coordinate.IsLocal() || n.Coordinate == rec.Graph.Target {
+			continue
+		}
+		if build.localSources == nil {
+			build.localSources = map[string]string{}
+		}
+		switch n.ResolutionSource {
+		case walkdomain.ResolutionLocalReplace:
+			build.localSources[n.Coordinate.Path()] = "the local path " + n.LocalPath + " this build replaces it with"
+		case walkdomain.ResolutionLocalWorkspaceMember:
+			build.localSources[n.Coordinate.Path()] = "its directory in the go.work workspace"
+		}
+	}
+	return build
+}
+
+// noteWorkspaceMembers records the go.work members a go.mod scope holds, so a
+// missing record of one is sent to the walk that reads its directory rather
+// than to --analyse-root, which reads only the project's own tree.
+func (b *licenceRemedyBuild) noteWorkspaceMembers(mods []scopeModule, gomodPath string) {
+	if b.goModPath == "" || gomodPath == "" {
+		return
+	}
+	self, err := readGoModulePath(gomodPath)
+	if err != nil {
+		return
+	}
+	for _, m := range mods {
+		if !m.coord.IsLocal() || !m.original.IsZero() || m.coord.Path() == self {
+			continue
+		}
+		if b.localSources == nil {
+			b.localSources = map[string]string{}
+		}
+		b.localSources[m.coord.Path()] = "its directory in the go.work workspace"
+	}
 }
 
 // replacesLocally reports whether this build resolves coord from a local path.
@@ -93,20 +151,22 @@ func (b licenceRemedyBuild) replacesLocally(coord coordinate.ModuleCoordinate) b
 // the component's source is, not on the caller: the local main module is
 // unpublished, so its own licence comes from re-walking the project with
 // --analyse-root; a module the build replaces with a local path is unpublished
-// too and comes from --analyse-local; every other component is a published
-// module that is analysed by coordinate.
+// too and comes from a project walk, which reads it from disk; every other
+// component is a published module that is analysed by coordinate.
 func missingLicenceRecordRemedy(coord coordinate.ModuleCoordinate, build licenceRemedyBuild) string {
+	// A dependency read from disk is analysed by the walk that reads its
+	// directory, never by re-walking the root with --analyse-root.
+	if source, ok := build.localSource(coord); ok {
+		return fmt.Sprintf("run 'kanonarion walk --gomod %s%s' then "+
+			"'kanonarion extract <walk-id>' to analyse %s@%s from %s",
+			build.goModPath, targetFlagHint(), coord.Path(), coordinate.LocalVersion, source)
+	}
 	if coord.IsLocal() {
 		// The declaration this run was made under rides along, so the walk the
 		// reader is told to take is a walk of the platform they asked about
 		// rather than of this host.
 		return "run 'kanonarion walk --gomod ./go.mod --analyse-root" + targetFlagHint() + "' then " +
 			"'kanonarion extract <walk-id>' to analyse the project's own licence"
-	}
-	if build.replacesLocally(coord) {
-		return fmt.Sprintf("run 'kanonarion walk --gomod %s --analyse-local%s' then "+
-			"'kanonarion extract <walk-id>' to analyse %s from the local path this build replaces it with",
-			build.goModPath, targetFlagHint(), coord.Path())
 	}
 	return fmt.Sprintf("run 'kanonarion license %s'", coord)
 }
@@ -126,17 +186,18 @@ func missingLicenceRecordRemedies(coords []coordinate.ModuleCoordinate, build li
 	root := false
 	locals, deps := 0, 0
 	for _, c := range coords {
+		_, fromDisk := build.localSource(c)
 		switch {
+		case fromDisk:
+			if locals == 0 {
+				firstLocal = c
+			}
+			locals++
 		case c.IsLocal():
 			if !root {
 				root = true
 				parts = append(parts, missingLicenceRecordRemedy(c, build))
 			}
-		case build.replacesLocally(c):
-			if locals == 0 {
-				firstLocal = c
-			}
-			locals++
 		default:
 			if deps == 0 {
 				firstDep = c
@@ -144,13 +205,13 @@ func missingLicenceRecordRemedies(coords []coordinate.ModuleCoordinate, build li
 			deps++
 		}
 	}
-	// One --analyse-local run ingests every local-replace target the build has,
+	// One project walk reads every local-replace target the build has,
 	// so the others are covered by the run already named rather than by a
 	// repeat of it.
 	if locals > 0 {
 		local := missingLicenceRecordRemedy(firstLocal, build)
 		if locals > 1 {
-			local += fmt.Sprintf(", and the same run covers the other %d locally replaced component(s) named", locals-1)
+			local += fmt.Sprintf(", and the same run covers the other %d component(s) named that are read from disk", locals-1)
 		}
 		parts = append(parts, local)
 	}

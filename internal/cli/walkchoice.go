@@ -449,6 +449,8 @@ func pinnedWalkChoice(rec walkdomain.WalkRecord) walkChoice {
 			OverallStatus: rec.OverallStatus,
 			GOOS:          rec.Graph.BuildEnv.GOOS,
 			GOARCH:        rec.Graph.BuildEnv.GOARCH,
+			TinyGoTarget:  rec.Graph.BuildEnv.TinyGoTarget,
+			TinyGoVersion: rec.Graph.BuildEnv.TinyGoVersion,
 		},
 		record:     rec,
 		loaded:     true,

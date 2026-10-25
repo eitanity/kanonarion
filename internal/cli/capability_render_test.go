@@ -8,7 +8,10 @@ import (
 	"testing"
 
 	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
+	capapp "github.com/eitanity/kanonarion/internal/capability/application"
 	capdomain "github.com/eitanity/kanonarion/internal/capability/domain"
+	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 )
 
 func renderNode(id, pkg, recv, sym string, external, exported bool) cgdomain.CallNode {
@@ -297,4 +300,47 @@ func TestCapabilityDiff_InitDepthMoveIsAChange(t *testing.T) {
 		len(got.InitReachesBothDepthChanged) != 1 || got.InitReachesBothDepthChanged[0] != want[0] {
 		t.Errorf("JSON = +%v -%v ~%v", got.InitReachesBothAdded, got.InitReachesBothRemoved, got.InitReachesBothDepthChanged)
 	}
+}
+
+// A diff states the frame its records were read under once, and each side's
+// where the two state it differently; the JSON carries each side's.
+func TestCapabilityDiff_FrameLines(t *testing.T) {
+	from, to := coordinatetest.MustNew("m", "v1.0.0"), coordinatetest.MustNew("m", "v1.1.0")
+	host := cgdomain.CallGraphRecord{Coordinate: from, Frame: hostFrame()}
+	served := &servedCallGraphs{source: fakeCallGraphSource{from.String(): host, to.String(): host}}
+	uc := capapp.NewAnalyseCapabilitiesUseCase(served)
+	var buf bytes.Buffer
+	if err := runCapabilityDiff(context.Background(), "m@v1.0.0", "m@v1.1.0", uc, noGenerations{}, cgdomain.RootScopeProduction,
+		capabilityOutput{served: served}, &buf); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Count(buf.String(), "  frame: "+hostFrame().String()+"\n"); got != 1 {
+		t.Errorf("one frame stated %d times:\n%s", got, buf.String())
+	}
+
+	served.source = fakeCallGraphSource{from.String(): host, to.String(): {Coordinate: to, Frame: framePico}}
+	buf.Reset()
+	if err := runCapabilityDiff(context.Background(), "m@v1.0.0", "m@v1.1.0", uc, noGenerations{}, cgdomain.RootScopeProduction,
+		capabilityOutput{served: served}, &buf); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(buf.String(), "  frame: "+hostFrame().String()+"\n  frame: tinygo/pico (linux/arm)") {
+		t.Errorf("two frames not both stated:\n%s", buf.String())
+	}
+	buf.Reset()
+	if err := runCapabilityDiff(context.Background(), "m@v1.0.0", "m@v1.1.0", uc, noGenerations{}, cgdomain.RootScopeProduction,
+		capabilityOutput{json: true, served: served}, &buf); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(buf.String(), `"tinygo_target": "pico"`) || !strings.Contains(buf.String(), `"text": "`+hostFrame().String()+`"`) {
+		t.Errorf("the JSON sides lack their frames:\n%s", buf.String())
+	}
+}
+
+// fakeCallGraphSource serves the record stored under a coordinate's string.
+type fakeCallGraphSource map[string]cgdomain.CallGraphRecord
+
+func (f fakeCallGraphSource) GetCallGraphRecord(_ context.Context, coord coordinate.ModuleCoordinate, _ string) (cgdomain.CallGraphRecord, bool, error) {
+	r, ok := f[coord.String()]
+	return r, ok, nil
 }

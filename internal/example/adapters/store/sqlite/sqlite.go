@@ -8,12 +8,16 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/versionorder"
 
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
 
 	"github.com/eitanity/kanonarion/internal/adapters/blobcodec"
 	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
@@ -29,6 +33,17 @@ type Store struct {
 	// setAside receives the stored generations a read or a write left out
 	// because this build cannot reproduce them; see ReportSetAside.
 	setAside recordseal.Reporter
+	// superseded names the artefacts a published coordinate's read leaves out;
+	// nil leaves every generation in. See WithSupersededArtefacts.
+	superseded fetchports.SupersededArtefacts
+}
+
+// WithSupersededArtefacts makes the store's reads of a published coordinate
+// leave out generations derived from a directory read under it before local
+// code had its own identity. The generations stay in the ledger.
+func (s *Store) WithSupersededArtefacts(fn fetchports.SupersededArtefacts) *Store {
+	s.superseded = fn
+	return s
 }
 
 // RecordKind is how a set-aside example generation names its kind.
@@ -350,6 +365,10 @@ func (s *Store) GetExampleRecord(ctx context.Context, coord coordinate.ModuleCoo
 	if err != nil {
 		return domain2.ExampleRecord{}, false, err
 	}
+	records, err = fetchports.DropSuperseded(ctx, s.superseded, coord, records, func(r domain2.ExampleRecord) string { return r.ArtefactIdentity })
+	if err != nil {
+		return domain2.ExampleRecord{}, false, fmt.Errorf("reading example records of %s: %w", coord, err)
+	}
 	if len(records) == 0 {
 		return domain2.ExampleRecord{}, false, nil
 	}
@@ -358,6 +377,31 @@ func (s *Store) GetExampleRecord(ctx context.Context, coord coordinate.ModuleCoo
 		return domain2.ExampleRecord{}, false, fmt.Errorf("%w: %w", ports.ErrExampleConflict, err)
 	}
 	return composed, true, nil
+}
+
+// PipelinesHeld lists the pipeline versions coord holds example records at,
+// oldest first, from the generation index alone: no blob is decoded.
+func (s *Store) PipelinesHeld(ctx context.Context, coord coordinate.ModuleCoordinate) ([]string, error) {
+	rows, err := s.db.DB().QueryContext(ctx,
+		`SELECT DISTINCT pipeline_version FROM example_records WHERE module_path = ? AND module_version = ?`,
+		coord.Path(), coord.Version())
+	if err != nil {
+		return nil, fmt.Errorf("querying the pipelines held for %s: %w", coord, err)
+	}
+	defer rows.Close() //nolint:errcheck // read-only; Err is checked below
+	var out []string
+	for rows.Next() {
+		var p string
+		if serr := rows.Scan(&p); serr != nil {
+			return nil, fmt.Errorf("scanning the pipelines held for %s: %w", coord, serr)
+		}
+		out = append(out, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating the pipelines held for %s: %w", coord, err)
+	}
+	slices.SortFunc(out, versionorder.ComparePipelineVersions)
+	return out, nil
 }
 
 // ListExampleRecordsFor returns every generation the ledger holds for one
@@ -404,7 +448,9 @@ ORDER BY extracted_at ASC, rowid ASC`
 		if serr := rows.Scan(&blob, &stored); serr != nil {
 			return nil, fmt.Errorf("scanning example record: %w", serr)
 		}
-		rec, aside, rerr := decodeRecord(blob, stored)
+		rec, aside, rerr := decodeRecord(blob, stored, func(r domain2.ExampleRecord) []recordseal.Filed {
+			return keyedBy(coord.Path(), coord.Version(), pipelineVersion, r)
+		})
 		if rerr != nil {
 			return nil, rerr
 		}
@@ -427,8 +473,10 @@ ORDER BY extracted_at ASC, rowid ASC`
 // decodeRecord turns one stored blob into a verified record. A row that cannot
 // be decoded, parsed or verified is an error rather than an absence, except one
 // whose bytes hash to the seal it is filed under (storedHash) in a shape this
-// build cannot reproduce: that comes back as a set-aside row instead.
-func decodeRecord(blob []byte, storedHash string) (domain2.ExampleRecord, *recordseal.SetAsideRow, error) {
+// build cannot reproduce: that comes back as a set-aside row instead. filed
+// names what the read selected the row by; a verified record sealed otherwise is
+// refused, because its seal proves the bytes and not where they were filed.
+func decodeRecord(blob []byte, storedHash string, filed func(domain2.ExampleRecord) []recordseal.Filed) (domain2.ExampleRecord, *recordseal.SetAsideRow, error) {
 	raw, decErr := blobcodec.Decode(blob)
 	if decErr != nil {
 		return domain2.ExampleRecord{}, nil, fmt.Errorf("decompressing example record: %w", decErr)
@@ -458,7 +506,24 @@ func decodeRecord(blob []byte, storedHash string) (domain2.ExampleRecord, *recor
 			Reason:      cerr,
 		}, nil
 	}
+	if merr := recordseal.CheckFiled(RecordKind, "example_records", misfiledRemedy, filed(rec)...); merr != nil {
+		return domain2.ExampleRecord{}, nil, fmt.Errorf("%w: %w", ports.ErrExampleIntegrity, merr)
+	}
 	return rec, nil, nil
+}
+
+// misfiledRemedy is what clears a misfiled example row. The ledger is
+// append-only, so no re-extraction removes the row and every read of its key
+// meets it again.
+const misfiledRemedy = "no kanonarion command clears it: the ledger is append-only, so a re-extraction appends beside the row " +
+	"and every read of this coordinate still meets it; restore the store from a copy taken before the row was moved"
+
+// keyedBy is the key an example row is filed under, against the record's seal.
+func keyedBy(path, version, pipeline string, r domain2.ExampleRecord) []recordseal.Filed {
+	return []recordseal.Filed{
+		recordseal.Key(path+"@"+version, r.Coordinate.String()),
+		recordseal.Column("pipeline_version", "pipeline_version", pipeline, r.PipelineVersion),
+	}
 }
 
 // IdenticalGeneration returns the generation the ledger already holds that
@@ -515,7 +580,11 @@ ORDER BY extracted_at DESC, content_hash DESC`
 		if serr := rows.Scan(&blob, &stored); serr != nil {
 			return domain2.ExampleRecord{}, false, fmt.Errorf("scanning example generation of %s: %w", rec.Coordinate, serr)
 		}
-		held, aside, derr := decodeRecord(blob, stored)
+		held, aside, derr := decodeRecord(blob, stored, func(r domain2.ExampleRecord) []recordseal.Filed {
+			return append(keyedBy(rec.Coordinate.Path(), rec.Coordinate.Version(), rec.PipelineVersion, r),
+				recordseal.Column("overall_status", "overall_status", strconv.Itoa(int(rec.OverallStatus)), strconv.Itoa(int(r.OverallStatus))),
+				recordseal.Column("example_count", "examples", strconv.Itoa(len(rec.Examples)), strconv.Itoa(len(r.Examples))))
+		})
 		if derr != nil {
 			return domain2.ExampleRecord{}, false, derr
 		}
@@ -657,51 +726,60 @@ func (s *Store) ListExampleRecords(ctx context.Context, filter ports.ExampleFilt
 
 	out := make([]ports.ExampleSummary, 0, len(order))
 	for _, k := range order {
-		if counts[k] == 1 {
-			// The overwhelming majority: one generation, so the columns already
-			// describe the served record and no blob is decoded to learn it.
-			out = append(out, first[k])
-			continue
+		// The overwhelming majority have one generation, so the columns already
+		// describe the served record and no blob is decoded to learn it.
+		sum, listed, lerr := s.listedExampleSummary(ctx, k.path, k.version, k.pipeline, first[k], counts[k] == 1)
+		if lerr != nil {
+			return nil, lerr
 		}
-		coord, cerr := coordinate.NewModuleCoordinate(k.path, k.version)
-		if cerr != nil {
-			return nil, fmt.Errorf("example record %s@%s names no module: %w", k.path, k.version, cerr)
+		if listed {
+			out = append(out, sum)
 		}
-		served, found, gerr := s.GetExampleRecord(ctx, coord, k.pipeline)
-		if errors.As(gerr, new(*recordseal.NothingServable)) {
-			// Every generation was set aside and named by the read; the listing
-			// keeps its other rows.
-			continue
-		}
-		if errors.Is(gerr, ports.ErrExampleConflict) {
-			// Reported on the row, not raised as the list's error: see the comment
-			// on ExampleSummary.Conflict.
-			out = append(out, ports.ExampleSummary{
-				ModulePath:      k.path,
-				ModuleVersion:   k.version,
-				PipelineVersion: k.pipeline,
-				Conflict:        gerr,
-			})
-			continue
-		}
-		if gerr != nil {
-			return nil, gerr
-		}
-		if !found {
-			continue
-		}
-		out = append(out, ports.ExampleSummary{
-			ModulePath:      k.path,
-			ModuleVersion:   k.version,
-			PipelineVersion: k.pipeline,
-			OverallStatus:   served.OverallStatus,
-			ExampleCount:    len(served.Examples),
-			ExtractedAt:     served.ExtractedAt.UTC(),
-			ContentHash:     served.ContentHash,
-		})
 	}
 
 	return page(out, filter.Limit, filter.Offset), nil
+}
+
+// listedExampleSummary is the listing row for one key: the stored row when it
+// alone describes the served record, the composed read otherwise. A key holding
+// superseded generations is always composed, so they are left out.
+func (s *Store) listedExampleSummary(ctx context.Context, path, version, pipeline string, row ports.ExampleSummary, rowServes bool) (ports.ExampleSummary, bool, error) {
+	if rowServes {
+		held, err := fetchports.HoldsSuperseded(ctx, s.superseded, path, version)
+		if err != nil {
+			return ports.ExampleSummary{}, false, err //nolint:wrapcheck // HoldsSuperseded names the coordinate
+		}
+		if !held {
+			return row, true, nil
+		}
+	}
+	coord, cerr := coordinate.NewModuleCoordinate(path, version)
+	if cerr != nil {
+		return ports.ExampleSummary{}, false, fmt.Errorf("example record %s@%s names no module: %w", path, version, cerr)
+	}
+	served, found, gerr := s.GetExampleRecord(ctx, coord, pipeline)
+	if errors.As(gerr, new(*recordseal.NothingServable)) {
+		// Every generation was set aside and named by the read; the listing
+		// keeps its other rows.
+		return ports.ExampleSummary{}, false, nil
+	}
+	if errors.Is(gerr, ports.ErrExampleConflict) {
+		// Reported on the row, not raised as the list's error: see the comment
+		// on ExampleSummary.Conflict.
+		return ports.ExampleSummary{ModulePath: path, ModuleVersion: version, PipelineVersion: pipeline, Conflict: gerr}, true, nil
+	}
+	if gerr != nil || !found {
+		return ports.ExampleSummary{}, false, gerr
+	}
+	return ports.ExampleSummary{
+		ModulePath:      path,
+		ModuleVersion:   version,
+		PipelineVersion: pipeline,
+		OverallStatus:   served.OverallStatus,
+		ExampleCount:    len(served.Examples),
+		ExtractedAt:     served.ExtractedAt.UTC(),
+		ContentHash:     served.ContentHash,
+	}, true, nil
 }
 
 // page applies the caller's limit and offset to the collapsed list.

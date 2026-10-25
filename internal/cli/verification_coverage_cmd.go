@@ -34,6 +34,7 @@ func newVerificationCoverageCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use: "verification-coverage [<walk-id>]",
 		Annotations: map[string]string{
+			annotationWalkIDArgs:  "0",
 			annotationStoreIntent: StoreIntentRead,
 			annotationNetworkUse:  NetworkNever,
 		},
@@ -112,7 +113,7 @@ func runVerificationCoverage(
 			return walkIDMiss(ctx, walks, walkID, stderr)
 		}
 		if isWalkIntegrity(err) {
-			return &exitError{code: ExitIntegrity, msg: fmt.Sprintf("walk record %q failed integrity check", walkID)}
+			return walkIntegrityRefusal(err, fmt.Sprintf("walk record %q failed integrity check", walkID))
 		}
 		if none := walkNotServable(err); none != nil {
 			return none
@@ -192,6 +193,21 @@ func writeVerificationDetail(stdout io.Writer, rows []moduleVerification) error 
 		if _, err := fmt.Fprintf(stdout, "  %-36s %s\n    %s\n",
 			r.Class, name, verificationReasonLine(r)); err != nil {
 			return fmt.Errorf("writing detail row: %w", err)
+		}
+		if r.GitSubdir != "" {
+			dir := string(r.GitSubdir)
+			if dir == fetchdomain.RepoRoot {
+				dir = "(repository root)"
+			}
+			if _, err := fmt.Fprintf(stdout, "    git subdirectory: %s\n", dir); err != nil {
+				return fmt.Errorf("writing detail row: %w", err)
+			}
+		}
+		if r.SupersededLocal != nil {
+			if _, err := fmt.Fprintf(stdout, "    %s: %d record(s) read from a local directory under this coordinate, not composed\n",
+				r.SupersededLocal.Statement, r.SupersededLocal.Records); err != nil {
+				return fmt.Errorf("writing detail row: %w", err)
+			}
 		}
 	}
 	return nil

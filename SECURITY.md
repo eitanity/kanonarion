@@ -5,16 +5,16 @@ project - and your trust in its output - seriously.
 
 ## Supported Versions
 
-Kanonarion is pre-`v1.0`. Only the current release line, **`v0.13`**, receives
+Kanonarion is pre-`v1.0`. Only the current release line, **`v0.14`**, receives
 security fixes; every earlier or pre-release version is unsupported. Pin a
-`v0.13.x` tag and upgrade promptly.
+`v0.14.x` tag and upgrade promptly.
 
 | Version | Supported |
 |-----------------------|-----------|
-| `v0.13.x` | ✅ |
-| anything older than `v0.13` | ❌ |
+| `v0.14.x` | ✅ |
+| anything older than `v0.14` | ❌ |
 
-Release binaries are built with the Go version in `go.mod` (go1.27.2), so the Go
+Release binaries are built with the Go version in `go.mod` (go1.27.3), so the Go
 toolchain advisories that apply to a binary, and the newest Go source it can
 analyse, follow that version.
 

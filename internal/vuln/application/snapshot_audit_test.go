@@ -11,6 +11,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 	"github.com/eitanity/kanonarion/internal/vuln/application"
+	"github.com/eitanity/kanonarion/internal/vuln/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/vulntest"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 )
@@ -393,5 +394,36 @@ func TestRescan_PinnedSnapshotAppendsNothing(t *testing.T) {
 	}
 	if n := len(sink.ofType(audit.EventVulnScanCompleted)); n != 1 {
 		t.Errorf("vuln_scan_completed events = %d, want 1: the zero above must be a decision about snapshots, not a silent sink", n)
+	}
+}
+
+// A download of bytes the store already holds intact writes nothing and
+// witnesses nothing: the run is judged against the held row, with its first
+// retrieval time.
+func TestScanModule_HeldBytesAreNotRecordedAgain(t *testing.T) {
+	ctx := t.Context()
+	facts := newFakeFacts()
+	blobs := newFakeBlob()
+	coord := seedSnapshotAuditModule(t, facts, blobs, "github.com/foo/bar")
+	store := newFakeVulnStore()
+	sink := &recordingAuditSink{}
+
+	first := vulntest.MustSealOver("vuln.go.dev", "2026-02-03T00:00:00Z", snapshotAuditNow, []byte("vulndb content"))
+	later := vulntest.MustSealOver("vuln.go.dev", "2026-02-03T00:00:00Z", snapshotAuditNow.Add(time.Hour), []byte("vulndb content"))
+	for i, snap := range []domain.DatabaseSnapshot{first, later} {
+		uc := application.NewScanModuleUseCase(
+			facts, blobs, store, nil, &fakeScanner{}, &fakeDatabase{snapshot: snap, content: "vulndb content"}, nil,
+			fixedClock{t: snapshotAuditNow}, "v1", slog.Default(),
+		).WithAudit(sink)
+		rec, err := uc.Scan(ctx, application.ScanModuleParams{Coordinate: coord, WalkID: "walk-1", Force: true})
+		if err != nil {
+			t.Fatalf("Scan %d: %v", i, err)
+		}
+		if !rec.DatabaseSnapshot.RetrievedAt().Equal(snapshotAuditNow) {
+			t.Errorf("scan %d judged against a snapshot retrieved %s, want the held %s", i, rec.DatabaseSnapshot.RetrievedAt(), snapshotAuditNow)
+		}
+	}
+	if n := len(sink.ofType(audit.EventAdvisorySnapshotRecorded)); n != 1 {
+		t.Errorf("advisory_snapshot_recorded events = %d, want 1", n)
 	}
 }

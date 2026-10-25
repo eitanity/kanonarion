@@ -62,9 +62,9 @@ func TestPreExtractVulnDB_IntegrityAbortsOtherFailuresFallBack(t *testing.T) {
 			t.Errorf("no extraction directory may be offered after an abort, got %q", dir)
 		}
 		// The operator is told what to do, that the evidence is intact, and that
-		// the remedy will destroy it — a --fresh re-fetch upserts on
-		// (source, version) and overwrites the altered bytes in place.
-		for _, want := range []string{"--fresh", "untouched as evidence", "copy the store", "overwrites", snapshot.Version()} {
+		// the remedy will destroy it — a re-fetch upserts on (source, version)
+		// and overwrites the altered bytes in place.
+		for _, want := range []string{"re-fetching", "untouched as evidence", "copy the store", "overwrites", snapshot.Version()} {
 			if !strings.Contains(err.Error(), want) {
 				t.Errorf("abort message missing %q: %v", want, err)
 			}

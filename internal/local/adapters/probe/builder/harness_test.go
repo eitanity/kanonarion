@@ -27,7 +27,7 @@ const goMod127 = "module example.com/probe\n\ngo 1.27\n"
 func loadExports(t *testing.T, files map[string]string) ([]goListPackage, []goListPackage, types.Importer) {
 	t.Helper()
 	root := writeModule(t, files)
-	all, err := listWorkspaceExports(context.Background(), goenv.NewToolchains(), root, "go")
+	all, err := New("").listWorkspaceExports(context.Background(), goenv.NewToolchains(), root)
 	if err != nil {
 		t.Fatalf("listWorkspaceExports: %v", err)
 	}

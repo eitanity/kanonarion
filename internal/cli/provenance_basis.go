@@ -111,7 +111,7 @@ func resolveLicenceBasis(
 		if version == "" {
 			return licenceBasis{}, false, "the standard library holds no licence record — " +
 				"its licence identity comes from the recorded chain of custody, which " +
-				"'kanonarion license' reports one toolchain version at a time; no version was named here"
+				"the license command reports one toolchain version at a time; no version was named here"
 		}
 		return licenceBasis{}, false, "the standard library holds no licence record — " +
 			"its licence identity comes from the recorded chain of custody, reported by: " +

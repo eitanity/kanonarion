@@ -71,6 +71,10 @@ type DatabaseSnapshot struct {
 	// reading, because WithAdvisoryCount refuses a non-positive one and a scan
 	// against an empty database is refused rather than sealed.
 	advisoryCount int
+
+	// origin is the base URL the bytes were downloaded from when it was not the
+	// database's own; empty for vuln.go.dev itself and for every older record.
+	origin string
 }
 
 // NewDatabaseSnapshot returns the snapshot naming source at version, retrieved
@@ -179,6 +183,28 @@ func (s DatabaseSnapshot) WithAdvisoryCount(count int) (DatabaseSnapshot, error)
 		return DatabaseSnapshot{}, fmt.Errorf("counting the advisories of database snapshot %s: a count must be positive, got %d", s, count)
 	}
 	s.advisoryCount = count
+	return s, nil
+}
+
+// Origin is the mirror base URL the snapshot's bytes were downloaded from, and
+// empty when they came from the database's own service.
+//
+// It is not part of the identity: a mirror serves the same generation, and the
+// content hash already says whether the bytes are the same, so reuse, lookup,
+// String and Equal ignore it.
+func (s DatabaseSnapshot) Origin() string { return s.origin }
+
+// WithOrigin returns the snapshot recording that its bytes came from origin.
+// The zero snapshot and an empty origin are refused: neither states where any
+// bytes came from.
+func (s DatabaseSnapshot) WithOrigin(origin string) (DatabaseSnapshot, error) {
+	if s.IsZero() {
+		return DatabaseSnapshot{}, fmt.Errorf("recording where a database snapshot came from: %w", ErrZeroSnapshot)
+	}
+	if origin == "" {
+		return DatabaseSnapshot{}, fmt.Errorf("recording where database snapshot %s came from: the origin is empty", s)
+	}
+	s.origin = origin
 	return s, nil
 }
 
@@ -291,13 +317,14 @@ func ParseDatabaseSnapshot(str string) (DatabaseSnapshot, error) {
 // snapshot emits exactly the four fields it always did, so every record already
 // sealed still marshals to the bytes its content hash was taken over. Only a
 // snapshot that was actually counted adds a fifth key, and only records written
-// after the measurement existed can carry one.
+// after the measurement existed can carry one. Origin follows the same rule.
 type snapshotJSON struct {
 	Source        string    `json:"source"`
 	Version       string    `json:"version"`
 	RetrievedAt   time.Time `json:"retrieved_at"`
 	ContentHash   string    `json:"content_hash"`
 	AdvisoryCount int       `json:"advisory_count,omitzero"`
+	Origin        string    `json:"origin,omitzero"`
 }
 
 // MarshalJSON implements json.Marshaler, emitting the object form byte for byte
@@ -309,6 +336,7 @@ func (s DatabaseSnapshot) MarshalJSON() ([]byte, error) {
 		RetrievedAt:   s.retrievedAt,
 		ContentHash:   s.contentHash,
 		AdvisoryCount: s.advisoryCount,
+		Origin:        s.origin,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("marshalling database snapshot %s: %w", s, err)
@@ -332,6 +360,7 @@ func (s *DatabaseSnapshot) UnmarshalJSON(data []byte) error {
 	s.source, s.version = obj.Source, obj.Version
 	s.retrievedAt, s.contentHash = obj.RetrievedAt, obj.ContentHash
 	s.advisoryCount = obj.AdvisoryCount
+	s.origin = obj.Origin
 	return nil
 }
 

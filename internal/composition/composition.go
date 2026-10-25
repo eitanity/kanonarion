@@ -6,17 +6,16 @@
 package composition
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
-	"strings"
+	"time"
 
-	"github.com/eitanity/kanonarion/internal/adapters/blobstore/localfs"
 	"github.com/eitanity/kanonarion/internal/adapters/clock"
-	fetchsqlite "github.com/eitanity/kanonarion/internal/adapters/factstore/sqlite"
 	"github.com/eitanity/kanonarion/internal/adapters/goenv"
 	"github.com/eitanity/kanonarion/internal/adapters/meminfo"
 	fetchproxy "github.com/eitanity/kanonarion/internal/adapters/proxy/direct"
@@ -25,100 +24,149 @@ import (
 	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
 	fetchsumdb "github.com/eitanity/kanonarion/internal/adapters/sumdb/gosum"
 	fetchvcs "github.com/eitanity/kanonarion/internal/adapters/vcs/gitexec"
-	cgsqlite "github.com/eitanity/kanonarion/internal/callgraph/adapters/store/sqlite"
+	"github.com/eitanity/kanonarion/internal/adapters/yamlkeys"
+	cganalyser "github.com/eitanity/kanonarion/internal/callgraph/adapters/analyser/staticcha"
 	cgapp "github.com/eitanity/kanonarion/internal/callgraph/application"
-	dirsqlite "github.com/eitanity/kanonarion/internal/directive/adapters/store/sqlite"
+	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
+	"github.com/eitanity/kanonarion/internal/composition/storage"
+	sqlitestorage "github.com/eitanity/kanonarion/internal/composition/storage/sqlite"
+	"github.com/eitanity/kanonarion/internal/config"
+	configyaml "github.com/eitanity/kanonarion/internal/config/adapters/store/yaml"
+	configdomain "github.com/eitanity/kanonarion/internal/config/domain"
 	dirapp "github.com/eitanity/kanonarion/internal/directive/application"
 	"github.com/eitanity/kanonarion/internal/driver"
 	exgoast "github.com/eitanity/kanonarion/internal/example/adapters/parser/goast"
-	exsqlite "github.com/eitanity/kanonarion/internal/example/adapters/store/sqlite"
 	exapp "github.com/eitanity/kanonarion/internal/example/application"
 	extextractor "github.com/eitanity/kanonarion/internal/extract/adapters/extractor/local"
 	extstages "github.com/eitanity/kanonarion/internal/extract/adapters/stages/local"
-	extstore "github.com/eitanity/kanonarion/internal/extract/adapters/store/sqlite"
 	extractapp "github.com/eitanity/kanonarion/internal/extract/application"
 	fetchapp "github.com/eitanity/kanonarion/internal/fetch/application"
 	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
-	fipssqlite "github.com/eitanity/kanonarion/internal/fips/adapters/store/sqlite"
 	fipsapp "github.com/eitanity/kanonarion/internal/fips/application"
-	gdsqlite "github.com/eitanity/kanonarion/internal/godebug/adapters/store/sqlite"
 	gdapp "github.com/eitanity/kanonarion/internal/godebug/application"
 	ifaceext "github.com/eitanity/kanonarion/internal/iface/adapters/extractor/godoc"
-	ifacesqlite "github.com/eitanity/kanonarion/internal/iface/adapters/store/sqlite"
 	ifaceapp "github.com/eitanity/kanonarion/internal/iface/application"
 	licdet "github.com/eitanity/kanonarion/internal/license/adapters/detector/licensecheck"
-	licsqlite "github.com/eitanity/kanonarion/internal/license/adapters/store/sqlite"
 	licapp "github.com/eitanity/kanonarion/internal/license/application"
-	nativesqlite "github.com/eitanity/kanonarion/internal/native/adapters/store/sqlite"
-	sbomstore "github.com/eitanity/kanonarion/internal/sbom/adapters/store/sqlite"
 	sbomapp "github.com/eitanity/kanonarion/internal/sbom/application"
-	stalesqlite "github.com/eitanity/kanonarion/internal/staleness/adapters/store/sqlite"
+	staleports "github.com/eitanity/kanonarion/internal/staleness/ports"
 	stdlibgit "github.com/eitanity/kanonarion/internal/stdlib/adapters/gitlsremote"
 	stdlibgodev "github.com/eitanity/kanonarion/internal/stdlib/adapters/godev"
 	stdliblic "github.com/eitanity/kanonarion/internal/stdlib/adapters/licenseident"
 	stdliblocalsrc "github.com/eitanity/kanonarion/internal/stdlib/adapters/localsource"
-	stdlibsqlite "github.com/eitanity/kanonarion/internal/stdlib/adapters/store/sqlite"
 	stdlibtoolchain "github.com/eitanity/kanonarion/internal/stdlib/adapters/toolchainenv"
 	stdlibbridge "github.com/eitanity/kanonarion/internal/stdlib/adapters/walkbridge"
 	stdlibapp "github.com/eitanity/kanonarion/internal/stdlib/application"
 	stdlibports "github.com/eitanity/kanonarion/internal/stdlib/ports"
-	vensqlite "github.com/eitanity/kanonarion/internal/vendortree/adapters/store/sqlite"
+	tinygogithub "github.com/eitanity/kanonarion/internal/tinygo/adapters/github"
+	tinygobridge "github.com/eitanity/kanonarion/internal/tinygo/adapters/walkbridge"
+	tinygoapp "github.com/eitanity/kanonarion/internal/tinygo/application"
+	tinygoports "github.com/eitanity/kanonarion/internal/tinygo/ports"
+	venlocalfs "github.com/eitanity/kanonarion/internal/vendortree/adapters/scanner/localfs"
 	venapp "github.com/eitanity/kanonarion/internal/vendortree/application"
-	vulnsqlite "github.com/eitanity/kanonarion/internal/vuln/adapters/store/sqlite"
+	vulncallgraph "github.com/eitanity/kanonarion/internal/vuln/adapters/callgraph"
+	vulnfetch "github.com/eitanity/kanonarion/internal/vuln/adapters/fetch"
+	"github.com/eitanity/kanonarion/internal/vuln/adapters/reachability"
+	vulnvendorclosure "github.com/eitanity/kanonarion/internal/vuln/adapters/vendorclosure/vendortree"
+	govulncheck "github.com/eitanity/kanonarion/internal/vuln/adapters/vuln/govulncheck"
+	osvdb "github.com/eitanity/kanonarion/internal/vuln/adapters/vulndb/osv"
 	vulnapp "github.com/eitanity/kanonarion/internal/vuln/application"
 	walkbuildlist "github.com/eitanity/kanonarion/internal/walk/adapters/buildlist/gotoolchain"
 	walkfetcher "github.com/eitanity/kanonarion/internal/walk/adapters/fetcher/local"
 	walkretry "github.com/eitanity/kanonarion/internal/walk/adapters/fetcher/retrying"
 	walkgomod "github.com/eitanity/kanonarion/internal/walk/adapters/gomod/xmod"
 	walklocalfs "github.com/eitanity/kanonarion/internal/walk/adapters/localfs"
-	walksqlite "github.com/eitanity/kanonarion/internal/walk/adapters/walks/sqlite"
 	walkapp "github.com/eitanity/kanonarion/internal/walk/application"
 )
 
 // Migrations returns every migration the binary knows about, in apply order.
-// Its length is the binary's expected schema version, so the CLI and the public
-// façade open mirror.db against an identical schema.
-func Migrations() []sqlitestore.Migration {
-	var m []sqlitestore.Migration
-	m = append(m, fetchsqlite.Migrations()...)
-	m = append(m, walksqlite.Migrations()...)
-	m = append(m, extstore.Migrations()...)
-	m = append(m, licsqlite.Migrations()...)
-	m = append(m, ifacesqlite.Migrations()...)
-	m = append(m, cgsqlite.Migrations()...)
-	m = append(m, exsqlite.Migrations()...)
-	m = append(m, sbomstore.Migrations()...)
-	m = append(m, vulnsqlite.Migrations()...)
-	m = append(m, dirsqlite.Migrations()...)
-	m = append(m, gdsqlite.Migrations()...)
-	m = append(m, vensqlite.Migrations()...)
-	m = append(m, fipssqlite.Migrations()...)
-	m = append(m, stdlibsqlite.Migrations()...)
-	m = append(m, stalesqlite.Migrations()...)
-	m = append(m, nativesqlite.Migrations()...)
-	return m
+// The SQLite backend owns the list; it is re-exported here for the callers that
+// read it beside a composition root.
+func Migrations() []sqlitestore.Migration { return sqlitestorage.Migrations() }
+
+// OpenStorage opens the backend req.Config selects. The SQLite backend is in
+// force whether or not it was registered, so a consumer that registers
+// nothing opens the store it always did.
+func OpenStorage(ctx context.Context, req storage.Request) (*storage.Storage, error) {
+	return storage.OpenConfigured(ctx, req, sqlitestorage.Backend()) //nolint:wrapcheck // the backend's text is what the roots have always returned
 }
 
+// ConfiguredBackend names the backend cfg selects among those in force,
+// without opening it.
+func ConfiguredBackend(cfg configdomain.Config) (string, error) {
+	b, err := storage.Select(cfg, sqlitestorage.Backend())
+	if err != nil {
+		return "", err //nolint:wrapcheck // the resolver's text is the refusal
+	}
+	return b.Name, nil
+}
+
+// BackendConfigSpecs is the config.yaml section of every backend in force:
+// the registered ones, then the SQLite backend when it was not registered.
+func BackendConfigSpecs() []config.ConfigSpec {
+	specs := storage.ConfigSpecs()
+	if _, ok := storage.Lookup(sqlitestorage.Name); !ok {
+		b := sqlitestorage.Backend()
+		specs = append(specs, config.ConfigSpec{Section: b.Section, Defaults: b.Defaults})
+	}
+	return specs
+}
+
+// BackendSections names the config.yaml section of every backend in force,
+// the only top-level keys outside the schema a config file may carry.
+func BackendSections() []string {
+	var names []string
+	for _, spec := range BackendConfigSpecs() {
+		if spec.Section != "" {
+			names = append(names, spec.Section)
+		}
+	}
+	return names
+}
+
+// loadStoreConfig reads <storeRoot>/config.yaml; an absent file is the
+// built-in defaults.
+func loadStoreConfig(storeRoot string) (configdomain.Config, error) {
+	path := filepath.Join(storeRoot, "config.yaml")
+	cfg, err := configyaml.New(path, BackendSections()...).LoadConfig(context.Background())
+	if err != nil {
+		return configdomain.Config{}, fmt.Errorf("loading store configuration: %w", yamlkeys.InFile(err, path))
+	}
+	return cfg, nil
+}
+
+// ErrStoreSchemaNewer is storage.ErrStoreSchemaNewer, kept under this name so
+// every errors.Is caller and the CLI's exit-code mapping read it unchanged.
+var ErrStoreSchemaNewer = storage.ErrStoreSchemaNewer
+
 // NewStdlibAcquirer wires the standard-library chain-of-custody acquirer over
-// the shared DB and blob store: the go.dev/dl manifest+tarball client, the
-// googlesource commit resolver, the licence detector, and the version-keyed
-// fact cache. It is returned as a walk StdlibAcquirer via the bridge so the
-// resolver depends only on the narrow port. Both composition roots (the driver
-// here and the CLI container) share it so stdlib custody behaves identically —
-// including the assurance log: audit is wired here rather than at each call site
-// so neither root can be the quieter one.
-//
-// setAside receives a stored measurement this build cannot reproduce; nil logs it.
-func NewStdlibAcquirer(db sqlitestore.DB, blobs fetchports.BlobStore, clk fetchports.Clock, audit stdlibports.AuditSink, logger *slog.Logger, setAside recordseal.Reporter) *stdlibbridge.Bridge {
+// the given custody store and blob store: the go.dev/dl manifest+tarball
+// client, the googlesource commit resolver, the licence detector, and the
+// version-keyed fact cache. It is returned as a walk StdlibAcquirer via the
+// bridge so the resolver depends only on the narrow port. Both composition
+// roots (the driver here and the CLI container) share it so stdlib custody
+// behaves identically — including the assurance log: audit is wired here
+// rather than at each call site so neither root can be the quieter one.
+func NewStdlibAcquirer(store stdlibports.Store, blobs fetchports.BlobStore, clk fetchports.Clock, audit stdlibports.AuditSink, logger *slog.Logger) *stdlibbridge.Bridge {
 	godev := stdlibgodev.New()
 	acquirer := stdlibapp.NewAcquirer(
 		godev, godev,
 		stdlibgit.New(),
 		stdliblic.New(licdet.New()),
-		stdlibStore(db, setAside),
+		store,
 		blobs, clk, logger,
 	).WithAudit(audit)
 	return stdlibbridge.New(acquirer)
+}
+
+// NewTinyGoReleaseAcquirer wires the TinyGo release-archive measurement over the
+// given store. Offline it serves held measurements and wires no network client.
+func NewTinyGoReleaseAcquirer(store tinygoports.Store, clk fetchports.Clock, logger *slog.Logger, offline bool) *tinygobridge.Bridge {
+	if offline {
+		return tinygobridge.New(tinygoapp.NewOfflineAcquirer(store, clk, logger))
+	}
+	client := tinygogithub.New()
+	return tinygobridge.New(tinygoapp.NewAcquirer(client, client, store, clk, logger))
 }
 
 // NewOfflineStdlibAcquirer wires the offline standard-library chain-of-custody
@@ -128,29 +176,15 @@ func NewStdlibAcquirer(db sqlitestore.DB, blobs fetchports.BlobStore, clk fetchp
 // the same licence detector and version-keyed fact cache the online path uses
 // classify and persist the result. No network client is wired — the offline path
 // performs no I/O beyond the local filesystem. goBinary may be empty (PATH "go").
-func NewOfflineStdlibAcquirer(db sqlitestore.DB, goBinary string, clk fetchports.Clock, audit stdlibports.AuditSink, logger *slog.Logger, setAside recordseal.Reporter) *stdlibbridge.Bridge {
+func NewOfflineStdlibAcquirer(store stdlibports.Store, goBinary string, clk fetchports.Clock, audit stdlibports.AuditSink, logger *slog.Logger) *stdlibbridge.Bridge {
 	acquirer := stdlibapp.NewLocalAcquirer(
 		stdlibtoolchain.New(goBinary, logger),
 		stdliblocalsrc.New(),
 		stdliblic.New(licdet.New()),
-		stdlibStore(db, setAside),
+		store,
 		clk, logger,
 	).WithAudit(audit)
 	return stdlibbridge.New(acquirer)
-}
-
-// fetchStore is the fetch ledger naming each measurement it sets aside through
-// setAside; nil logs it.
-func fetchStore(db sqlitestore.DB, setAside recordseal.Reporter) *fetchsqlite.Store {
-	st := fetchsqlite.New(db)
-	st.ReportSetAside(setAside)
-	return st
-}
-
-func stdlibStore(db sqlitestore.DB, setAside recordseal.Reporter) *stdlibsqlite.Store {
-	st := stdlibsqlite.New(db)
-	st.ReportSetAside(setAside)
-	return st
 }
 
 // Option configures a composition root.
@@ -175,29 +209,6 @@ func applyOptions(opts []Option) options {
 	return o
 }
 
-// storeSet is the record stores whose reads set a generation aside, built with
-// one reporter so no root can wire one and forget another.
-type storeSet struct {
-	walks   *walksqlite.Store
-	extract *extstore.Store
-	licence *licsqlite.Store
-	callgr  *cgsqlite.Store
-	example *exsqlite.Store
-}
-
-func newStoreSet(db sqlitestore.DB, setAside recordseal.Reporter) storeSet {
-	s := storeSet{
-		walks: walksqlite.New(db), extract: extstore.New(db), licence: licsqlite.New(db),
-		callgr: cgsqlite.New(db), example: exsqlite.New(db),
-	}
-	s.walks.ReportSetAside(setAside)
-	s.extract.ReportSetAside(setAside)
-	s.licence.ReportSetAside(setAside)
-	s.callgr.ReportSetAside(setAside)
-	s.example.ReportSetAside(setAside)
-	return s
-}
-
 // Queries is the read-only consumption surface: every Query* use case the public
 // façade exposes. Write/extraction use cases are deliberately
 // absent — the pipeline orchestration shape stays free to change and is driven
@@ -219,9 +230,10 @@ type Queries struct {
 	FIPS       *fipsapp.QueryFIPSUseCase
 }
 
-// NewQueries opens mirror.db under storeRoot with all migrations applied, wires
-// the read-side store adapters, and constructs every Query* use case. It returns
-// the populated Queries together with a cleanup function that closes the DB.
+// NewQueries opens the store under storeRoot through the backend its
+// config.yaml selects (SQLite unless it names another) and builds every Query*
+// use case over it. It returns the populated
+// Queries together with a cleanup function that closes the DB.
 //
 // A store root that does not exist is refused, not created. Every use case
 // here answers from records some other run wrote, so a root this call brought
@@ -231,85 +243,59 @@ type Queries struct {
 // the read surface stays independent of the pipeline-construction machinery.
 func NewQueries(storeRoot string, opts ...Option) (*Queries, func() error, error) {
 	o := applyOptions(opts)
-	dbPath := filepath.Join(storeRoot, "mirror.db")
-	db, err := sqlitestore.Open(dbPath, Migrations(), sqlitestore.IntentRead)
+	cfg, err := loadStoreConfig(storeRoot)
 	if err != nil {
-		return nil, nil, fmt.Errorf("opening database: %w", err)
+		return nil, nil, err
 	}
-	cleanup := func() error {
-		if cerr := db.Close(); cerr != nil {
-			return fmt.Errorf("closing database: %w", cerr)
-		}
-		return nil
+	st, err := OpenStorage(context.Background(), storage.Request{StoreRoot: storeRoot, Intent: storage.IntentRead, SetAside: o.setAside, Config: cfg})
+	if err != nil {
+		return nil, nil, err //nolint:wrapcheck // the backend's text is what this root has always returned
 	}
-
-	stores := newStoreSet(db, o.setAside)
-	walkStore := stores.walks
-
-	q := &Queries{
-		Fetch:      fetchapp.NewQueryFetchUseCase(fetchStore(db, o.setAside)),
-		Walks:      walkapp.NewQueryWalksUseCase(walkStore),
-		License:    licapp.NewQueryLicenseUseCaseWithWalks(stores.licence, walkStore),
-		Interface:  ifaceapp.NewQueryInterfaceUseCase(ifacesqlite.New(db)),
-		CallGraph:  cgapp.NewQueryCallGraphUseCase(stores.callgr),
-		Examples:   exapp.NewQueryExamplesUseCase(stores.example),
-		Extraction: extractapp.NewQueryExtractionUseCase(stores.extract),
-		Vuln:       vulnapp.NewQueryVulnUseCase(vulnsqlite.New(db)),
-		ScanRuns:   vulnapp.NewQueryScanRunsUseCase(vulnsqlite.New(db), walkStore),
-		SBOM:       sbomapp.NewQuerySBOMUseCase(sbomstore.New(db)),
-		Directives: dirapp.NewQueryDirectivesUseCase(dirsqlite.New(db)),
-		GoDebug:    gdapp.NewQueryGoDebugUseCase(gdsqlite.New(db)),
-		Vendor:     venapp.NewQueryVendorUseCase(vensqlite.New(db)),
-		FIPS:       fipsapp.NewQueryFIPSUseCase(fipssqlite.New(db)),
-	}
-	return q, cleanup, nil
+	return NewQueriesFrom(st)
 }
 
-// ErrStoreSchemaNewer reports that the store carries schema migrations this build
-// does not know, so it was last written by a newer kanonarion and must not be
-// written to by this one.
-//
-// It is a sentinel rather than a bare message so a caller can route on it: the CLI
-// maps it onto its precondition-failure exit code, and an embedding consumer can
-// tell "upgrade the binary" apart from a corrupt or unreachable store.
-var ErrStoreSchemaNewer = errors.New("store schema is newer than this build supports")
+// NewQueriesFrom builds every Query* use case over a storage value. It takes
+// ownership of st: the returned cleanup closes it, and a refusal closes it
+// before returning. Writable is not consulted, so a store the driver refuses
+// can still be read to find out why.
+func NewQueriesFrom(st *storage.Storage) (*Queries, func() error, error) {
+	if err := st.Validate(); err != nil {
+		return nil, nil, errors.Join(err, closeStorage(st))
+	}
+	q := &Queries{
+		Fetch:      fetchapp.NewQueryFetchUseCase(st.Facts),
+		Walks:      walkapp.NewQueryWalksUseCase(st.Walks),
+		License:    licapp.NewQueryLicenseUseCaseWithWalks(st.Licenses, st.Walks),
+		Interface:  ifaceapp.NewQueryInterfaceUseCase(st.Interfaces),
+		CallGraph:  cgapp.NewQueryCallGraphUseCase(st.CallGraphs),
+		Examples:   exapp.NewQueryExamplesUseCase(st.Examples),
+		Extraction: extractapp.NewQueryExtractionUseCase(st.Extractions),
+		Vuln:       vulnapp.NewQueryVulnUseCase(st.Vulnerabilities),
+		ScanRuns:   vulnapp.NewQueryScanRunsUseCase(st.Vulnerabilities, st.WalkPresence),
+		SBOM:       sbomapp.NewQuerySBOMUseCase(st.SBOMs),
+		Directives: dirapp.NewQueryDirectivesUseCase(st.Directives),
+		GoDebug:    gdapp.NewQueryGoDebugUseCase(st.GoDebug),
+		Vendor:     venapp.NewQueryVendorUseCase(st.Vendor),
+		FIPS:       fipsapp.NewQueryFIPSUseCase(st.FIPS),
+	}
+	return q, func() error { return closeStorage(st) }, nil
+}
 
-// openStoreForWriting opens the store and refuses it if this build does not know
-// every migration already applied.
-//
-// The order — open without migrations, judge, then apply — is what makes the
-// refusal possible at all. Open(dsn, migrations) migrates in the same step, which
-// leaves no point at which the applied set can be read before the first DDL runs;
-// and because schema_migrations is keyed on (module, version), a store from a
-// newer build reports all of this build's migrations as applied and opens
-// cleanly. The mismatch only shows up later, as a failed write per statement.
-func openStoreForWriting(dbPath string) (sqlitestore.DB, error) {
-	db, err := sqlitestore.Open(dbPath, nil, sqlitestore.IntentCreate)
-	if err != nil {
-		return nil, fmt.Errorf("opening database: %w", err)
+// closeStorage releases a storage value; a nil Close has nothing to release.
+func closeStorage(st *storage.Storage) error {
+	if st == nil || st.Close == nil {
+		return nil
 	}
-	state, err := sqlitestore.ReadMigrationState(db, Migrations())
-	if err != nil {
-		return nil, errors.Join(err, db.Close())
-	}
-	if len(state.Unknown) > 0 {
-		return nil, errors.Join(fmt.Errorf(
-			"%w: %s carries %d migration(s) this build does not know (%s); upgrade kanonarion",
-			ErrStoreSchemaNewer, dbPath, len(state.Unknown), strings.Join(state.Unknown, ", "),
-		), db.Close())
-	}
-	if err := sqlitestore.Apply(db, Migrations()); err != nil {
-		return nil, errors.Join(fmt.Errorf("opening database: %w", err), db.Close())
-	}
-	return db, nil
+	return st.Close()
 }
 
 // Driver is the write/serving surface. It holds the individually
 // exported write use cases — the verified single-coordinate fetch/serve driver
-// that powers a gating module proxy, the local walk→extract driver, and the
-// validate-and-ingest boundary. The bulk extraction pipeline is deliberately
-// absent: it stays behind the CLI composition root so its orchestration shape is
-// free to change. Further drivers join this struct as additional fields.
+// that powers a gating module proxy, the local walk→extract driver, the
+// coordinate analysis and rescan drivers, and the validate-and-ingest
+// boundary. The stage use cases they compose stay behind this root, so their
+// orchestration shape is free to change. Further drivers join this struct as
+// additional fields.
 type Driver struct {
 	// FetchServe resolves a single ModuleCoordinate, fetching and verifying on a
 	// miss, and returns a BlobHandle for serving.
@@ -318,17 +304,38 @@ type Driver struct {
 	// its extraction stages, returning the records. Powers the local-walking
 	// gRPC client (source never leaves the machine).
 	LocalWalkExtract *driver.LocalWalkExtractUseCase
+	// CoordinateAnalysis runs, for a published module version, what
+	// `inspect <module>@<version>` runs: walk, extraction and vulnerability scan.
+	CoordinateAnalysis *driver.CoordinateAnalysisUseCase
+	// Rescan re-scans a stored walk against a fresh or pinned advisory
+	// snapshot, as `vuln-scan-rescan <walk-id>` does.
+	Rescan *driver.RescanUseCase
 	// ValidateIngest is the verified-fact boundary: it validates imported records
 	// against the same invariants extracted ones satisfy before persisting them
 	// (Ingest), and re-verifies records fail-closed on read (ReadVerified). Powers
 	// the consume side of the airgap bundle.
 	ValidateIngest *fetchapp.ValidateAndIngestUseCase
+
+	// staleness and stalenessTTL are the ledger and staleness.ttl the
+	// StalenessResolver method builds over.
+	staleness    staleports.Ledger
+	stalenessTTL time.Duration
 }
 
-// NewDriver opens mirror.db under storeRoot with all migrations applied, wires
-// the fetch pipeline (proxy, VCS, sumdb, blob store, fact store) with the OSS
-// no-op signer, and constructs the verified fetch/serve driver. It returns the
-// populated Driver together with a cleanup function that closes the DB. The
+// StalenessResolver builds the per-module staleness resolver over the
+// driver's ledger, with the store's staleness.ttl unless cfg names one.
+func (d *Driver) StalenessResolver(cfg StalenessResolverConfig) (*driver.StalenessResolver, error) {
+	if cfg.TTL == 0 {
+		cfg.TTL = d.stalenessTTL
+	}
+	return NewStalenessResolver(d.staleness, cfg)
+}
+
+// NewDriver opens the store under storeRoot through the backend its
+// config.yaml selects (SQLite unless it names another),
+// wires the fetch pipeline (proxy, VCS, sumdb, blob store, fact store) with the
+// OSS no-op signer, and constructs the verified fetch/serve driver. It returns
+// the populated Driver together with a cleanup function that closes the DB. The
 // caller MUST invoke cleanup when finished.
 //
 // The store root is created if absent. The proxy resolves $GOPROXY (or
@@ -336,11 +343,37 @@ type Driver struct {
 // surface only re-shapes the result, never the integrity checks. Diagnostics
 // are discarded: a serving consumer drives its own logging around the call.
 func NewDriver(storeRoot string, opts ...Option) (*Driver, func() error, error) {
+	exec, err := osSubprocessExecutor()
+	if err != nil {
+		return nil, nil, err
+	}
+	return newDriver(storeRoot, exec, opts...)
+}
+
+// NewDriverFrom builds the driver over a storage value, which it owns from
+// here on: the returned cleanup closes it, and a refusal closes it before
+// returning. storeRoot is where the checksum-database cache and the call-graph
+// child's configuration live, not where records are stored. No option applies
+// yet: the set-aside reporter travels in the backend's Request.
+func NewDriverFrom(st *storage.Storage, storeRoot string, opts ...Option) (*Driver, func() error, error) {
+	_ = opts
+	exec, err := osSubprocessExecutor()
+	if err != nil {
+		return nil, nil, errors.Join(err, closeStorage(st))
+	}
+	cfg, err := loadStoreConfig(storeRoot)
+	if err != nil {
+		return nil, nil, errors.Join(err, closeStorage(st))
+	}
+	return newDriverFrom(st, storeRoot, cfg, exec)
+}
+
+func osSubprocessExecutor() (extextractor.SubprocessExecutor, error) {
 	kanonarionBinary, err := os.Executable()
 	if err != nil {
-		return nil, nil, fmt.Errorf("resolving executable path for callgraph subprocess: %w", err)
+		return nil, fmt.Errorf("resolving executable path for callgraph subprocess: %w", err)
 	}
-	return newDriver(storeRoot, extextractor.NewOsSubprocessExecutor(kanonarionBinary, 0, nil), opts...)
+	return extextractor.NewOsSubprocessExecutor(kanonarionBinary, 0, nil), nil
 }
 
 // newDriver is NewDriver with the callgraph child's executor injected. The
@@ -352,32 +385,33 @@ func newDriver(storeRoot string, cgSubprocessExec extextractor.SubprocessExecuto
 	// This surface writes, so it creates the root it writes into: a first fetch
 	// or walk on a clean machine must not need a preparatory step. NewQueries,
 	// which only reads, deliberately does the opposite.
-	if err := os.MkdirAll(storeRoot, 0o750); err != nil {
-		return nil, nil, fmt.Errorf("creating store root %s: %w", storeRoot, err)
-	}
-
-	dbPath := filepath.Join(storeRoot, "mirror.db")
-	// The driver surface writes — it fetches, walks, extracts and ingests — so it
-	// takes the same refusal the CLI's operating path takes: a store carrying
-	// migrations this build does not know was written by a newer one, and every
-	// write against it fails per statement while the caller sees a successful open.
-	// NewQueries is deliberately not gated: it wires read stores only, and an
-	// operator diagnosing the refusal must still be able to read the store.
-	db, err := openStoreForWriting(dbPath)
+	cfg, err := loadStoreConfig(storeRoot)
 	if err != nil {
 		return nil, nil, err
 	}
-	cleanup := func() error {
-		if cerr := db.Close(); cerr != nil {
-			return fmt.Errorf("closing database: %w", cerr)
-		}
-		return nil
-	}
-
-	factStore, err := fetchsqlite.NewAuditingStore(fetchStore(db, o.setAside), filepath.Join(storeRoot, "audit.jsonl"))
+	st, err := OpenStorage(context.Background(), storage.Request{StoreRoot: storeRoot, Intent: storage.IntentCreate, SetAside: o.setAside, Config: cfg})
 	if err != nil {
-		_ = db.Close()
-		return nil, nil, fmt.Errorf("creating auditing fetch store: %w", err)
+		return nil, nil, err
+	}
+	return newDriverFrom(st, storeRoot, cfg, cgSubprocessExec)
+}
+
+// newDriverFrom is NewDriverFrom with the callgraph child's executor injected;
+// cfg is the configuration under storeRoot.
+func newDriverFrom(st *storage.Storage, storeRoot string, cfg configdomain.Config, cgSubprocessExec extextractor.SubprocessExecutor) (*Driver, func() error, error) {
+	if err := st.Validate(); err != nil {
+		return nil, nil, errors.Join(err, closeStorage(st))
+	}
+	if storeRoot == "" {
+		return nil, nil, errors.Join(errors.New("building driver: empty store root; the checksum-database cache and the call-graph child need one"), closeStorage(st))
+	}
+	// The driver writes — it fetches, walks, extracts and ingests — so it takes
+	// the refusal the CLI's operating path takes. NewQueriesFrom is deliberately
+	// not gated: an operator diagnosing the refusal must still be able to read.
+	if st.Writable != nil {
+		if err := st.Writable(context.Background()); err != nil {
+			return nil, nil, errors.Join(err, closeStorage(st))
+		}
 	}
 
 	// The driver serves the offline half of the product too — extract and the
@@ -391,39 +425,58 @@ func newDriver(storeRoot string, cgSubprocessExec extextractor.SubprocessExecuto
 	case fetchproxy.IsRefusal(err):
 		proxy = fetchproxy.Refusing(err)
 	case err != nil:
-		_ = db.Close()
-		return nil, nil, fmt.Errorf("creating proxy adapter: %w", err)
+		return nil, nil, errors.Join(fmt.Errorf("creating proxy adapter: %w", err), closeStorage(st))
 	default:
 		proxy = dp
 	}
 
-	blobs := localfs.New(storeRoot)
+	signer := st.Signer
+	if signer == nil {
+		signer = noopsigner.New()
+	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	clk := clock.System{}
 	stopwatch := clock.Monotonic{}
 	fetchUC := fetchapp.NewFetchModuleUseCase(
-		proxy, fetchvcs.New(), blobs, factStore,
-		fetchsumdb.New(filepath.Join(storeRoot, "sumdb")),
+		proxy, fetchvcs.New(), st.Blobs, st.Facts,
+		fetchsumdb.New(cfg.Storage.SumDBCacheDir(storeRoot)),
 		clk, stopwatch, "", logger,
-	).WithSigner(noopsigner.New(), factStore).
+	).WithSigner(signer, st.Attestations).
 		// The write side emits a refused demotion (or a permitted downgrade) into
 		// the same append-only log the writes go to. Wired here as well as in the
 		// CLI so the two paths append identically: a library consumer's assurance
 		// log is not a quieter one.
-		WithAudit(factStore)
-
-	localWalkExtract, err := newLocalWalkExtract(db, blobs, factStore, fetchUC, clk, stopwatch, logger, cgSubprocessExec, storeRoot, o.setAside)
-	if err != nil {
-		_ = db.Close()
-		return nil, nil, err
+		WithAudit(st.Audit)
+	// The driver holds no project go.sum, so a private module is refused rather
+	// than named to the proxy.
+	if goenv.HasNoProxyPatterns() {
+		fetchUC = fetchUC.WithPrivateModules(goenv.NoProxy, nil)
 	}
+
+	pipeline, err := newWalkExtract(st, fetchUC, clk, stopwatch, logger, cgSubprocessExec, storeRoot)
+	if err != nil {
+		return nil, nil, errors.Join(err, closeStorage(st))
+	}
+	scanWalk, rescanWalk := newScanPipeline(st, fetchUC, clk, logger, storeRoot, cfg.VulnDB.Mirror())
 
 	d := &Driver{
-		FetchServe:       fetchapp.NewServeModuleUseCase(fetchUC, blobs).WithAudit(factStore),
-		LocalWalkExtract: localWalkExtract,
-		ValidateIngest:   fetchapp.NewValidateAndIngestUseCase(factStore).WithAudit(factStore),
+		FetchServe: fetchapp.NewServeModuleUseCase(fetchUC, st.Blobs).WithAudit(st.Audit),
+		LocalWalkExtract: driver.NewLocalWalkExtractUseCase(pipeline.walk, pipeline.extract, pipeline.stages).
+			WithWorkspaceProbe(walkbuildlist.New("", logger)),
+		CoordinateAnalysis: driver.NewCoordinateAnalysisUseCase(pipeline.walk, pipeline.extract, scanWalk, pipeline.stages, privateModulePath),
+		Rescan:             driver.NewRescanUseCase(rescanWalk),
+		ValidateIngest:     fetchapp.NewValidateAndIngestUseCase(st.Facts).WithAudit(st.Audit),
+		staleness:          st.Staleness,
+		stalenessTTL:       cfg.Staleness.TTL,
 	}
-	return d, cleanup, nil
+	return d, func() error { return closeStorage(st) }, nil
+}
+
+// privateModulePath reports a module path GONOPROXY (else GOPRIVATE) names:
+// no proxy is ever asked about it.
+func privateModulePath(path string) bool {
+	_, ok := goenv.NoProxy(path)
+	return ok
 }
 
 // stagePipelineVersion is the per-stage extraction pipeline version the driver
@@ -431,25 +484,30 @@ func newDriver(storeRoot string, cgSubprocessExec extextractor.SubprocessExecuto
 // config knob: the driver runs the same built-in stages the CLI does.
 const stagePipelineVersion = "0.1.0"
 
-// newLocalWalkExtract wires the project-walk and extraction pipelines over the
-// shared DB and fetch infrastructure, then constructs the local walk→extract
-// driver. Full git/sumdb verification is on (the fetcher does not skip VCS); the
-// driver runs the full built-in stage set by default.
-func newLocalWalkExtract(
-	db sqlitestore.DB,
-	blobs *localfs.Store,
-	factStore *fetchsqlite.AuditingStore,
+// walkExtract is the walk and extraction pipeline the driver's walking entries
+// share, with the stage set they run by default.
+type walkExtract struct {
+	walk    *walkapp.ExecuteWalkUseCase
+	extract *extractapp.ExtractUseCase
+	stages  []string
+}
+
+// newWalkExtract wires the walk and extraction pipelines over the storage
+// value and fetch infrastructure. Full git/sumdb verification is on (the
+// fetcher does not skip VCS); the full built-in stage set is the default.
+func newWalkExtract(
+	st *storage.Storage,
 	fetchUC *fetchapp.FetchModuleUseCase,
 	clk clock.System,
 	stopwatch clock.Monotonic,
 	logger *slog.Logger,
 	cgSubprocessExec extextractor.SubprocessExecutor,
 	storeRoot string,
-	setAside recordseal.Reporter,
-) (*driver.LocalWalkExtractUseCase, error) {
-	stores := newStoreSet(db, setAside)
-	walkStore, extStore, licStore, cgStore, exStore := stores.walks, stores.extract, stores.licence, stores.callgr, stores.example
-	ifaceStore := ifacesqlite.New(db)
+) (walkExtract, error) {
+	blobs, factStore, audit := st.Blobs, st.Facts, st.Audit
+	walkStore, extStore, licStore, exStore := st.Walks, st.Extractions, st.Licenses, st.Examples
+	ifaceStore := st.Interfaces
+	cgStore := st.CallGraphOutcomes
 
 	// ---- project-walk pipeline ----
 	// The driver always fetches over the network, so transient proxy failures are
@@ -463,30 +521,30 @@ func newLocalWalkExtract(
 	// that dials.
 	var stdlibAcquirer *stdlibbridge.Bridge
 	if goenv.NetworkForbidden() {
-		stdlibAcquirer = NewOfflineStdlibAcquirer(db, "", clk, factStore, logger, setAside)
+		stdlibAcquirer = NewOfflineStdlibAcquirer(st.Stdlib, "", clk, audit, logger)
 	} else {
-		stdlibAcquirer = NewStdlibAcquirer(db, blobs, clk, factStore, logger, setAside)
+		stdlibAcquirer = NewStdlibAcquirer(st.Stdlib, blobs, clk, audit, logger)
 	}
 	resolver := walkapp.NewGraphResolver(walkgomod.New(), fetcher, blobs, clk, "", logger).
 		WithBuildListResolver(walkbuildlist.New("", logger)).
 		WithStdlibAcquirer(stdlibAcquirer, false)
 	walker := walkapp.NewWalker(resolver, fetcher, localFetcher, clk, stopwatch, 0, logger)
-	executeWalkUC := walkapp.NewExecuteWalkUseCase(walker, walkStore, "", "", logger).WithAudit(factStore)
+	executeWalkUC := walkapp.NewExecuteWalkUseCase(walker, walkStore, "", "", logger).WithAudit(audit)
 
 	// ---- extraction pipeline (full built-in stage set) ----
 	licExtractUC := licapp.NewExtractLicenseUseCase(licapp.Config{
 		Facts: factStore, Blobs: blobs, Licenses: licStore,
 		Detector: licdet.New(), Clock: clk, Stopwatch: stopwatch, Logger: logger,
-	}).WithAudit(factStore)
+	}).WithAudit(audit)
 	ifaceExtractUC := ifaceapp.NewExtractInterfaceUseCase(ifaceapp.Config{
 		Facts: factStore, Blobs: blobs, Store: ifaceStore,
 		Extractor: ifaceext.New(stagePipelineVersion, clk), Clock: clk, Stopwatch: stopwatch, Logger: logger,
-	}).WithAudit(factStore)
+	}).WithAudit(audit)
 	exExtractUC := exapp.NewExtractExampleUseCase(exapp.Config{
 		Facts: factStore, Blobs: blobs, Examples: exStore,
 		Parser: exgoast.New(),
 		Clock:  clk, Stopwatch: stopwatch, Logger: logger,
-	}).WithAudit(factStore)
+	}).WithAudit(audit)
 	stages := extstages.New()
 	// One reporter for both uses: the bound is sized from it once, and the
 	// headroom gate re-reads it before each analysis starts.
@@ -522,8 +580,57 @@ func newLocalWalkExtract(
 		Logger: logger,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("wiring extract use case: %w", err)
+		return walkExtract{}, fmt.Errorf("wiring extract use case: %w", err)
 	}
+	return walkExtract{walk: executeWalkUC, extract: extractUC.WithAudit(audit), stages: stages.Stages()}, nil
+}
 
-	return driver.NewLocalWalkExtractUseCase(executeWalkUC, extractUC.WithAudit(factStore), stages.Stages()), nil
+// newScanPipeline wires the walk scan and the re-scan over one module
+// scanner, as the CLI container does, at this host's frame. The call-graph
+// child is told the store root, as the extraction's is.
+func newScanPipeline(
+	st *storage.Storage,
+	fetchUC *fetchapp.FetchModuleUseCase,
+	clk clock.System,
+	logger *slog.Logger,
+	storeRoot string,
+	vulndbURL string,
+) (*vulnapp.ScanWalkUseCase, *vulnapp.RescanWalkUseCase) {
+	vulnStore, cgStore := st.Vulnerabilities, st.CallGraphs
+	callSites := reachability.NewCallSiteStoreReader(cgStore, cgapp.PipelineVersion).
+		WithReadFrame(func() (cgdomain.BuildFrame, string) {
+			return cganalyser.DeclaredFrame(goenv.Target{}, goenv.TinyGo{}), ""
+		})
+	routeAnnotator := reachability.NewDispatchAnnotator(callSites, logger)
+	cgSpawner := vulncallgraph.NewOsCallGraphSpawner(cgChildBinary(), 0, io.Discard).
+		WithExtraArgs(extextractor.CallGraphSubprocessArgs(storeRoot, ""))
+	moduleScanner := vulnapp.NewScanModuleUseCase(
+		st.Facts, st.Blobs, vulnStore, st.Walks,
+		govulncheck.New("v1", vulnStore).WithLogger(logger),
+		osvdb.New(nil, vulnStore, clk).WithLogger(logger).WithBase(vulndbURL),
+		reachability.New(),
+		clk, vulnapp.PipelineVersion, logger,
+	).WithCallGraphLoader(reachability.NewCallGraphStoreLoader(cgStore, cgapp.PipelineVersion)).
+		WithCallGraphSpawner(cgSpawner).
+		WithRouteAnnotator(routeAnnotator).
+		WithAudit(st.Audit)
+	fetcher := vulnfetch.NewFetchModuleAdapter(fetchUC)
+	scanWalk := vulnapp.NewScanWalkUseCase(st.Walks, vulnStore, moduleScanner, fetcher, clk, vulnapp.PipelineVersion, logger).
+		WithAudit(st.Audit).WithHostMemory(meminfo.New()).WithRouteAnnotator(routeAnnotator).
+		WithVendoredClosure(vulnvendorclosure.New(venlocalfs.New(nil)))
+	rescanWalk := vulnapp.NewRescanWalkUseCase(st.Walks, vulnStore, moduleScanner, fetcher, clk, vulnapp.PipelineVersion, logger).
+		WithAudit(st.Audit).WithHostMemory(meminfo.New()).WithRouteAnnotator(routeAnnotator).
+		WithVendoredClosure(vulnvendorclosure.New(venlocalfs.New(nil)))
+	return scanWalk, rescanWalk
+}
+
+// cgChildBinary is the binary a reachability scan spawns for a call graph:
+// this one, as for the extraction stage. Empty when it cannot be resolved,
+// which fails that one analysis rather than the driver.
+func cgChildBinary() string {
+	bin, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	return bin
 }

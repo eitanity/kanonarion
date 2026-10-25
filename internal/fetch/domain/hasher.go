@@ -39,8 +39,11 @@ type canonicalRecord struct {
 	FetchedAt       string `json:"fetched_at"`
 	GitCommitHash   string `json:"git_commit_hash"`
 	GitRef          string `json:"git_ref"`
-	GitURL          string `json:"git_url"`
-	GoModHash       string `json:"go_mod_hash"`
+	// GitSubdir is omitempty so a record written before the field existed, or
+	// one that hashed nothing, keeps its canonical bytes.
+	GitSubdir string `json:"git_subdir,omitempty"`
+	GitURL    string `json:"git_url"`
+	GoModHash string `json:"go_mod_hash"`
 	// MeasurementKind and the two validation-leg pairs below are covered by the
 	// hash on the same terms as every other field, and omitempty on the same
 	// terms as SumDBLookupFailed: a record written before they existed produces
@@ -79,6 +82,9 @@ type canonicalRecord struct {
 	VCSURLBinding      string `json:"vcs_url_binding,omitempty"`
 	VerificationDetail string `json:"verification_detail"`
 	VerificationStatus string `json:"verification_status"`
+	// VersionTime is omitempty so a record written before the field existed, or
+	// one whose source gave no time, keeps its canonical bytes.
+	VersionTime string `json:"version_time,omitempty"`
 	// Raw artefact digests. omitempty keeps the canonical bytes — and therefore
 	// the content hash — identical to a pre-digest record when unset, so legacy
 	// records still verify; when present they are covered by the hash and thus
@@ -160,6 +166,7 @@ func marshalCanonicalAt(r FactRecord, fetchedAt string) ([]byte, error) {
 		FetchedAt:          fetchedAt,
 		GitCommitHash:      r.GitCommitHash,
 		GitRef:             r.GitRef,
+		GitSubdir:          string(r.GitSubdir),
 		GitURL:             r.GitURL,
 		GoModHash:          r.GoModHash,
 		MeasurementKind:    r.MeasurementKind,
@@ -177,6 +184,7 @@ func marshalCanonicalAt(r FactRecord, fetchedAt string) ([]byte, error) {
 		VCSURLBinding:      r.VCSURLBinding,
 		VerificationDetail: r.VerificationDetail,
 		VerificationStatus: r.VerificationStatus,
+		VersionTime:        string(r.VersionTime),
 		ZipSHA256:          r.ZipSHA256,
 		ZipSHA384:          r.ZipSHA384,
 		ZipSHA512:          r.ZipSHA512,
@@ -226,6 +234,7 @@ func (CanonicalHasher) Unmarshal(data []byte) (FactRecord, error) {
 		GitURL:             c.GitURL,
 		GitRef:             c.GitRef,
 		GitCommitHash:      c.GitCommitHash,
+		GitSubdir:          RepoSubdir(c.GitSubdir),
 		VerificationStatus: c.VerificationStatus,
 		VerificationDetail: c.VerificationDetail,
 		FetchedAt:          t.UTC(),
@@ -241,6 +250,7 @@ func (CanonicalHasher) Unmarshal(data []byte) (FactRecord, error) {
 		VCSCheck:           c.VCSCheck,
 		VCSCheckSource:     c.VCSCheckSource,
 		VCSURLBinding:      c.VCSURLBinding,
+		VersionTime:        VersionTime(c.VersionTime),
 		ZipSHA256:          c.ZipSHA256,
 		ZipSHA384:          c.ZipSHA384,
 		ZipSHA512:          c.ZipSHA512,

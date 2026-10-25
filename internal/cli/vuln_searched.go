@@ -128,6 +128,18 @@ func (q *searchedVulnQuery) ListRecordGenerationsForModule(
 	return gens, nil
 }
 
+// FindingTimelines carries states and record points, not findings, so there is
+// nothing here to search.
+func (q *searchedVulnQuery) FindingTimelines(
+	ctx context.Context, findingID, walkID string,
+) ([]vulndomain.FindingTimeline, error) {
+	tls, err := q.inner.FindingTimelines(ctx, findingID, walkID)
+	if err != nil {
+		return tls, fmt.Errorf("listing finding timelines: %w", err)
+	}
+	return tls, nil
+}
+
 // searchedDiffScanRuns puts the findings a scan diff carries through the same
 // search, so a rung the diff prints is the rung vuln-show prints for the same
 // finding. The diff reads the store on its own path rather than through

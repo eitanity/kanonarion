@@ -105,6 +105,14 @@ type FactRecord struct {
 	// written before the field existed — neither of which is a negative
 	// finding. See VCSURLBinding.
 	VCSURLBinding string `json:"vcs_url_binding,omitempty"`
+
+	// GitSubdir is the directory the VCS leg hashed: RepoRoot for the root,
+	// empty where none was hashed and on records written before the field.
+	GitSubdir RepoSubdir `json:"git_subdir"`
+
+	// VersionTime is the version's own time as its module source reported it.
+	// Unknown on records written before the field and where the source gave none.
+	VersionTime VersionTime `json:"version_time"`
 }
 
 // NewFactRecord constructs a FactRecord from a FetchedModule. ContentHash is
@@ -123,6 +131,7 @@ func NewFactRecord(m FetchedModule) FactRecord {
 		GitURL:             m.GitReference.URL,
 		GitRef:             m.GitReference.Ref,
 		GitCommitHash:      m.GitReference.CommitHash,
+		GitSubdir:          RepoSubdir(m.GitReference.Subdir),
 		VerificationStatus: string(m.VerificationStatus),
 		VerificationDetail: m.VerificationDetail,
 		FetchedAt:          m.FetchedAt.UTC().Truncate(0),
@@ -138,6 +147,7 @@ func NewFactRecord(m FetchedModule) FactRecord {
 		VCSCheck:           string(m.VCSCheck),
 		VCSCheckSource:     m.VCSCheckSource,
 		VCSURLBinding:      string(m.VCSURLBinding),
+		VersionTime:        VersionTimeOf(m.VersionTime),
 	}
 }
 

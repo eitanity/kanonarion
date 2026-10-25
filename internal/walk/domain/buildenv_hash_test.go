@@ -2,6 +2,7 @@ package domain_test
 
 import (
 	"bytes"
+	"reflect"
 	"testing"
 
 	domain3 "github.com/eitanity/kanonarion/internal/walk/domain"
@@ -31,7 +32,7 @@ func TestWalkRecordHasher_BuildEnvRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unmarshal: %v", err)
 	}
-	if back.Graph.BuildEnv != rec.Graph.BuildEnv {
+	if !reflect.DeepEqual(back.Graph.BuildEnv, rec.Graph.BuildEnv) {
 		t.Errorf("BuildEnv after round-trip = %+v, want %+v", back.Graph.BuildEnv, rec.Graph.BuildEnv)
 	}
 }

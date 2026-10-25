@@ -245,6 +245,36 @@ func TestGenerateNotice_MissingRecord(t *testing.T) {
 	}
 }
 
+// A missing record's reason names the invocation that produces it, coordinate
+// filled in; a working tree enters the store only through a root-ingesting walk.
+func TestGenerateNotice_MissingRecordNamesItsProducer(t *testing.T) {
+	uc := buildNoticeUseCase(t, nil, nil, nil)
+	published := mustCoord(t, "example.com/unanalysed", "v1.0.0")
+	local, err := coordinate.NewLocalCoordinate("example.com/p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := uc.Generate(context.Background(), application.NoticeRequest{
+		Coordinates: []coordinate.ModuleCoordinate{published, local},
+	})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	want := map[string]string{
+		published.String(): "no license record: run: kanonarion license example.com/unanalysed@v1.0.0",
+		local.String(): "no license record: from the project's tree, run: " +
+			"kanonarion walk --gomod ./go.mod --analyse-root && kanonarion license example.com/p@local",
+	}
+	if len(result.ReviewItems) != len(want) {
+		t.Fatalf("review items = %+v, want one per coordinate", result.ReviewItems)
+	}
+	for _, item := range result.ReviewItems {
+		if got := item.Reason; got != want[item.Coordinate.String()] {
+			t.Errorf("%s: reason = %q, want %q", item.Coordinate, got, want[item.Coordinate.String()])
+		}
+	}
+}
+
 // TestGenerateNotice_EmbeddedComponentTexts verifies that a module with
 // vendored/subdirectory embedded components has their license texts collected
 // into NoticeEntry.EmbeddedComponents.

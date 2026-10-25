@@ -234,7 +234,8 @@ func callGraphSection(t *testing.T, rec cgdomain.CallGraphRecord, pkgFilter stri
 	t.Helper()
 	uc := testfakes.NewFakeQueryCallGraph()
 	uc.AddRecord(rec.Coordinate, cgapp.PipelineVersion, rec)
-	return sectionKeys(t, buildCallGraph(context.Background(), rec.Coordinate, uc, false, pkgFilter))
+	cg, _ := buildCallGraph(context.Background(), rec.Coordinate, uc, false, pkgFilter)
+	return sectionKeys(t, cg)
 }
 
 // TestContextJSON_CallGraphCountsAreEmittedAtZero pins the three counts.

@@ -496,3 +496,40 @@ func TestClassify_RemedyNamesACommandTheCoordinateCanRun(t *testing.T) {
 		}
 	}
 }
+
+// historyGraphs serves nothing and lists the generations of every frame.
+type historyGraphs struct {
+	fakeGraphs
+	recs []cgdomain.CallGraphRecord
+	err  error
+}
+
+func (h *historyGraphs) CallGraphHistory(context.Context, coordinate.ModuleCoordinate, string) ([]cgdomain.CallGraphRecord, error) {
+	return h.recs, h.err
+}
+
+// A root graph held only under another frame is unavailable for that reason,
+// with the remedy naming the tree its generations name.
+func TestClassify_FrameMiss(t *testing.T) {
+	host := cgdomain.BuildFrame{GOOS: "linux", GOARCH: "amd64"}
+	readFrame := func() (cgdomain.BuildFrame, string) { return host, "" }
+	held := &historyGraphs{recs: []cgdomain.CallGraphRecord{{Frame: cgdomain.BuildFrame{GOOS: "wasip1", GOARCH: "wasm"}, AnalysisRoot: "/src/app"}}}
+	root := rootclass.New(held, pipelineVersion).WithReadFrame(readFrame).
+		Classify(context.Background(), targetRooted(t), appCoord(t), routeFrom(handlerFrame("ServeHTTP", "*Server")))
+	if !strings.Contains(root.Reason, "the call graph of example.com/app@local is held under wasip1/wasm, not under this read's frame linux/amd64; read it with --target wasip1/wasm") ||
+		root.Remedy != "kanonarion local /src/app" {
+		t.Errorf("root = %+v", root)
+	}
+
+	for name, c := range map[string]*rootclass.Classifier{
+		"no frame":        rootclass.New(held, pipelineVersion),
+		"no history":      rootclass.New(&fakeGraphs{}, pipelineVersion).WithReadFrame(readFrame),
+		"history fails":   rootclass.New(&historyGraphs{err: errors.New("boom")}, pipelineVersion).WithReadFrame(readFrame),
+		"only this frame": rootclass.New(&historyGraphs{recs: []cgdomain.CallGraphRecord{{Frame: host}}}, pipelineVersion).WithReadFrame(readFrame),
+	} {
+		got := c.Classify(context.Background(), targetRooted(t), appCoord(t), routeFrom(handlerFrame("ServeHTTP", "*Server")))
+		if !strings.HasPrefix(got.Reason, "no call graph is stored for example.com/app@local") {
+			t.Errorf("%s: root = %+v", name, got)
+		}
+	}
+}

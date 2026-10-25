@@ -52,7 +52,7 @@ kanonarion uses these four words everywhere.
 
 ### 0. Before you start
 
-- **Go 1.27.2 or newer.** kanonarion never downloads a Go toolchain. It analyses
+- **Go 1.27.3 or newer.** kanonarion never downloads a Go toolchain. It analyses
   with the one you already have. If a project needs a newer Go than that, it
   uses a newer Go that is already unpacked on this machine — in `~/sdk`, or one
   the go command downloaded earlier into the module cache. If there is none, it

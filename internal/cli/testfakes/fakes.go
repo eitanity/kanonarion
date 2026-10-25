@@ -5,7 +5,7 @@ package testfakes
 
 import (
 	"context"
-	"fmt"
+	"maps"
 	"slices"
 	"sort"
 	"strings"
@@ -35,6 +35,7 @@ import (
 	licenseports "github.com/eitanity/kanonarion/internal/license/ports"
 	sbomapp "github.com/eitanity/kanonarion/internal/sbom/application"
 	sbomdomain "github.com/eitanity/kanonarion/internal/sbom/domain"
+	"github.com/eitanity/kanonarion/internal/versionorder"
 	vulnapp "github.com/eitanity/kanonarion/internal/vuln/application"
 	vulndomain "github.com/eitanity/kanonarion/internal/vuln/domain"
 	vulnports "github.com/eitanity/kanonarion/internal/vuln/ports"
@@ -203,11 +204,14 @@ func filterSummariesByIdentity(out []walkports.WalkSummary, filter walkports.Wal
 // environment and toolchain, exactly as the adapter does.
 func filterSummariesByBuild(out []walkports.WalkSummary, filter walkports.WalkFilter) []walkports.WalkSummary {
 	if filter.BuildEnv != nil {
-		// Mirrors the adapter's `goos = ? AND goarch = ?`: exact on both axes,
-		// with the empty string selecting the unrecorded frame rather than any.
+		// Mirrors the adapter's `goos = ? AND goarch = ? AND tinygo_target = ?`:
+		// exact on every axis, with the empty string selecting the unrecorded
+		// frame (or no TinyGo target) rather than any; a TinyGo name alone
+		// matches on the name.
 		var filtered []walkports.WalkSummary
 		for _, s := range out {
-			if s.GOOS == filter.BuildEnv.GOOS && s.GOARCH == filter.BuildEnv.GOARCH {
+			pair := filter.BuildEnv.IsTinyGoNameOnly() || (s.GOOS == filter.BuildEnv.GOOS && s.GOARCH == filter.BuildEnv.GOARCH)
+			if pair && s.TinyGoTarget == filter.BuildEnv.TinyGoTarget {
 				filtered = append(filtered, s)
 			}
 		}
@@ -219,6 +223,15 @@ func filterSummariesByBuild(out []walkports.WalkSummary, filter walkports.WalkFi
 		var filtered []walkports.WalkSummary
 		for _, s := range out {
 			if s.GoVersion == *filter.Toolchain {
+				filtered = append(filtered, s)
+			}
+		}
+		out = filtered
+	}
+	if filter.TinyGoVersion != nil {
+		var filtered []walkports.WalkSummary
+		for _, s := range out {
+			if s.TinyGoVersion == *filter.TinyGoVersion {
 				filtered = append(filtered, s)
 			}
 		}
@@ -394,6 +407,34 @@ func (f *FakeQueryLicense) LicenseHistory(_ context.Context, coord coordinate.Mo
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.history[coord.String()+"|"+pipelineVersion], nil
+}
+
+// PipelinesHeld derives the pipelines held from the keys AddRecord and
+// SetHistory filed, so a record added at a superseded pipeline is visible to
+// the superseded diagnostic exactly as the store's own index makes it.
+func (f *FakeQueryLicense) PipelinesHeld(_ context.Context, coord coordinate.ModuleCoordinate) ([]string, error) {
+	if f.Err != nil {
+		return nil, f.Err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return pipelinesKeyed(coord, f.records, f.history), nil
+}
+
+// pipelinesKeyed lists, sorted, the pipelines under which maps keyed
+// "coordinate|pipelineVersion" hold coord.
+func pipelinesKeyed[A, B any](coord coordinate.ModuleCoordinate, a map[string]A, b map[string]B) []string {
+	seen := map[string]bool{}
+	for _, keys := range [][]string{slices.Collect(maps.Keys(a)), slices.Collect(maps.Keys(b))} {
+		for _, k := range keys {
+			if c, p, ok := strings.Cut(k, "|"); ok && c == coord.String() {
+				seen[p] = true
+			}
+		}
+	}
+	out := slices.Collect(maps.Keys(seen))
+	slices.SortFunc(out, versionorder.ComparePipelineVersions)
+	return out
 }
 
 // ListLicenseRecords applies the filter the SQLite adapter applies: exact
@@ -758,6 +799,8 @@ type FakeQueryCallGraph struct {
 	// the composing listing decodes every generation of every multi-generation
 	// coordinate in the store to read fields no part of the answer looks at.
 	CoordinateListCalls int
+	// Unserved is what UnservedCoordinates answers, for the coordinates asked.
+	Unserved []cgports.UnservedCoordinate
 	// HistoryCalls counts the composing history read — the one that reconstructs
 	// and verifies every generation's edge set. It is counted separately from
 	// RecordReads because a caller that needs one COLUMN per generation must not
@@ -1273,8 +1316,14 @@ func (f *FakeQueryCallGraph) NotSearchedByCallees(context.Context, []string, str
 }
 
 // UnservedCoordinates names nothing, as NotSearchedByCallers.
-func (f *FakeQueryCallGraph) UnservedCoordinates(context.Context, []coordinate.ModuleCoordinate, string) ([]cgports.UnservedCoordinate, error) {
-	return nil, nil
+func (f *FakeQueryCallGraph) UnservedCoordinates(_ context.Context, coords []coordinate.ModuleCoordinate, _ string) ([]cgports.UnservedCoordinate, error) {
+	var out []cgports.UnservedCoordinate
+	for _, u := range f.Unserved {
+		if slices.Contains(coords, u.Coordinate) {
+			out = append(out, u)
+		}
+	}
+	return out, nil
 }
 
 // ---- example context ----
@@ -1327,6 +1376,17 @@ func (f *FakeQueryExamples) ExampleHistory(_ context.Context, coord coordinate.M
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.history[coord.String()+"|"+pipelineVersion], nil
+}
+
+// PipelinesHeld derives the pipelines held from the keys AddRecord and
+// SetHistory filed.
+func (f *FakeQueryExamples) PipelinesHeld(_ context.Context, coord coordinate.ModuleCoordinate) ([]string, error) {
+	if f.Err != nil {
+		return nil, f.Err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return pipelinesKeyed(coord, f.records, f.history), nil
 }
 
 func (f *FakeQueryExamples) AddRecord(coord coordinate.ModuleCoordinate, pipelineVersion string, rec exdomain.ExampleRecord) {
@@ -1603,6 +1663,8 @@ type FakeQueryVuln struct {
 	// of the records maps because the condition it exists to reproduce is
 	// exactly a coordinate whose records no read returns.
 	generations map[string][]vulnports.VulnerabilityRecordGeneration
+	// timelines is the answer FindingTimelines gives.
+	timelines []vulndomain.FindingTimeline
 }
 
 // SetRecordGenerations seeds the store census for a coordinate.
@@ -1774,9 +1836,27 @@ func (f *FakeQueryVuln) ListRecordsByFindingID(_ context.Context, _, walkID stri
 	}
 	recs, ok := f.byIDForWalk[walkID]
 	if !ok {
-		return nil, fmt.Errorf("no vulnerability scan run for walk %s", walkID)
+		return nil, vulnports.WalkNotScanned{WalkID: walkID}
 	}
 	return recs, nil
+}
+
+// SetTimelines seeds the answer FindingTimelines gives.
+func (f *FakeQueryVuln) SetTimelines(tls []vulndomain.FindingTimeline) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.timelines = tls
+}
+
+// FindingTimelines returns the seeded timelines beside PartialErr, or Err.
+func (f *FakeQueryVuln) FindingTimelines(_ context.Context, _, walkID string) ([]vulndomain.FindingTimeline, error) {
+	if f.Err != nil {
+		return nil, f.Err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.byIDWalkSeen = walkID
+	return f.timelines, f.PartialErr
 }
 
 // FakeQueryScanRuns implements cli.QueryScanRunsUseCase.
@@ -1980,7 +2060,7 @@ type FakeExtractFIPS struct {
 	Result fipsdomain.Record
 }
 
-func (f *FakeExtractFIPS) Extract(_ context.Context, _ string, _ configdomain.FIPSPolicy) (fipsdomain.Record, error) {
+func (f *FakeExtractFIPS) Extract(_ context.Context, _ string, _ configdomain.FIPSPolicy, _ string) (fipsdomain.Record, error) {
 	return f.Result, f.Err
 }
 

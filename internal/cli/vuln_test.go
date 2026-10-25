@@ -109,7 +109,7 @@ func TestPrintVulnScanResult_FindingsOnStdout(t *testing.T) {
 	affected := []vulnScanAffected{{coord: "github.com/gorilla/csrf@v1.7.3", record: rec}}
 
 	var stdout bytes.Buffer
-	if err := printVulnScanResult(run, affected, nil, nil, nil, vulnScanReachability{}, vulnScanToolchainJSON{}, nil, false, &stdout); err != nil {
+	if err := printVulnScanResult(run, affected, nil, nil, nil, nil, vulnScanReachability{}, vulnScanToolchainJSON{}, nil, false, &stdout); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -136,7 +136,7 @@ func TestPrintVulnScanResult_CleanWalkNoFindingsBlock(t *testing.T) {
 	}
 
 	var stdout bytes.Buffer
-	if err := printVulnScanResult(run, nil, nil, nil, nil, vulnScanReachability{}, vulnScanToolchainJSON{}, nil, false, &stdout); err != nil {
+	if err := printVulnScanResult(run, nil, nil, nil, nil, nil, vulnScanReachability{}, vulnScanToolchainJSON{}, nil, false, &stdout); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -214,7 +214,7 @@ func TestPrintVulnScanResult_JSONOnStdout(t *testing.T) {
 	}
 
 	var stdout bytes.Buffer
-	if err := printVulnScanResult(run, nil, nil, nil, nil, vulnScanReachability{}, vulnScanToolchainJSON{}, nil, true, &stdout); err != nil {
+	if err := printVulnScanResult(run, nil, nil, nil, nil, nil, vulnScanReachability{}, vulnScanToolchainJSON{}, nil, true, &stdout); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 

@@ -387,7 +387,8 @@ func TestParse_StalenessTTL(t *testing.T) {
 		// 0 must be reachable: it is the off switch for serving, and merging it
 		// with "absent" would make it unreachable.
 		{"zero disables serving", "staleness:\n  ttl: 0s\n", 0, false},
-		{"empty value keeps the default", "staleness:\n  ttl: \"\"\n", domain.DefaultStalenessTTL, false},
+		{"key with no value keeps the default", "staleness:\n  ttl:\n", domain.DefaultStalenessTTL, false},
+		{"empty string is refused as config set refuses it", "staleness:\n  ttl: \"\"\n", 0, true},
 		{"block with no keys keeps the default", "staleness:\n", domain.DefaultStalenessTTL, false},
 		{"non-duration is refused", "staleness:\n  ttl: soon\n", 0, true},
 		{"negative is refused", "staleness:\n  ttl: -1h\n", 0, true},

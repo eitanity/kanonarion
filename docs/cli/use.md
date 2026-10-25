@@ -15,9 +15,10 @@ the network.
 
 It answers in the frame of one walk of the target coordinate, then
 materialises each module into the cache's `cache/download/<path>/@v/` layout
-(`.zip`, `.mod`, `.info`, `.ziphash`, `.lock`). Every copied artefact is
-**re-verified against the recorded hash** (`dirhash` over the zip and go.mod);
-a checksum mismatch fails that module rather than writing suspect bytes.
+(`.zip`, `.mod`, `.info`, `.ziphash`, `.lock`). The store hashes each module's
+zip and go.mod against their recorded h1 **before anything is written**; a module
+whose stored copy does not match has nothing written for it and the run exits
+`10`. A file already in the cache is left as it is and not re-hashed.
 
 By default only the target module is copied. With `--recursive`, every node in
 the walk's resolved graph is copied - the full closure that walk selected.
@@ -171,6 +172,7 @@ whether every selected node landed.
 | 2 | Nothing reached the cache, though at least one module had an artefact to copy |
 | 3 | The run was interrupted (see [Interrupting a run](conventions.md#interrupting-a-run)) |
 | 4 | The named walk id, or the target coordinate, is not in the store |
+| 10 | A module's stored zip or go.mod does not hash to its identity; nothing was written for it, and the message names the `kanonarion fetch <module>@<version> --force` that replaces it |
 | 20 | The walk id is rooted at a different target, or the invocation is malformed |
 
 ## Flags
@@ -212,6 +214,14 @@ never opens a socket. See
 - `.info` / `.ziphash` / `.lock` files are only written when absent; existing
   cache entries are left untouched.
 - The recorded VCS origin (git URL, commit, ref) is written into the `.info`
-  file so provenance is preserved in the cache.
+  file so provenance is preserved in the cache. For a module in a subdirectory
+  of its repository the `.info` also carries `Subdir`, the module's directory as
+  the go command names it (`client` for `go.etcd.io/etcd/client/v3`). It is left
+  out where the record names no directory, as a record from an earlier version
+  does.
+- The `.info` `Time` is the version's own time, as the module proxy or module
+  cache reported it when the module was fetched. It is left out where the record
+  holds none (a record from an earlier version, or a source that gave no time),
+  and the go command then reports the version's time as unknown.
 
 See also: [`walk`](walk.md), [`fetch`](fetch.md).

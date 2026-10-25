@@ -56,7 +56,7 @@ func renderFreshScan(t *testing.T, searcher negativeSearcher, jsonOut bool) stri
 func TestFreshScanReport_StatesTheSearchedRung(t *testing.T) {
 	var unsearchedText bytes.Buffer
 	plain := freshScanRollups()
-	if err := printVulnScanResult(vuldomain.WalkScanRun{ID: "run-1"}, plain.affected, plain.withdrawn, plain.failed, plain.unscannable,
+	if err := printVulnScanResult(vuldomain.WalkScanRun{ID: "run-1"}, plain.affected, plain.withdrawn, nil, plain.failed, plain.unscannable,
 		vulnScanReachability{}, vulnScanToolchainJSON{}, nil, false, &unsearchedText); err != nil {
 		t.Fatalf("printVulnScanResult: %v", err)
 	}
@@ -89,7 +89,7 @@ func TestFreshScanReport_NilSearcherLeavesOutputUnchanged(t *testing.T) {
 	for _, jsonOut := range []bool{false, true} {
 		var want bytes.Buffer
 		plain := freshScanRollups()
-		if err := printVulnScanResult(vuldomain.WalkScanRun{ID: "run-1"}, plain.affected, plain.withdrawn, plain.failed, plain.unscannable,
+		if err := printVulnScanResult(vuldomain.WalkScanRun{ID: "run-1"}, plain.affected, plain.withdrawn, nil, plain.failed, plain.unscannable,
 			vulnScanReachability{}, vulnScanToolchainJSON{}, nil, jsonOut, &want); err != nil {
 			t.Fatalf("printVulnScanResult: %v", err)
 		}

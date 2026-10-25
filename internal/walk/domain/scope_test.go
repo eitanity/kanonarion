@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
@@ -145,7 +146,7 @@ func TestFilterGraphToScope_PreservesBuildEnv(t *testing.T) {
 		BuildEnv: BuildEnv{GOOS: "linux", GOARCH: "amd64", GoVersion: "go1.26.4"},
 	}
 	out := FilterGraphToScope(in, "example.com/main", nil)
-	if out.BuildEnv != in.BuildEnv {
+	if !reflect.DeepEqual(out.BuildEnv, in.BuildEnv) {
 		t.Errorf("BuildEnv after scope filter = %+v, want %+v", out.BuildEnv, in.BuildEnv)
 	}
 }

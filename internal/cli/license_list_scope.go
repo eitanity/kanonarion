@@ -7,6 +7,7 @@ import (
 	"sort"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	licapp "github.com/eitanity/kanonarion/internal/license/application"
 	licports "github.com/eitanity/kanonarion/internal/license/ports"
 )
@@ -68,6 +69,9 @@ type licenceListScope struct {
 	// by running `go list` over a working tree. It is kept because it is the one
 	// argument that turns a per-module remedy into a single runnable command.
 	walkID string
+	// supersededOnly counts a coordinate's held generations when every one
+	// derives from a superseded artefact, and answers 0 otherwise.
+	supersededOnly func(coordinate.ModuleCoordinate) int
 	// build is the go.mod this scope's modules are resolved under, read through
 	// the directive parser so a local-path replace can be given the remedy that
 	// populates it. The zero value means this run could not read one, and a
@@ -107,7 +111,7 @@ func resolveLicenceListScope(ctx context.Context, f licenceScopeFlags, ctr *Cont
 	if !f.named() {
 		return nil, nil
 	}
-	scope := &licenceListScope{}
+	scope := &licenceListScope{supersededOnly: licenceSupersededOnly(ctx, ctr)}
 	switch {
 	case f.walkID != "":
 		scope.kind, scope.value, scope.walkID = "walk", f.walkID, f.walkID
@@ -138,6 +142,7 @@ func resolveLicenceListScope(ctx context.Context, f licenceScopeFlags, ctr *Cont
 	if err != nil {
 		return nil, err
 	}
+	scope.build.noteWorkspaceMembers(mods, f.gomodPath)
 	seen := map[string]bool{}
 	for _, m := range mods {
 		coord := m.answering()
@@ -257,7 +262,11 @@ func (s *licenceListScope) classifyAbsence(m scopeModule, coord coordinate.Modul
 		a := licenceAbsence{coord: coord, kind: absenceLocalReplace,
 			reason: "replaced by a local path: what builds is that directory, not this coordinate, " +
 				"so extracting the coordinate never produces its record"}
-		if m.localPath != "" {
+		switch {
+		case m.localPath != "" && coord.IsLocal():
+			a.reason = "replaced by the local path " + m.localPath +
+				": its record is filed at " + coord.String() + " once a project walk has read the directory and extract has analysed it"
+		case m.localPath != "":
 			a.reason = "replaced by the local path " + m.localPath +
 				": what builds is that directory, not this coordinate, " +
 				"so extracting the coordinate never produces its record"
@@ -277,6 +286,11 @@ func (s *licenceListScope) classifyAbsence(m scopeModule, coord coordinate.Modul
 			remedy: missingLicenceRecordRemedy(coord, build)}
 
 	default:
+		if n := s.countSupersededOnly(coord); n > 0 {
+			return licenceAbsence{coord: coord, kind: absenceNotExtracted,
+				reason: fetchdomain.SupersededOnlyStatement(n, coord),
+				remedy: "kanonarion license " + coord.String()}
+		}
 		remedy := s.bulkExtraction()
 		if remedy == "" {
 			remedy = missingLicenceRecordRemedy(coord, build)
@@ -441,4 +455,44 @@ func writeAbsenceGroup(stdout io.Writer, g absenceGroup) error {
 		return fmt.Errorf("writing scope: %w", err)
 	}
 	return nil
+}
+
+// countSupersededOnly is supersededOnly for a scope that may carry none.
+func (s *licenceListScope) countSupersededOnly(coord coordinate.ModuleCoordinate) int {
+	if s.supersededOnly == nil {
+		return 0
+	}
+	return s.supersededOnly(coord)
+}
+
+// licenceSupersededOnly reads, for one coordinate, whether every licence
+// generation the store holds derives from a superseded artefact. A read that
+// fails answers 0: the plain absence it then reports is still true.
+func licenceSupersededOnly(ctx context.Context, ctr *Container) func(coordinate.ModuleCoordinate) int {
+	if ctr == nil || ctr.QueryLicense == nil {
+		return nil
+	}
+	reader, ok := asSupersededReader(ctr.QueryFetch)
+	if !ok {
+		return nil
+	}
+	return func(coord coordinate.ModuleCoordinate) int {
+		if coord.IsLocal() {
+			return 0
+		}
+		recs, err := ctr.QueryLicense.LicenseHistory(ctx, coord, licapp.PipelineVersion)
+		if err != nil || len(recs) == 0 {
+			return 0
+		}
+		ids, err := reader.SupersededArtefacts(ctx, coord)
+		if err != nil {
+			return 0
+		}
+		for _, r := range recs {
+			if !ids[r.ArtefactIdentity] {
+				return 0
+			}
+		}
+		return len(recs)
+	}
 }

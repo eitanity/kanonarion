@@ -29,10 +29,18 @@ func printContextFull(out contextOutput, stdout io.Writer) error {
 	printFullInterface(w, out.Interface, out.Commands.Interface)
 	w.printf("\n=== Call Graph ===\n")
 	printFullCallGraph(w, out.CallGraph, out.Commands.CallGraph)
+	w.printf("\n=== Capability ===\n")
+	printCapabilityLines(w, "", "", out.Capability)
 	w.printf("\n=== Examples ===\n")
 	printFullExamples(w, out.Examples, out.Commands.Examples)
 	w.printf("\n=== Vulnerabilities ===\n")
 	printFullVulnerabilities(w, out.Vulnerabilities, out.Commands)
+	// Null native coverage is a producer that derived none; the summary prints
+	// nothing for it either.
+	if out.Native != nil && w.err == nil {
+		w.printf("\n=== Native Code ===\n")
+		printNativeCoverageAs(w.w, out.Native, "State:        ", "")
+	}
 	return w.err
 }
 
@@ -115,8 +123,12 @@ func printFullLicense(w *errWriter, l contextLicense, cmd string) {
 		}
 	case sectionStatusReadError:
 		w.printf("(failed: %s)\n", l.Error)
+	case sectionStatusConflict:
+		w.printf("(%s)\n", l.Error)
 	case sectionStatusSetAside:
 		w.printf("(no record this build can serve — %s)\n", l.Error)
+	case sectionStatusSuperseded:
+		w.printf("(superseded — %s)\n", l.Error)
 	default:
 		if l.SPDX != "" {
 			w.printf("SPDX:         %s\n", l.SPDX)
@@ -132,19 +144,27 @@ func printFullLicense(w *errWriter, l contextLicense, cmd string) {
 		if l.Error != "" {
 			w.printf("Detail:       %s\n", l.Error)
 		}
+		if c := l.Custody; c != nil {
+			w.printf("Basis:        %s\n", c.Statement)
+		}
 		printSetAsideLines(w, "Set Aside:    ", l.SetAside)
-		switch l.CopyrightStatus {
-		case "not_analysed", "":
-			w.printf("Copyright:    (not analysed)\n")
-		case "none_found":
-			w.printf("Copyright:    (none found)\n")
-		case "extraction_failed":
-			w.printf("Copyright:    (extraction failed)\n")
-		case "found":
-			w.printf("Copyright (%d statements):\n", len(l.CopyrightStatements))
-			for _, s := range l.CopyrightStatements {
-				w.printf("  %s  [%s]\n", s.Verbatim, s.Source)
-			}
+		printFullCopyright(w, l)
+	}
+}
+
+// printFullCopyright is the licence section's copyright lines.
+func printFullCopyright(w *errWriter, l contextLicense) {
+	switch l.CopyrightStatus {
+	case "not_analysed", "":
+		w.printf("Copyright:    (not analysed)\n")
+	case "none_found":
+		w.printf("Copyright:    (none found)\n")
+	case "extraction_failed":
+		w.printf("Copyright:    (extraction failed)\n")
+	case "found":
+		w.printf("Copyright (%d statements):\n", len(l.CopyrightStatements))
+		for _, s := range l.CopyrightStatements {
+			w.printf("  %s  [%s]\n", s.Verbatim, s.Source)
 		}
 	}
 }
@@ -159,6 +179,8 @@ func printFullInterface(w *errWriter, ifc contextInterface, cmd string) {
 		}
 	case sectionStatusReadError:
 		w.printf("(failed: %s)\n", ifc.Error)
+	case sectionStatusConflict:
+		w.printf("(%s)\n", ifc.Error)
 	default:
 		w.printf("Status:       %s\n", ifc.Status)
 		if ifc.ExtractedAt != "" {
@@ -199,35 +221,46 @@ func printFullCallGraph(w *errWriter, cg contextCallGraph, cmd string) {
 		}
 	case sectionStatusReadError:
 		w.printf("(failed: %s)\n", cg.Error)
+	case sectionStatusConflict:
+		w.printf("(%s)\n", cg.Error)
+	case sectionStatusOtherFrame:
+		w.printf("%s\n", otherFrameSection(cg))
+	case sectionStatusSuperseded:
+		w.printf("(superseded — %s)\n", cg.Error)
 	default:
-		w.printf("Status:       %s\n", cg.Status)
-		if cg.ExtractedAt != "" {
-			w.printf("Extracted At: %s\n", cg.ExtractedAt)
+		printFullCallGraphRecord(w, cg)
+	}
+}
+
+// printFullCallGraphRecord is the call-graph section of a served record.
+func printFullCallGraphRecord(w *errWriter, cg contextCallGraph) {
+	w.printf("Status:       %s\n", cg.Status)
+	if cg.ExtractedAt != "" {
+		w.printf("Extracted At: %s\n", cg.ExtractedAt)
+	}
+	w.printf("Algorithm:    %s\n", cg.Algorithm)
+	w.printf("Nodes:        %d\n", cg.NodeCount)
+	w.printf("Edges:        %d\n", cg.EdgeCount)
+	if cg.Error != "" {
+		w.printf("Detail:       %s\n", cg.Error)
+	}
+	if cg.EntryPointCount != nil && *cg.EntryPointCount > 0 {
+		w.printf("Entry Points: %d\n", *cg.EntryPointCount)
+	} else if len(cg.EntryPointsByPackage) > 0 {
+		w.printf("Entry Points by Package:\n")
+		pkgs := make([]string, 0, len(cg.EntryPointsByPackage))
+		for pkg := range cg.EntryPointsByPackage {
+			pkgs = append(pkgs, pkg)
 		}
-		w.printf("Algorithm:    %s\n", cg.Algorithm)
-		w.printf("Nodes:        %d\n", cg.NodeCount)
-		w.printf("Edges:        %d\n", cg.EdgeCount)
-		if cg.Error != "" {
-			w.printf("Detail:       %s\n", cg.Error)
+		sort.Strings(pkgs)
+		for _, pkg := range pkgs {
+			w.printf("  %s: %d\n", pkg, cg.EntryPointsByPackage[pkg])
 		}
-		if cg.EntryPointCount != nil && *cg.EntryPointCount > 0 {
-			w.printf("Entry Points: %d\n", *cg.EntryPointCount)
-		} else if len(cg.EntryPointsByPackage) > 0 {
-			w.printf("Entry Points by Package:\n")
-			pkgs := make([]string, 0, len(cg.EntryPointsByPackage))
-			for pkg := range cg.EntryPointsByPackage {
-				pkgs = append(pkgs, pkg)
-			}
-			sort.Strings(pkgs)
-			for _, pkg := range pkgs {
-				w.printf("  %s: %d\n", pkg, cg.EntryPointsByPackage[pkg])
-			}
-		}
-		if len(cg.EntryPoints) > 0 {
-			w.printf("Entry Points:\n")
-			for _, ep := range cg.EntryPoints {
-				w.printf("  %s\n", ep)
-			}
+	}
+	if len(cg.EntryPoints) > 0 {
+		w.printf("Entry Points:\n")
+		for _, ep := range cg.EntryPoints {
+			w.printf("  %s\n", ep)
 		}
 	}
 }
@@ -242,8 +275,12 @@ func printFullExamples(w *errWriter, ex contextExamples, cmd string) {
 		}
 	case sectionStatusReadError:
 		w.printf("(failed: %s)\n", ex.Error)
+	case sectionStatusConflict:
+		w.printf("(%s)\n", ex.Error)
 	case sectionStatusSetAside:
 		w.printf("(no record this build can serve — %s)\n", ex.Error)
+	case sectionStatusSuperseded:
+		w.printf("(superseded — %s)\n", ex.Error)
 	default:
 		w.printf("Status:       %s\n", ex.Status)
 		if ex.ExtractedAt != "" {
@@ -288,6 +325,14 @@ func printFullVulnerabilities(w *errWriter, v contextVulnerabilities, cmd contex
 		}
 	case sectionStatusReadError:
 		w.printf("(failed: %s)\n", v.Error)
+	case sectionStatusConflict:
+		w.printf("(%s)\n", v.Error)
+	case sectionStatusSuperseded:
+		w.printf("(superseded — %s)\n", v.Error)
+		printSetAsideLines(w, "Set Aside:    ", v.SetAside)
+	case sectionStatusSetAside:
+		w.printf("(no record this build can serve — %s)\n", v.Error)
+		printSetAsideLines(w, "Set Aside:    ", v.SetAside)
 	default:
 		w.printf("Status:       %s\n", v.Status)
 		if v.WalkStatus != "" {
@@ -303,6 +348,7 @@ func printFullVulnerabilities(w *errWriter, v contextVulnerabilities, cmd contex
 			w.printf("Reason:       %s\n", v.Reason)
 		}
 		printFullScanBasis(w, v)
+		printSetAsideLines(w, "Set Aside:    ", v.SetAside)
 		for _, cve := range v.Findings {
 			printFullCVE(w, cve)
 		}
@@ -370,4 +416,9 @@ func printFullCVE(w *errWriter, cve contextCVE) {
 	if cve.Soundness != vuldomain.SoundnessNotStated {
 		w.printf("    Soundness: %s — %s\n", cve.Soundness, cve.SoundnessReason)
 	}
+}
+
+// otherFrameSection is a call-graph section held only under other frames.
+func otherFrameSection(cg contextCallGraph) string {
+	return "(held under " + strings.Join(cg.HeldFrames, ", ") + " — read with " + strings.Join(cg.ReadWith, " or ") + ")"
 }

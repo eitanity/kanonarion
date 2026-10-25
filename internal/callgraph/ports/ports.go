@@ -143,6 +143,9 @@ var ErrUnlocatedWorktree = errors.New("worktree call graph record states no anal
 type AnalyserMetadata struct {
 	Algorithm domain.CallGraphAlgorithm
 	Version   string
+	// Frame is the build frame this analyser runs under, for a record written
+	// without running it (an exclusion), which must still name its frame.
+	Frame domain.BuildFrame
 }
 
 // CallGraphAnalyser performs static call graph analysis on a module's source.
@@ -360,6 +363,10 @@ type UnservedCoordinate struct {
 	// AnalysisRoot is the working tree the newest generation of a local
 	// coordinate names, empty when none does.
 	AnalysisRoot string
+	// Frames, when set, are the build frames the coordinate's generations at the
+	// asked pipeline were extracted under, none of them the read's: it is held,
+	// only not for this read.
+	Frames []domain.BuildFrame
 }
 
 // CallGraphUnservedReader is the optional capability of naming what an edge
@@ -638,6 +645,12 @@ type CallGraphSourceReader interface {
 	GetCallGraphRecordFrom(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string, req domain.ComposeRequest) (domain.CallGraphRecord, bool, error)
 }
 
+// CallGraphFrameSelector is the optional read configuration naming the build
+// frame every composing read selects when its request names none.
+type CallGraphFrameSelector interface {
+	WithReadFrame(frame domain.BuildFrame)
+}
+
 // WorktreeGenerationReader is the optional tree-scoped read: the generation the
 // ledger holds for ONE working tree, named by the root it was analysed in.
 //
@@ -669,7 +682,10 @@ type WorktreeGenerationReader interface {
 	//
 	// Several generations of one state are ordered by the completeness ladder, so
 	// a re-analysis that came back with less than an earlier one does not answer.
-	WorktreeGeneration(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion, root, scanDigest string) (domain.CallGraphRecord, bool, error)
+	//
+	// frame restricts the answer to generations extracted under that build frame:
+	// one tree holds a record per frame, and each run reuses only its own.
+	WorktreeGeneration(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion, root, scanDigest string, frame domain.BuildFrame) (domain.CallGraphRecord, bool, error)
 }
 
 // IdenticalGenerationReader is the optional after-the-fact read: the generation
@@ -837,6 +853,9 @@ type ModuleCacheReport struct {
 	// Failures renders the coordinates that were not written and why, bounded for
 	// a log line. Empty when every one of them was.
 	Failures string
+	// Tampered is a stored artefact refused for not hashing to its identity. The
+	// analysis stops on it rather than loading without those bytes.
+	Tampered error
 }
 
 // Complete reports whether the whole requested closure reached the cache.

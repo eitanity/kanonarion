@@ -24,6 +24,7 @@ type Kind int
 const (
 	ModuleFetch Kind = iota
 	StdlibCustody
+	TinyGoCustody
 	ModuleScan
 	CallGraph
 	Extraction
@@ -35,6 +36,7 @@ const (
 var nouns = [numKinds][2]string{
 	ModuleFetch:     {"module fetch", "module fetches"},
 	StdlibCustody:   {"stdlib custody check", "stdlib custody checks"},
+	TinyGoCustody:   {"TinyGo custody check", "TinyGo custody checks"},
 	ModuleScan:      {"module scan", "module scans"},
 	CallGraph:       {"call-graph build", "call-graph builds"},
 	Extraction:      {"extraction stage", "extraction stages"},

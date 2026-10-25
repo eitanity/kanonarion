@@ -209,6 +209,13 @@ func Migrations() []sqlitestore.Migration {
 		// value is omitted from the canonical JSON, so every existing record
 		// verifies its content hash unchanged and nothing is re-derived.
 		{Module: "fetch", Version: 10, SQL: `ALTER TABLE fetch_records ADD COLUMN vcs_url_binding TEXT NOT NULL DEFAULT ''`},
+		// The directory of the repository the VCS leg hashed. '' is the root, and
+		// is what every earlier record reads: it is omitted from the canonical
+		// JSON, so their content hashes are unchanged and nothing is re-derived.
+		{Module: "fetch", Version: 11, SQL: `ALTER TABLE fetch_records ADD COLUMN git_subdir TEXT NOT NULL DEFAULT ''`},
+		// The version's own time from the source's .info. '' is unknown, which is
+		// what every earlier record reads; it is omitted from the canonical JSON.
+		{Module: "fetch", Version: 12, SQL: `ALTER TABLE fetch_records ADD COLUMN version_time TEXT NOT NULL DEFAULT ''`},
 	}
 }
 
@@ -248,7 +255,7 @@ const recordColumns = `schema_version, ecosystem, module_path, module_version, p
        fetched_at, content_location, go_mod_location, content_hash, retracted,
        zip_sha256, zip_sha384, zip_sha512, sumdb_lookup_failed, acquisition_mode,
        measurement_kind, sumdb_check, sumdb_check_source, vcs_check, vcs_check_source,
-       vcs_url_binding`
+       vcs_url_binding, git_subdir, version_time`
 
 // PutFetchRecord appends a measurement to the ledger.
 //
@@ -278,8 +285,8 @@ INSERT INTO fetch_records (
     fetched_at, content_location, go_mod_location, content_hash, retracted,
     zip_sha256, zip_sha384, zip_sha512, sumdb_lookup_failed, acquisition_mode,
     measurement_kind, sumdb_check, sumdb_check_source, vcs_check, vcs_check_source,
-    vcs_url_binding
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    vcs_url_binding, git_subdir, version_time
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (module_path, module_version, pipeline_version, module_hash, fetched_at, content_hash)
 DO NOTHING`
 
@@ -299,7 +306,7 @@ DO NOTHING`
 				r.ContentLocation, r.GoModLocation, r.ContentHash, r.Retracted,
 				r.ZipSHA256, r.ZipSHA384, r.ZipSHA512, r.SumDBLookupFailed, r.AcquisitionMode,
 				r.MeasurementKind, r.SumDBCheck, r.SumDBCheckSource, r.VCSCheck, r.VCSCheckSource,
-				r.VCSURLBinding,
+				r.VCSURLBinding, string(r.GitSubdir), string(r.VersionTime),
 			)
 			return err //nolint:wrapcheck // the retry classifies the driver's own error; the caller below names the step
 		}); err != nil {
@@ -362,10 +369,40 @@ func (s *Store) ComposeFetchRecord(ctx context.Context, coord coordinate.ModuleC
 	return composeRead(coord, records)
 }
 
+// SupersededLocalArtefacts names the artefacts of coord the ledger holds only as
+// local-source measurements under a published coordinate. A coordinate with no
+// local-source row costs one indexed probe.
+func (s *Store) SupersededLocalArtefacts(ctx context.Context, coord coordinate.ModuleCoordinate) (map[string]bool, error) {
+	if coord.IsZero() || coord.IsLocal() {
+		return nil, nil
+	}
+	var probe int
+	err := s.db.DB().QueryRowContext(ctx, `SELECT 1 FROM fetch_records
+WHERE module_path = ? AND module_version = ? AND verification_status = ? LIMIT 1`,
+		coord.Path(), coord.Version(), string(domain2.LocalSource)).Scan(&probe)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("probing %s for local-source measurements: %w", coord, err)
+	}
+	records, err := s.listFetchRecords(ctx, coord, allPipelineVersions, "")
+	if err != nil {
+		return nil, err
+	}
+	ids, err := domain2.SupersededLocalArtefacts(coord, records)
+	if err != nil {
+		return nil, fmt.Errorf("naming superseded local generations of %s: %w", coord, err)
+	}
+	return ids, nil
+}
+
 // composeRead folds a listed set of measurements into the record a reader gets,
 // on terms shared by both reads: absence is absence, a disagreement between
-// measurements is an error, and composition itself may refuse.
+// measurements is an error, and composition itself may refuse. A local-source
+// row under a published coordinate is counted, never composed.
 func composeRead(coord coordinate.ModuleCoordinate, records []domain2.FactRecord) (domain2.CompositeRecord, bool, error) {
+	records, superseded := domain2.SupersededLocalGenerations(coord, records)
 	if len(records) == 0 {
 		return domain2.CompositeRecord{}, false, nil
 	}
@@ -376,6 +413,7 @@ func composeRead(coord coordinate.ModuleCoordinate, records []domain2.FactRecord
 	if err != nil {
 		return domain2.CompositeRecord{}, false, fmt.Errorf("composing records for %s: %w", coord, err)
 	}
+	composite.SupersededLocalGenerations = len(superseded)
 	return composite, true, nil
 }
 
@@ -510,7 +548,7 @@ func scanRecord(sc rowScanner) (domain2.FactRecord, string, error) {
 		&fetchedAt, &r.ContentLocation, &r.GoModLocation, &r.ContentHash, &r.Retracted,
 		&r.ZipSHA256, &r.ZipSHA384, &r.ZipSHA512, &r.SumDBLookupFailed, &r.AcquisitionMode,
 		&r.MeasurementKind, &r.SumDBCheck, &r.SumDBCheckSource, &r.VCSCheck, &r.VCSCheckSource,
-		&r.VCSURLBinding,
+		&r.VCSURLBinding, &r.GitSubdir, &r.VersionTime,
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -607,8 +645,9 @@ ORDER BY subject_kind, subject_digest`
 
 // Ensure Store implements ports.FactStore and ports.AttestationStore at compile time.
 var (
-	_ ports.FactStore          = (*Store)(nil)
-	_ ports.FactRecordLister   = (*Store)(nil)
-	_ ports.FactRecordComposer = (*Store)(nil)
-	_ ports.AttestationStore   = (*Store)(nil)
+	_ ports.FactStore                = (*Store)(nil)
+	_ ports.FactRecordLister         = (*Store)(nil)
+	_ ports.FactRecordComposer       = (*Store)(nil)
+	_ ports.SupersededArtefactLister = (*Store)(nil)
+	_ ports.AttestationStore         = (*Store)(nil)
 )

@@ -144,8 +144,11 @@ func assertReplacementNodes(t *testing.T, g domain3.Graph, byPath map[string]dom
 	if local.LocalPath != "../local" {
 		t.Errorf("local LocalPath = %q, want ../local", local.LocalPath)
 	}
-	if local.Coordinate != coord("example.com/local", "v0.0.0") {
-		t.Errorf("local coordinate = %s, want example.com/local@v0.0.0", local.Coordinate)
+	if local.Coordinate != coord("example.com/local", coordinate.LocalVersion) {
+		t.Errorf("local coordinate = %s, want example.com/local@local", local.Coordinate)
+	}
+	if local.OriginalCoordinate != coord("example.com/local", "v0.0.0") {
+		t.Errorf("local OriginalCoordinate = %s, want example.com/local@v0.0.0", local.OriginalCoordinate)
 	}
 	if !g.HasLocalReplace {
 		t.Errorf("graph HasLocalReplace should be true with a filesystem replacement")

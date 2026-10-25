@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/adapters/blobcodec"
+	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
 	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
 	"github.com/eitanity/kanonarion/internal/vendortree/domain"
 )
@@ -101,5 +102,16 @@ WHERE project_module_path = ? AND pipeline_version = ?`
 	if rec.Ecosystem != domain.EcosystemGo {
 		return domain.Record{}, false, fmt.Errorf("%w: got %q, want %q", domain.ErrUnsupportedEcosystem, rec.Ecosystem, domain.EcosystemGo)
 	}
+	// The record states the project and pipeline it describes; one filed under
+	// another key is refused rather than served as this project's answer.
+	if err := recordseal.CheckFiled("vendor record", "vendor_records", misfiledRemedy,
+		recordseal.Key(projectModulePath, rec.ProjectModulePath),
+		recordseal.Column("pipeline_version", "pipeline_version", domain.PipelineVersion, rec.PipelineVersion)); err != nil {
+		return domain.Record{}, false, err //nolint:wrapcheck // the refusal names the row, the table and the remedy itself
+	}
 	return rec, true, nil
 }
+
+// misfiledRemedy is what clears a misfiled vendor row: the store keeps one row
+// per project and pipeline, so a re-scan of the project overwrites it.
+const misfiledRemedy = "re-scan the project with kanonarion vendor, which overwrites the row"

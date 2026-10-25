@@ -5,21 +5,19 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
+	"github.com/eitanity/kanonarion/internal/composition"
 	"github.com/eitanity/kanonarion/internal/config"
+	configstore "github.com/eitanity/kanonarion/internal/config/adapters/store/yaml"
 	"github.com/eitanity/kanonarion/internal/config/domain"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
-	"github.com/eitanity/kanonarion/internal/gotoolchain"
 )
 
-func newConfigCmd(stdout io.Writer) *cobra.Command {
+func newConfigCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:         "config",
 		Annotations: map[string]string{annotationNetworkUse: NetworkNever},
@@ -29,7 +27,7 @@ func newConfigCmd(stdout io.Writer) *cobra.Command {
 		newConfigInitCmd(stdout),
 		newConfigShowCmd(stdout),
 		newConfigGetCmd(stdout),
-		newConfigSetCmd(stdout),
+		newConfigSetCmd(stdout, stderr),
 	)
 	return cmd
 }
@@ -85,7 +83,7 @@ type configInitResult struct {
 }
 
 func runConfigInit(root string, asJSON bool, stdout io.Writer) error {
-	configPath := filepath.Join(root, "config.yaml")
+	configPath := configFilePath(root)
 	// Read rather than stat: the bytes are what says whether the template
 	// completed an existing file or left it exactly as it was, and they are
 	// only readable before the write. A file that exists and cannot be read
@@ -93,7 +91,7 @@ func runConfigInit(root string, asJSON bool, stdout io.Writer) error {
 	before, readErr := os.ReadFile(configPath) // #nosec G304 -- operator-supplied store-root path
 	existed := readErr == nil
 
-	if err := config.EnsureConfig(configPath); err != nil {
+	if err := config.EnsureConfig(configPath, composition.BackendConfigSpecs()...); err != nil {
 		return fmt.Errorf("writing config template: %w", err)
 	}
 
@@ -266,6 +264,8 @@ func configKeyPath(key string) ([]string, bool) {
 		return []string{"staleness", strings.TrimPrefix(key, "staleness.")}, true
 	case key == "fetch_policy.allowed_vcs_hosts":
 		return []string{"fetch_policy", "allowed_vcs_hosts"}, true
+	case key == "storage.backend", key == "storage.sumdb_cache", key == "vulndb.url":
+		return strings.SplitN(key, ".", 2), true
 	default:
 		return nil, false
 	}
@@ -298,6 +298,12 @@ func configGetValue(cfg domain.Config, key string) (string, error) {
 			return "(unset: the built-in VCS host set applies, advisory — off-list hosts are reported, not refused)", nil
 		}
 		return marshalConfigYAML(cfg.FetchPolicy.AllowedVCSHosts)
+	case "storage.backend":
+		return cfg.Storage.Backend, nil
+	case "storage.sumdb_cache":
+		return sumdbCacheDisplay(cfg.Storage.SumDBCache), nil
+	case "vulndb.url":
+		return vulndbURLDisplay(cfg.VulnDB.URL), nil
 	default:
 		return configGetPolicyValue(cfg, key)
 	}
@@ -348,47 +354,6 @@ func configGetPolicyValue(cfg domain.Config, key string) (string, error) {
 	}
 }
 
-// validateToolchainPreference refuses a callgraph.toolchain value no record
-// could hold.
-//
-// Validated on the way in by the domain that owns the rule, the way the VCS host
-// allowlist below is: the preference is compared against what records state and
-// against nothing else, so a value outside that form is a setting that silently
-// never fires — the operator writes it, the refusal it was written for carries
-// on, and nothing anywhere says why.
-func validateToolchainPreference(key, value string, node *yaml.Node) error {
-	if node.Kind != yaml.ScalarNode {
-		return &exitError{code: ExitConfig, msg: fmt.Sprintf(
-			"%s requires a Go toolchain version in `go env GOVERSION` form (e.g. go1.26.6), got %q", key, value)}
-	}
-	if _, err := gotoolchain.ParseVersion(node.Value); err != nil {
-		return &exitError{code: ExitConfig, msg: fmt.Sprintf("%s: %v", key, err)}
-	}
-	return nil
-}
-
-// validateVCSHostAllowlist refuses a fetch_policy.allowed_vcs_hosts value the
-// domain cannot build a list from.
-//
-// Validated on the way in, by the domain that owns the rule, so an unusable list
-// is refused while the operator is typing it rather than halfway through the
-// next walk. Setting it switches the host check from advisory to enforcing,
-// which is worth saying out loud in the error when the list cannot be used.
-func validateVCSHostAllowlist(key, value string, node *yaml.Node) error {
-	if node.Kind != yaml.SequenceNode {
-		return &exitError{code: ExitConfig, msg: fmt.Sprintf(
-			"%s requires a YAML sequence of bare hostnames (e.g. '[github.com, git.example.org]'), got %q", key, value)}
-	}
-	hosts := make([]string, 0, len(node.Content))
-	for _, n := range node.Content {
-		hosts = append(hosts, n.Value)
-	}
-	if _, err := fetchdomain.NewVCSHostAllowlist(hosts); err != nil {
-		return &exitError{code: ExitConfig, msg: fmt.Sprintf("%s: %v", key, err)}
-	}
-	return nil
-}
-
 func marshalConfigYAML(v any) (string, error) {
 	data, err := yaml.Marshal(v)
 	if err != nil {
@@ -399,7 +364,7 @@ func marshalConfigYAML(v any) (string, error) {
 
 // ---- config set ----
 
-func newConfigSetCmd(stdout io.Writer) *cobra.Command {
+func newConfigSetCmd(stdout, stderr io.Writer) *cobra.Command {
 	return &cobra.Command{
 		Use:   "set <key> <value>",
 		Short: "Write a value to the configuration file",
@@ -409,7 +374,8 @@ func newConfigSetCmd(stdout io.Writer) *cobra.Command {
   kanonarion config set license_overrides.golang.org/x/mod MIT
   kanonarion config set callgraph.exclude '[]'
   kanonarion config set callgraph.toolchain go1.26.6
-  kanonarion config set staleness.ttl 6h`,
+  kanonarion config set staleness.ttl 6h
+  kanonarion config set storage.backend sqlite`,
 		// Exempt from the rejected-config refusal: it is the repair. It edits
 		// the YAML document directly and never consults the loaded
 		// configuration, so refusing it would make a rejected file unfixable by
@@ -422,7 +388,7 @@ func newConfigSetCmd(stdout io.Writer) *cobra.Command {
 		},
 		Args: cobra.ExactArgs(2),
 		RunE: func(_ *cobra.Command, args []string) error {
-			return runConfigSet(storeRoot, args[0], args[1], jsonOut, stdout)
+			return runConfigSet(storeRoot, args[0], args[1], jsonOut, stdout, stderr)
 		},
 	}
 }
@@ -443,14 +409,14 @@ type configSetResult struct {
 	ConfigFile     string `json:"config_file"`
 }
 
-func runConfigSet(root, key, value string, asJSON bool, stdout io.Writer) error {
+func runConfigSet(root, key, value string, asJSON bool, stdout, stderr io.Writer) error {
 	yamlPath, err := configSetPath(key)
 	if err != nil {
 		return err
 	}
 
-	configPath := filepath.Join(root, "config.yaml")
-	if eerr := config.EnsureConfig(configPath); eerr != nil {
+	configPath := configFilePath(root)
+	if eerr := config.EnsureConfig(configPath, composition.BackendConfigSpecs()...); eerr != nil {
 		return fmt.Errorf("ensuring config file: %w", eerr)
 	}
 
@@ -492,8 +458,12 @@ func runConfigSet(root, key, value string, asJSON bool, stdout io.Writer) error 
 	if cerr := enc.Close(); cerr != nil {
 		return fmt.Errorf("finalising config: %w", cerr)
 	}
+	before, beforeErr := loadStoreConfig(root)
 	if werr := os.WriteFile(configPath, buf.Bytes(), 0o600); werr != nil { // #nosec G304 G703 -- operator-supplied path
 		return fmt.Errorf("writing config %s: %w", configPath, werr)
+	}
+	if cerr := recordConfigChange(root, key, before, beforeErr, stderr); cerr != nil {
+		return cerr
 	}
 
 	if asJSON {
@@ -616,6 +586,10 @@ func configSetPath(key string) ([]string, error) {
 		return []string{"staleness", "probe_concurrency"}, nil
 	case key == "fetch_policy.allowed_vcs_hosts":
 		return []string{"fetch_policy", "allowed_vcs_hosts"}, nil
+	case key == "storage.backend":
+		return []string{"storage", "backend"}, nil
+	case key == "storage.sumdb_cache", key == "vulndb.url":
+		return strings.SplitN(key, ".", 2), nil
 	default:
 		return nil, &exitError{code: ExitConfig, msg: fmt.Sprintf("unknown config key %q", key)}
 	}
@@ -633,82 +607,18 @@ func parseConfigValue(key, value string) (*yaml.Node, error) {
 	}
 	node := doc.Content[0]
 
-	if err := validatePreferenceNode(key, value, node); err != nil {
-		return nil, err
+	// The loader applies the same rules to the file, so a value refused here is
+	// refused there in the same words.
+	if err := configstore.ValidateSetting(key, node); err != nil {
+		return nil, &exitError{code: ExitConfig, msg: err.Error()}
 	}
-	if err := validateStalenessNode(key, value, node); err != nil {
-		return nil, err
-	}
-	switch {
-	case strings.HasPrefix(key, "license_policy.categories."),
-		key == "callgraph.exclude":
-		if node.Kind != yaml.SequenceNode {
-			return nil, &exitError{code: ExitConfig, msg: fmt.Sprintf("%s requires a YAML sequence (e.g. '[MIT, Apache-2.0]'), got %q", key, value)}
-		}
-	case key == "callgraph.toolchain":
-		if err := validateToolchainPreference(key, value, node); err != nil {
-			return nil, err
-		}
-	case key == "fetch_policy.allowed_vcs_hosts":
-		if err := validateVCSHostAllowlist(key, value, node); err != nil {
-			return nil, err
-		}
-	case strings.HasPrefix(key, "license_overrides."):
-		if node.Kind != yaml.ScalarNode {
-			return nil, &exitError{code: ExitConfig, msg: fmt.Sprintf("license_overrides.<module> requires a string (SPDX expression), got %q", value)}
-		}
+	// Only the write is restricted to a scalar: the file also takes the
+	// attributed mapping, which `config set` cannot write.
+	if strings.HasPrefix(key, "license_overrides.") && node.Kind != yaml.ScalarNode {
+		return nil, &exitError{code: ExitConfig, msg: fmt.Sprintf("license_overrides.<module> requires a string (SPDX expression), got %q", value)}
 	}
 
 	return node, nil
-}
-
-// validatePreferenceNode checks the value given for a preferences key.
-func validatePreferenceNode(key, value string, node *yaml.Node) error {
-	switch key {
-	case "preferences.json":
-		if node.Kind != yaml.ScalarNode || node.Tag != "!!bool" {
-			return &exitError{code: ExitConfig, msg: fmt.Sprintf("preferences.json requires a boolean (true/false), got %q", value)}
-		}
-	case "preferences.progress":
-		if node.Kind != yaml.ScalarNode || node.Tag != "!!bool" {
-			return &exitError{code: ExitConfig, msg: fmt.Sprintf("preferences.progress requires a boolean (true/false), got %q", value)}
-		}
-	case "preferences.log_level":
-		if node.Kind != yaml.ScalarNode {
-			return &exitError{code: ExitConfig, msg: fmt.Sprintf("preferences.log_level requires a string, got %q", value)}
-		}
-		switch node.Value {
-		case "debug", "info", "warn", "error":
-		default:
-			return &exitError{code: ExitConfig, msg: fmt.Sprintf("preferences.log_level must be one of: debug, info, warn, error; got %q", value)}
-		}
-	}
-	return nil
-}
-
-// validateStalenessNode checks the value given for a staleness key.
-func validateStalenessNode(key, value string, node *yaml.Node) error {
-	switch key {
-	case "staleness.ttl":
-		if node.Kind != yaml.ScalarNode {
-			return &exitError{code: ExitConfig, msg: fmt.Sprintf("staleness.ttl requires a duration string (e.g. 1h, 30m, 0), got %q", value)}
-		}
-		if _, err := time.ParseDuration(node.Value); err != nil {
-			return &exitError{code: ExitConfig, msg: fmt.Sprintf("staleness.ttl must be a duration (e.g. 1h, 30m, 0), got %q", value)}
-		}
-	case "staleness.probe_concurrency":
-		// A whole number; 0 is a serial probe.
-		if node.Kind != yaml.ScalarNode || node.Tag != "!!int" {
-			return &exitError{code: ExitConfig, msg: fmt.Sprintf(
-				"staleness.probe_concurrency requires a whole number (0 for a serial probe), got %q", value)}
-		}
-		n, err := strconv.Atoi(node.Value)
-		if err != nil || n < 0 {
-			return &exitError{code: ExitConfig, msg: fmt.Sprintf(
-				"staleness.probe_concurrency must not be negative (use 0 for a serial probe), got %q", value)}
-		}
-	}
-	return nil
 }
 
 // setYAMLNode navigates the document to yamlPath and replaces that node with valueNode.

@@ -22,6 +22,9 @@ type Scanner struct {
 	// must be analysed for that same target. The zero value is the measured
 	// host, which is also what it writes into the children: see goenv.Target.
 	target goenv.Target
+	// tinygo is the declared TinyGo frame, layered after target; zero when
+	// none was declared.
+	tinygo goenv.TinyGo
 	logger *slog.Logger
 }
 
@@ -42,6 +45,21 @@ func (s *Scanner) WithTarget(t goenv.Target) *Scanner {
 	copy := *s
 	copy.target = t
 	return &copy
+}
+
+// WithTinyGo returns a copy of the Scanner whose children run under the
+// declared TinyGo frame: its environment on every child, its tags on the
+// source-mode govulncheck runs.
+func (s *Scanner) WithTinyGo(f goenv.TinyGo) *Scanner {
+	copy := *s
+	copy.tinygo = f
+	return &copy
+}
+
+// sourceArgs is a source-mode govulncheck invocation over ./..., carrying the
+// TinyGo tag set when one was declared.
+func (s *Scanner) sourceArgs(dbArg string) []string {
+	return append(append([]string{"-json", "-db", dbArg}, s.tinygo.ListArgs()...), "./...")
 }
 
 // WithLogger returns a copy of the Scanner using the given logger.

@@ -227,7 +227,7 @@ func TestProxy_InsecureRefused(t *testing.T) {
 	// We need to bypass New's check to test get's check if possible,
 	// or just be happy that New also checks it.
 	_, err := proxyadapter.New("http://example.com", false)
-	if err == nil || !strings.Contains(err.Error(), "uses plain HTTP") {
+	if !errors.Is(err, proxyadapter.ErrPlainHTTP) || strings.Contains(err.Error(), "--") {
 		t.Errorf("expected error from New for plain HTTP, got: %v", err)
 	}
 }

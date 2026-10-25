@@ -2,10 +2,12 @@ package sqlite_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/adapters/blobcodec"
 	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
 	directivesqlite "github.com/eitanity/kanonarion/internal/directive/adapters/store/sqlite"
 	"github.com/eitanity/kanonarion/internal/directive/domain"
@@ -223,7 +225,15 @@ func TestStore_MigrationRenamesUglyPreIDs(t *testing.T) {
 		t.Fatalf("PutDirectiveRecord: %v", err)
 	}
 	const uglyID = "legacy-sha256:e3b0c442"
-	if _, err := db.DB().ExecContext(ctx, `UPDATE directive_scans SET scan_id = ? WHERE scan_id = ?`, uglyID, "to-be-renamed"); err != nil {
+	// A legacy row predates the record's id field, so its JSON states none.
+	legacy := rec
+	legacy.ID = ""
+	legacyJSON, err := json.Marshal(legacy)
+	if err != nil {
+		t.Fatalf("marshalling the legacy row: %v", err)
+	}
+	if _, err := db.DB().ExecContext(ctx, `UPDATE directive_scans SET scan_id = ?, serialised = ? WHERE scan_id = ?`,
+		uglyID, blobcodec.Encode(legacyJSON), "to-be-renamed"); err != nil {
 		t.Fatalf("seeding ugly ID: %v", err)
 	}
 

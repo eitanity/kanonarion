@@ -118,14 +118,14 @@ func TestClient_CheckoutToDir_GitNotInstalled(t *testing.T) {
 	}
 }
 
-// The error must name the --skip-vcs-verify escape hatch so a missing tool reads
-// as actionable, must not leak the raw os/exec "executable file not found"
+// The error must say what to install, name no flag (the command adds the one it
+// defines), must not leak the raw os/exec "executable file not found"
 // string, and must wrap ports.ErrVCSToolMissing so the application layer can
 // classify tooling-absence with errors.Is rather than string matching.
 func TestErrGitNotInstalled_Actionable(t *testing.T) {
 	msg := gitexec.ErrGitNotInstalled.Error()
-	if !strings.Contains(msg, "--skip-vcs-verify") {
-		t.Errorf("error message %q does not mention --skip-vcs-verify", msg)
+	if !strings.Contains(msg, "install git") || strings.Contains(msg, "--") {
+		t.Errorf("error message %q does not name the install, or names a flag", msg)
 	}
 	if !strings.Contains(msg, "git not found in PATH") {
 		t.Errorf("error message %q lacks the recognisable git-not-found text", msg)

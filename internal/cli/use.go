@@ -1,31 +1,29 @@
 package cli
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
-	"github.com/eitanity/kanonarion/internal/adapters/blobstore/localfs"
-	factstoresqlite "github.com/eitanity/kanonarion/internal/adapters/factstore/sqlite"
 	"github.com/eitanity/kanonarion/internal/adapters/interrupt"
 
 	"github.com/eitanity/kanonarion/internal/adapters/goenv"
-	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
+	"github.com/eitanity/kanonarion/internal/composition/storage"
+	fetchapp "github.com/eitanity/kanonarion/internal/fetch/application"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/fetch/ports"
-	walksqlite "github.com/eitanity/kanonarion/internal/walk/adapters/walks/sqlite"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
 	"github.com/spf13/cobra"
-	"golang.org/x/mod/sumdb/dirhash"
 )
 
 type useFlags struct {
@@ -148,20 +146,17 @@ func runUse(ctx context.Context, f useFlags, targetArg string, stdout, stderr io
 		return err
 	}
 
-	dbPath := filepath.Join(storeRoot, "mirror.db")
 	// `use` rewrites the caller's go.mod from a stored walk; it records nothing,
 	// so it reads the store and does not bring one into existence.
-	dbHandle, err := sqlitestore.Open(dbPath, nil, sqlitestore.IntentRead)
+	st, err := openStorage(storage.Request{
+		StoreRoot: storeRoot, Intent: storage.IntentRead, SetAside: storeSetAside.report, Logger: logger, Config: activeConfig,
+	})
 	if err != nil {
 		return fmt.Errorf("opening store: %w", err)
 	}
-	defer func() { _ = dbHandle.Close() }()
+	defer func() { _ = storageCloser(st)() }() //nolint:errcheck // use records nothing, so a close loses nothing
 
-	walkStore := walksqlite.New(dbHandle)
-	walkStore.ReportSetAside(storeSetAside.report)
-	factStore := factstoresqlite.New(dbHandle)
-	factStore.ReportSetAside(storeSetAside.report)
-	blobStore := localfs.New(storeRoot)
+	walkStore, factStore, blobStore := st.Walks, st.Facts, st.Blobs
 
 	// 1. Find the walk whose version set is copied.
 	walk, err := useTargetWalk(ctx, walkStore, coord, f.walkID, stderr)
@@ -556,6 +551,13 @@ func noArtefactNoun(s walkdomain.ResolutionSource) string {
 //
 // Nothing to copy is exit 0. The run is not incomplete; there was nothing owed.
 func useCopyExit(t useTally) error {
+	// A refused artefact says the store's evidence is in doubt, which outranks
+	// how much of the selection reached the cache.
+	for _, o := range t.of(useFailed) {
+		if errors.Is(o.err, ports.ErrBlobTampered) {
+			return o.err
+		}
+	}
 	failed := len(t.of(useFailed))
 	switch {
 	case failed == 0:
@@ -611,6 +613,13 @@ func copyToModCache(
 
 	relDir := filepath.Join("cache", "download", escapedPath, "@v")
 	baseDir := filepath.Join(modCache, relDir)
+
+	// The store verifies each artefact as it is read, and both are read before
+	// anything is written, so a refused one leaves the shared cache untouched.
+	if verr := verifyHeldArtefacts(ctx, blobs, record.FactRecord, coord); verr != nil {
+		return useLanding{}, verr
+	}
+
 	root, err := os.OpenRoot(modCache)
 	if err != nil {
 		return useLanding{}, fmt.Errorf("opening mod cache root: %w", err)
@@ -639,19 +648,8 @@ func copyToModCache(
 	}
 	landing := useLanding{dir: relDir, alreadyPresent: zipPresent}
 
-	zipDst := filepath.Join(baseDir, coord.Version()+".zip")
-
-	// 1b. Verify ZIP hash
-	computedZipHash, err := dirhash.HashZip(zipDst, dirhash.Hash1)
-	if err != nil {
-		return useLanding{}, fmt.Errorf("hashing zip: %w", err)
-	}
-	if record.ModuleHash != computedZipHash {
-		return useLanding{}, fmt.Errorf("checksum mismatch for %s zip: recorded %s, computed %s", coord, record.ModuleHash, computedZipHash)
-	}
-
 	// 2. Copy MOD
-	if err := copyAndVerifyGoMod(ctx, blobs, root, record, coord, relDir, logger); err != nil {
+	if err := copyGoMod(ctx, blobs, root, record, coord, relDir, logger); err != nil {
 		return useLanding{}, err
 	}
 
@@ -662,9 +660,27 @@ func copyToModCache(
 	return landing, nil
 }
 
-// copyAndVerifyGoMod copies the go.mod into the module cache and checks it
-// hashes to the recorded value.
-func copyAndVerifyGoMod(ctx context.Context, blobs ports.BlobStore, root *os.Root, record fetchdomain.CompositeRecord, coord coordinate.ModuleCoordinate, relDir string, logger *slog.Logger) error {
+// verifyHeldArtefacts reads the zip and go.mod the record names through the
+// verifying store, returning its refusal of either.
+func verifyHeldArtefacts(ctx context.Context, blobs ports.BlobStore, record fetchdomain.FactRecord, coord coordinate.ModuleCoordinate) error {
+	for _, derive := range []func(fetchdomain.FactRecord) (ports.BlobIdentity, bool, error){ports.ZipIdentity, ports.GoModIdentity} {
+		identity, ok, err := derive(record)
+		if err != nil || !ok {
+			continue // the copy below reports an underivable or absent artefact in its own words
+		}
+		rc, err := blobs.Get(ctx, identity)
+		if errors.Is(err, ports.ErrBlobTampered) {
+			return ports.AttributeBlobTamper(err, coord)
+		}
+		if err == nil {
+			_ = rc.Close() //nolint:errcheck // opened only to verify; nothing was read
+		}
+	}
+	return nil
+}
+
+// copyGoMod copies the go.mod into the module cache.
+func copyGoMod(ctx context.Context, blobs ports.BlobStore, root *os.Root, record fetchdomain.CompositeRecord, coord coordinate.ModuleCoordinate, relDir string, logger *slog.Logger) error {
 	goModIdentity, hasGoMod, err := ports.GoModIdentity(record.FactRecord)
 	if err != nil {
 		return fmt.Errorf("deriving go.mod address for %s: %w", coord, err)
@@ -673,21 +689,6 @@ func copyAndVerifyGoMod(ctx context.Context, blobs ports.BlobStore, root *os.Roo
 		relModPath := filepath.Join(relDir, coord.Version()+".mod")
 		if _, err := copyBlob(ctx, blobs, goModIdentity, root, relModPath); err != nil {
 			return fmt.Errorf("copying mod: %w", err)
-		}
-
-		// 2b. Verify MOD hash
-		modBytes, err := root.ReadFile(relModPath)
-		if err != nil {
-			return fmt.Errorf("reading copied mod: %w", err)
-		}
-		computedModHash, err := dirhash.Hash1([]string{"go.mod"}, func(string) (io.ReadCloser, error) {
-			return io.NopCloser(bytes.NewReader(modBytes)), nil
-		})
-		if err != nil {
-			return fmt.Errorf("hashing mod: %w", err)
-		}
-		if record.GoModHash != computedModHash {
-			return fmt.Errorf("checksum mismatch for %s go.mod: recorded %s, computed %s", coord, record.GoModHash, computedModHash)
 		}
 	} else {
 		// Fallback for older records if any (unlikely to work without the mod file)
@@ -700,23 +701,39 @@ func copyAndVerifyGoMod(ctx context.Context, blobs ports.BlobStore, root *os.Roo
 // the zip, each only when absent.
 func writeDerivedModCacheFiles(root *os.Root, record fetchdomain.CompositeRecord, coord coordinate.ModuleCoordinate, relDir string) error {
 	// 3. Create INFO
+	// Time is the version's own time; with none recorded it is left out, which
+	// the go command reads as unknown, rather than standing in a fetch time.
+	versionTime, hasTime, err := fetchdomain.ParseVersionTime(record.VersionTime)
+	if err != nil {
+		return fmt.Errorf("reading the version time of %s: %w", coord, err)
+	}
 	info := struct {
 		Version string
-		Time    string
-		Origin  struct {
-			VCS  string
-			URL  string
-			Hash string
-			Ref  string
+		Time    *time.Time `json:",omitempty"`
+		// Origin mirrors the go command's codehost.Origin tags: a field the
+		// record does not hold is left out, never written empty.
+		Origin struct {
+			VCS    string `json:",omitempty"`
+			URL    string `json:",omitempty"`
+			Subdir string `json:",omitempty"`
+			Hash   string `json:",omitempty"`
+			Ref    string `json:",omitempty"`
 		}
 	}{
 		Version: coord.Version(),
-		Time:    record.FirstFetchedAt.Format("2006-01-02T15:04:05Z"),
+	}
+	if hasTime {
+		info.Time = &versionTime
 	}
 	info.Origin.VCS = "git"
 	info.Origin.URL = record.GitURL
 	info.Origin.Hash = record.GitCommitHash
 	info.Origin.Ref = record.GitRef
+	// The go command reads Subdir as the module's code directory. It is written
+	// only where the record's directory determines it; otherwise it is left out.
+	if subdir, ok := fetchapp.OriginSubdirOf(coord.Path(), string(record.GitSubdir)); ok {
+		info.Origin.Subdir = subdir
+	}
 
 	infoData, encErr := json.Marshal(info)
 	if encErr != nil {

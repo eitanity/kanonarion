@@ -6,14 +6,14 @@ seedwalk $WORK/stores
 
 kanonarion context example.com/app@v1.0.0 --store-root=$WORK/stores
 stdout 'License:.*not run.*run: kanonarion license'
-stdout 'Interface:.*not run.*run: kanonarion interface-show'
-stdout 'Call Graph:.*not run.*run: kanonarion callgraph-show'
-stdout 'Examples:.*not run.*run: kanonarion examples'
+stdout 'Interface:.*not run.*run: kanonarion interface example.com/app@v1.0.0\)'
+stdout 'Call Graph:.*not run.*run: kanonarion fetch example.com/app@v1.0.0 && kanonarion callgraph example.com/app@v1.0.0\)'
+stdout 'Examples:.*not run.*run: kanonarion examples example.com/app@v1.0.0\)'
 stdout 'Vulnerabilities:.*not run.*run: kanonarion'
 
 # In --full mode the same hints appear in section bodies
 kanonarion context example.com/app@v1.0.0 --store-root=$WORK/stores --full
 stdout 'not run.*run: kanonarion license'
-stdout 'not run.*run: kanonarion interface-show'
-stdout 'not run.*run: kanonarion callgraph-show'
+stdout 'not run.*run: kanonarion interface example.com/app@v1.0.0\)'
+stdout 'not run.*run: kanonarion fetch example.com/app@v1.0.0 && kanonarion callgraph'
 stdout 'not run.*run: kanonarion examples'

@@ -1,6 +1,7 @@
 package modcache
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -73,7 +74,8 @@ func TestPut_PopulatesIdentityAddressedSpace(t *testing.T) {
 	store := New(cacheDir, localfs.New(t.TempDir()))
 	ctx := context.Background()
 	coord := newCoord(t, "example.com/mod", "v1.0.0")
-	seedCacheEntry(t, cacheDir, coord, ZipExtension, []byte("zip bytes"))
+	zipBytes, id := fetchtest.ModuleZip(t, "example.com/mod", "v1.0.0", map[string]string{"go.mod": "module example.com/mod\n"})
+	seedCacheEntry(t, cacheDir, coord, ZipExtension, zipBytes)
 
 	f, err := store.OpenZip(coord)
 	if err != nil {
@@ -81,7 +83,6 @@ func TestPut_PopulatesIdentityAddressedSpace(t *testing.T) {
 	}
 	defer func() { _ = f.Close() }()
 
-	id := identity(ports.BlobKindZip, "mod-zip")
 	if perr := store.Put(ctx, id, f); perr != nil {
 		t.Fatalf("Put: %v", perr)
 	}
@@ -103,8 +104,8 @@ func TestPut_PopulatesIdentityAddressedSpace(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadAll: %v", err)
 	}
-	if string(got) != "zip bytes" {
-		t.Errorf("got %q, want %q", got, "zip bytes")
+	if string(got) != string(zipBytes) {
+		t.Errorf("got %d bytes, want the %d seeded", len(got), len(zipBytes))
 	}
 }
 
@@ -118,13 +119,13 @@ func TestPut_HardLinksSoTheEvidenceSurvivesCacheCleaning(t *testing.T) {
 	store := New(cacheDir, localfs.New(blobRoot))
 	ctx := context.Background()
 	coord := newCoord(t, "example.com/mod", "v1.0.0")
-	cachePath := seedCacheEntry(t, cacheDir, coord, ZipExtension, []byte("durable bytes"))
+	durable, id := fetchtest.ModuleZip(t, "example.com/mod", "v1.0.0", map[string]string{"go.mod": "module example.com/mod\n", "d.go": "package mod\n"})
+	cachePath := seedCacheEntry(t, cacheDir, coord, ZipExtension, durable)
 
 	f, err := store.OpenZip(coord)
 	if err != nil {
 		t.Fatalf("OpenZip: %v", err)
 	}
-	id := identity(ports.BlobKindZip, "durable")
 	if perr := store.Put(ctx, id, f); perr != nil {
 		_ = f.Close()
 		t.Fatalf("Put: %v", perr)
@@ -147,8 +148,8 @@ func TestPut_HardLinksSoTheEvidenceSurvivesCacheCleaning(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadAll: %v", err)
 	}
-	if string(got) != "durable bytes" {
-		t.Errorf("got %q, want %q", got, "durable bytes")
+	if string(got) != string(durable) {
+		t.Errorf("got %d bytes, want the %d seeded", len(got), len(durable))
 	}
 }
 
@@ -190,7 +191,7 @@ func TestGetPath_ReturnsAMaterialisedPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenGoMod: %v", err)
 	}
-	id := identity(ports.BlobKindGoMod, "mod-gomod")
+	id := fetchtest.GoModBlob(t, "module example.com/mod\n")
 	if perr := store.Put(ctx, id, f); perr != nil {
 		_ = f.Close()
 		t.Fatalf("Put: %v", perr)
@@ -207,5 +208,88 @@ func TestGetPath_ReturnsAMaterialisedPath(t *testing.T) {
 	}
 	if string(data) != "module example.com/mod\n" {
 		t.Errorf("materialised path holds %q, want the go.mod bytes", data)
+	}
+}
+
+// seedLinkedThenEdit populates the store from a cache entry holding intact,
+// writes a .ziphash vouching for it, then edits the cache file in place to
+// edited, which the store's hard link shares.
+func seedLinkedThenEdit(ctx context.Context, t *testing.T, cacheDir, blobRoot string, coord coordinate.ModuleCoordinate, id ports.BlobIdentity, intact, edited []byte) {
+	t.Helper()
+	cachePath := seedCacheEntry(t, cacheDir, coord, ZipExtension, intact)
+	seeding := New(cacheDir, localfs.New(blobRoot))
+	f, err := seeding.OpenZip(coord)
+	if err != nil {
+		t.Fatalf("OpenZip: %v", err)
+	}
+	if perr := seeding.Put(ctx, id, f); perr != nil {
+		t.Fatalf("Put: %v", perr)
+	}
+	_ = f.Close()
+	ziphash := strings.TrimSuffix(cachePath, ZipExtension) + ".ziphash"
+	if werr := os.WriteFile(ziphash, []byte(id.Hash().String()+"\n"), 0o600); werr != nil {
+		t.Fatal(werr)
+	}
+	if werr := os.WriteFile(cachePath, edited, 0o600); werr != nil {
+		t.Fatal(werr)
+	}
+}
+
+// In module-cache mode the store's bytes are a hard link to the cache's own
+// file, so an edit to that file is an edit to the store. The adapter serves
+// what hashes to the identity, not what the cache's .ziphash claims: both reads
+// refuse the edited bytes, and an absent identity is still absence.
+func TestGetAndGetPath_RefuseAnEditedCacheFile(t *testing.T) {
+	ctx := context.Background()
+	coord := newCoord(t, "example.com/mod", "v1.0.0")
+	files := map[string]string{"go.mod": "module example.com/mod\n", "LICENSE": "MIT\n"}
+	intact, id := fetchtest.ModuleZip(t, "example.com/mod", "v1.0.0", files)
+	files["LICENSE"] = "GPL-3.0\n"
+	rezip, _ := fetchtest.ModuleZip(t, "example.com/mod", "v1.0.0", files)
+
+	flipped := bytes.Clone(intact)
+	flipped[30+len("example.com/mod@v1.0.0/LICENSE")+1] ^= 0xff
+	shapes := map[string][]byte{"intact": intact, "rezip": rezip, "flipped": flipped, "truncated": intact[:len(intact)/2]}
+	for name, edited := range shapes {
+		for _, read := range []string{"Get", "GetPath"} {
+			t.Run(name+"/"+read, func(t *testing.T) {
+				cacheDir, blobRoot := t.TempDir(), t.TempDir()
+				seedLinkedThenEdit(ctx, t, cacheDir, blobRoot, coord, id, intact, edited)
+
+				store := New(cacheDir, localfs.New(blobRoot))
+				served, err := false, error(nil)
+				if read == "Get" {
+					var rc io.ReadCloser
+					rc, err = store.Get(ctx, id)
+					if served = rc != nil; served {
+						_ = rc.Close()
+					}
+				} else {
+					var p string
+					p, err = store.GetPath(ctx, id)
+					served = p != ""
+				}
+				if name == "intact" {
+					if err != nil || !served {
+						t.Errorf("%s(intact) = served %v, err %v", read, served, err)
+					}
+					return
+				}
+				if served {
+					t.Errorf("%s handed out the edited bytes", read)
+				}
+				if !errors.Is(err, ports.ErrBlobTampered) {
+					t.Errorf("%s = %v, want ErrBlobTampered", read, err)
+				}
+			})
+		}
+	}
+
+	store := New(t.TempDir(), localfs.New(t.TempDir()))
+	if _, err := store.Get(ctx, id); !errors.Is(err, localfs.ErrBlobNotFound) {
+		t.Errorf("Get(absent) = %v, want ErrBlobNotFound", err)
+	}
+	if _, err := store.GetPath(ctx, id); !errors.Is(err, localfs.ErrBlobNotFound) {
+		t.Errorf("GetPath(absent) = %v, want ErrBlobNotFound", err)
 	}
 }

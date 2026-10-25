@@ -1,0 +1,59 @@
+// Package more covers the rest of the translated forms, across two files that
+// declare some C names twice, identically.
+package more
+
+/*
+#cgo noescape fill
+#cgo nocallback fill
+#cgo LDFLAGS: -lfake
+typedef struct { int a; } anon_t;
+typedef enum { ANON_A, ANON_B = -1 } anon_e;
+union one { int only; };
+static int twice(int v) { return v * 2; }
+int sum(int n, ...);
+typedef void (*callback_t)(int);
+typedef void handler_t(int);
+void fill(char buf[8]);
+typedef char name_t[4];
+void name(name_t n);
+int errno_call(void);
+_Bool flag(void);
+double ratio(float f);
+struct never_defined;
+void *opaque(struct never_defined *p);
+#define CHAR_C 'x'
+#define FLOAT_C 1.5f
+#define NEG_C (-3)
+#define ALIAS_C NEG_C
+*/
+import "C"
+
+import _ "syscall" // the generated cgo file imports it
+
+func A() C.anon_t    { return C.anon_t{a: 1} }
+func E() C.anon_e    { return C.ANON_B }
+func U() C.union_one { return C.union_one{only: 1} }
+func Twice() C.int   { return C.twice(2) }
+func Sum() C.int     { return C.sum(1) }
+func Fill(b *C.char) { C.fill(b) }
+func Name(n *C.char) { C.name(n) }
+func Str() *C.char   { return C.CString("x") }
+func Flag() bool     { return bool(C.flag()) }
+func Ratio() float64 { return float64(C.ratio(1)) }
+func Opaque() any    { return C.opaque(nil) }
+func Addr() any      { return C.twice }
+func Handler() any   { var h *C.handler_t; return h }
+
+var CB C.callback_t
+
+func Errno() (C.int, error) {
+	v, err := C.errno_call()
+	return v, err
+}
+
+const (
+	Char  = C.CHAR_C
+	Float = C.FLOAT_C
+	Neg   = C.NEG_C
+	Alias = C.ALIAS_C
+)

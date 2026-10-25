@@ -56,7 +56,7 @@ func newRecordRootFunc(ctx context.Context, graphs QueryCallGraphUseCase) record
 	if graphs == nil {
 		return unclassifiedRecords
 	}
-	classifier := rootclass.New(graphs, cgapp.PipelineVersion)
+	classifier := rootclass.New(graphs, cgapp.PipelineVersion).WithReadFrame(declaredReadFrame)
 	return func(rec vuldomain.VulnerabilityRecord) routeRootFunc {
 		rooting := vuldomain.RecordRooting(rec)
 		coord := rec.Coordinate

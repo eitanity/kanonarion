@@ -31,6 +31,7 @@ import (
 	staleports "github.com/eitanity/kanonarion/internal/staleness/ports"
 	vulnapp "github.com/eitanity/kanonarion/internal/vuln/application"
 	vulndomain "github.com/eitanity/kanonarion/internal/vuln/domain"
+	vulnports "github.com/eitanity/kanonarion/internal/vuln/ports"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 )
 
@@ -93,12 +94,15 @@ project's own build dependencies (the code your packages import, incl. tests);
 
 Exit codes:
   0  every dependency resolved and no licence-policy block
+  1  the vulnerability scan failed or left modules unanalysed — the table is
+     still printed
   3  interrupted (SIGINT, SIGTERM or SIGHUP) before it completed
   5  the governance gate fired: dependencies with an undetermined licence are
      blocked by policy (unknown_license=block), or the licence gate could not
      be evaluated because the policy scope in force matches no license_policy
      rule — the table is still printed either way
-  10 a walk node or a module's fetch record failed its integrity check
+  10 a walk node or a module's fetch or vulnerability record failed its
+     integrity check; 10 outranks 5, and 5 outranks 1
   20 bad invocation, unresolvable go.mod, or a policy file that could not be read`,
 		Example: `  kanonarion audit
   kanonarion audit --gomod ./go.mod
@@ -140,6 +144,8 @@ type auditOutput struct {
 	envelopeScope
 	auditRunJSON
 	Modules []auditModuleResult `json:"modules"`
+	// FrameExcludes names the files only TinyGo builds that this frame left out.
+	FrameExcludes *frameExcludesJSON `json:"frame_excludes,omitempty"`
 }
 
 // newAuditOutput frames the rows, guaranteeing a non-nil modules array: an empty
@@ -149,7 +155,7 @@ func newAuditOutput(scope envelopeScope, run auditRunJSON, rows []auditModuleRes
 	if rows == nil {
 		rows = []auditModuleResult{}
 	}
-	return auditOutput{envelopeScope: scope, auditRunJSON: run, Modules: rows}
+	return auditOutput{envelopeScope: scope, auditRunJSON: run, Modules: rows, FrameExcludes: frameExcludes.take()}
 }
 
 type auditModuleResult struct {
@@ -445,7 +451,7 @@ func runAudit(ctx context.Context, f auditFlags, stdout, stderr io.Writer) error
 		return serr
 	}
 
-	results, derivation, err := auditScope(ctx, coords, scope, f, staleness, ctr, stderr)
+	results, derivation, err := auditGatedScope(ctx, coords, scope, f, staleness, ctr, stderr)
 	if err != nil {
 		return err
 	}
@@ -471,12 +477,26 @@ func runAudit(ctx context.Context, f auditFlags, stdout, stderr io.Writer) error
 	// cover Go code; this states which part of the build they do not reach. It
 	// is derived from the rows themselves, so the set it describes is exactly
 	// the set the table lists.
-	native := nativeRollupOver(ctx, ctr.QueryNative, nativeCoordsOf(auditCoordinateStrings(results)))
+	native := withTinyGoCode(nativeRollupOver(ctx, ctr.QueryNative, nativeCoordsOf(auditCoordinateStrings(results))), derivation.walkRecord)
 	if nerr := writeNativeCoverageSummary(stderr, native); nerr != nil {
 		return nerr
 	}
 
 	return writeAuditResults(stdout, envelope, derivation, results, native)
+}
+
+// auditGatedScope builds the rows, whose licence gate is evaluated under the
+// configuration hash it observes first.
+func auditGatedScope(ctx context.Context, coords []string, scope depScope, f auditFlags,
+	staleness stalenessLookup, ctr *Container, stderr io.Writer,
+) ([]auditModuleResult, auditDerivation, error) {
+	configHash, err := observeGateConfig(ctr)
+	if err != nil {
+		return nil, auditDerivation{}, err
+	}
+	results, derivation, err := auditScope(ctx, coords, scope, f, staleness, ctr, stderr)
+	derivation.configHash = configHash
+	return results, derivation, err
 }
 
 // writeNoAuditDependencies reports a scope with no dependencies to audit.
@@ -549,30 +569,65 @@ func writeAuditResults(stdout io.Writer, envelope envelopeScope, derivation audi
 		if err := enc.Encode(newAuditOutput(envelope, run, results)); err != nil {
 			return fmt.Errorf("encoding results: %w", err)
 		}
-		return auditOutcomeErr(results)
+		return auditOutcomeErr(results, derivation)
 	}
 
 	if err := printAuditTable(stdout, results); err != nil {
 		return err
 	}
-	return auditOutcomeErr(results)
+	return auditOutcomeErr(results, derivation)
 }
 
-// auditOutcomeErr is the run's exit once the table is out: a stored record that
-// failed its integrity check outranks the licence gate, as it does on every
-// command that reads one.
-func auditOutcomeErr(results []auditModuleResult) error {
+// auditOutcomeErr is the run's exit once the table is out: 10 over 5 over 1. A
+// record failing its integrity check puts the evidence in doubt; a gate that
+// fired on measured findings must still be acted on; a scan that did not answer
+// in full leaves the vulnerability column known-incomplete.
+func auditOutcomeErr(results []auditModuleResult, d auditDerivation) error {
 	var failed []string
+	vulnMarked := false
 	for _, r := range results {
 		if r.integrity != nil {
 			failed = append(failed, r.integrity.Error())
 		}
+		vulnMarked = vulnMarked || r.VulnStatus == auditIntegrityFailed || r.VulnStatus == auditRecordsConflict
+	}
+	if !vulnMarked && ExitCodeForError(d.scanErr) == ExitIntegrity {
+		failed = append(failed, d.scanErr.Error())
 	}
 	if len(failed) == 0 {
-		return auditBlockingErr(results)
+		if berr := auditBlockingErr(results); berr != nil {
+			return berr
+		}
+		return auditScanExit(d)
 	}
-	return &exitError{code: ExitIntegrity, msg: fmt.Sprintf("%d dependency(ies) with a stored record that failed its integrity check:\n  %s",
+	return &exitError{code: ExitIntegrity, msg: fmt.Sprintf("%d dependency(ies) with stored records that failed their integrity check or disagree:\n  %s",
 		len(failed), strings.Join(failed, "\n  "))}
+}
+
+// auditScanExit is exit 1 for a scan leg that did not answer in full.
+func auditScanExit(d auditDerivation) error {
+	switch {
+	case d.scanErr != nil:
+		return &exitError{code: ExitPartial, msg: "the vulnerability scan did not answer: " + oneLine(d.scanErr.Error())}
+	case d.scanPartial:
+		return &exitError{code: ExitPartial, msg: fmt.Sprintf("vulnerability scan analysed %d of %d modules; the vulnerability column's coverage is incomplete",
+			scanAnalysed(d.scanFacts.Counts), d.scanFacts.Counts.Total)}
+	}
+	return nil
+}
+
+// scanAnalysed counts the modules a run analysed, as vulnScanCoverageExit does.
+func scanAnalysed(c vulndomain.WalkScanCounts) int {
+	return c.Total - c.Unscannable - c.Failed
+}
+
+// oneLine folds a multi-line reason onto the single line the statement has.
+func oneLine(s string) string {
+	lines := strings.Split(strings.TrimSpace(s), "\n")
+	for i := range lines {
+		lines[i] = strings.TrimSpace(lines[i])
+	}
+	return strings.Join(lines, "; ")
 }
 
 // auditDerivation records where an audit's two expensive answers came from: the
@@ -583,6 +638,8 @@ func auditOutcomeErr(results []auditModuleResult) error {
 // different weight in exactly the cases (release evidence, incident response)
 // where the distinction decides what the answer is worth.
 type auditDerivation struct {
+	// configHash is the configuration the licence gate was evaluated under.
+	configHash string
 	walkReused bool
 	walkRecord walkdomain.WalkRecord
 	scanReused bool
@@ -618,6 +675,10 @@ type auditDerivation struct {
 	// the scan leg failed, which is stated on stderr and read here as a run that
 	// did not answer.
 	scanFacts vulnScanRunFacts
+	// scanErr is why the scan leg did not answer, and scanPartial says its run
+	// left modules unanalysed; either makes audit exit non-zero.
+	scanErr     error
+	scanPartial bool
 }
 
 // writeAuditDerivation states the provenance of the run's two derived answers.
@@ -636,8 +697,14 @@ func writeAuditDerivation(w io.Writer, d auditDerivation) error {
 	}
 
 	scanLine := "vulnerability scan: derived by this run"
-	if d.scanReused {
+	switch {
+	case d.scanErr != nil:
+		scanLine = "vulnerability scan: failed — " + oneLine(d.scanErr.Error())
+	case d.scanReused:
 		scanLine = reusedScanLine(d.scanRun, d.scanReachabilityVerdicts)
+	}
+	if d.scanPartial {
+		scanLine += fmt.Sprintf("; it analysed %d of %d modules", scanAnalysed(d.scanFacts.Counts), d.scanFacts.Counts.Total)
 	}
 
 	lines := []string{walkLine}
@@ -645,6 +712,9 @@ func writeAuditDerivation(w io.Writer, d auditDerivation) error {
 		lines = append(lines, advisoryRefreshLine(d.refresh, d.refreshErr))
 	}
 	lines = append(lines, scanLine)
+	if d.configHash != "" {
+		lines = append(lines, configHashLine(d.configHash, nil))
+	}
 
 	return writeDerivation(w, lines...)
 }
@@ -712,7 +782,7 @@ func auditScope(
 
 	progress := newWalkProgressReporter(stderr, f.noProgress, activeConfig, logLevel)
 	walkResult, werr := runWalkProject(ctx, f.gomodPath, f.force, true, 0, "", f.policyPath, f.skipVCSVerify, scope,
-		walkdomain.WalkDepthFull, "", false, f.stdlibFromGoMod, progress, ctr.ExecuteWalk, nil, io.Discard, stderr)
+		walkdomain.WalkDepthFull, false, f.stdlibFromGoMod, progress, ctr.ExecuteWalk, nil, io.Discard, stderr)
 	if werr != nil {
 		// A partial walk is tolerated (allowPartial=true above): individual
 		// unfetchable nodes surface as "(not fetched)" rows. Only a hard walk
@@ -763,6 +833,11 @@ func auditScope(
 	if ierr := stopIfInterrupted(ctx, "extracting licences for walk "+walkID, eerr); ierr != nil {
 		return nil, derivation, ierr
 	}
+	// A refused artefact leaves a licence row the audit would report as not run;
+	// the refusal is the answer instead.
+	if errors.Is(eerr, fetchports.ErrBlobTampered) {
+		return nil, derivation, eerr
+	}
 	if eerr != nil {
 		_, _ = fmt.Fprintf(stderr, "extract: %v\n", eerr)
 	}
@@ -794,10 +869,9 @@ func auditScope(
 	if ierr := stopIfInterrupted(ctx, "scanning vulnerabilities for walk "+walkID, verr); ierr != nil {
 		return nil, derivation, ierr
 	}
-	if verr != nil {
-		_, _ = fmt.Fprintf(stderr, "vuln-scan: %v\n", verr)
-	}
 	derivation.scanFacts = scanFacts
+	derivation.scanErr, derivation.scanPartial = auditScanOutcome(scanFacts, verr)
+	derivation.scanErr = withAdvisoryRemedy(ctx, derivation.scanErr, scanOffline(f.fresh))
 
 	// The toolchain axis, derived once the snapshot this run is judged against is
 	// settled: the scan run names it when one was reused, and the store's latest
@@ -813,7 +887,69 @@ func auditScope(
 	if err != nil {
 		return nil, derivation, err
 	}
+	if ExitCodeForError(derivation.scanErr) == ExitIntegrity {
+		markRefusedVulnRecords(ctx, ctr.QueryVuln, results)
+	}
 	return results, derivation, nil
+}
+
+// auditScanOutcome splits the scan leg's error into a failure, where no run
+// answered (or one analysed nothing), and a partial run, which answered for the
+// modules it analysed and is stated from its counts.
+func auditScanOutcome(facts vulnScanRunFacts, err error) (failure error, partial bool) {
+	code, ok := ExitCodeFromError(err)
+	if !ok || code != ExitPartial || facts.RunID == "" {
+		return err, false
+	}
+	// The domain calls a run partial when failures and unscannables together
+	// cover every module; audit counts that as the run analysing nothing.
+	if scanAnalysed(facts.Counts) == 0 {
+		return fmt.Errorf("no module in the walk was analysed (%d of %d unanalysed)", facts.Counts.Total, facts.Counts.Total), false
+	}
+	return nil, true
+}
+
+// markRefusedVulnRecords names, on its row, the stored record that failed the
+// scan leg's integrity check. That leg wrote nothing, so the walk-frame read
+// finds no record; the module's own records are read again to say which one.
+func markRefusedVulnRecords(ctx context.Context, uc QueryVulnUseCase, results []auditModuleResult) {
+	for i := range results {
+		if results[i].VulnStatus != "(not scanned)" {
+			continue
+		}
+		coord, err := parseCoordinate(results[i].Coordinate)
+		if err != nil {
+			continue
+		}
+		_, lerr := uc.ListRecordsForModule(ctx, coord, vulnPipelineVersion)
+		markVulnIntegrity(&results[i], lerr)
+	}
+}
+
+// auditIntegrityFailed is the cell of a column whose stored record does not
+// verify; the run exits 10 on it once the table is out.
+const auditIntegrityFailed = "(integrity check failed)"
+
+// auditRecordsConflict is the cell of a column whose stored records disagree;
+// the run exits 10 on it as on a failed integrity check.
+const auditRecordsConflict = "(conflicting records)"
+
+// markVulnIntegrity marks the vulnerability column of a row whose stored record
+// failed its integrity check, or whose records disagree, which outranks the
+// column's other answers.
+func markVulnIntegrity(res *auditModuleResult, err error) {
+	switch {
+	case errors.Is(err, vulnports.ErrVulnIntegrity):
+		res.VulnStatus, res.VulnReason = auditIntegrityFailed, "reading vulnerability record: "+err.Error()
+	case errors.Is(err, vulnports.ErrVulnConflict):
+		res.VulnStatus, res.VulnReason = auditRecordsConflict, err.Error()
+	default:
+		return
+	}
+	res.VulnFindings, res.VulnWithdrawn = 0, 0
+	if res.integrity == nil {
+		res.integrity = err
+	}
 }
 
 // loadGatedProjectWalk loads the project walk and refuses one a go.sum
@@ -939,7 +1075,9 @@ func stopIfInterrupted(ctx context.Context, step string, err error) error {
 func auditDependencyNodes(rec walkdomain.WalkRecord, local coordinate.ModuleCoordinate) []walkdomain.GraphNode {
 	nodes := make([]walkdomain.GraphNode, 0, len(rec.Graph.Nodes))
 	for _, node := range rec.Graph.Nodes {
-		if node.Coordinate == local {
+		// TinyGo is stated in the toolchain and coverage blocks, as vuln-scan
+		// states it: it is not a module row with records to look up.
+		if node.Coordinate == local || node.ResolutionSource == walkdomain.ResolutionTinyGo {
 			continue
 		}
 		nodes = append(nodes, node)
@@ -999,7 +1137,7 @@ func buildAuditResult(ctx context.Context, node walkdomain.GraphNode, anchor vul
 		res.Verification = "(divergent fetch records)"
 		res.coverage = fetchdomain.CoverageObservation{Bucket: fetchdomain.BucketDivergent, Recorded: true}
 	case errors.Is(ferr, fetchports.ErrFetchRecordIntegrity):
-		res.Verification = "(integrity check failed)"
+		res.Verification = auditIntegrityFailed
 		res.integrity = ferr
 	case ferr != nil:
 		res.Verification = "(fetch record unreadable)"
@@ -1042,6 +1180,7 @@ func buildAuditResult(ctx context.Context, node walkdomain.GraphNode, anchor vul
 	res.VulnStatus, res.VulnReason, res.VulnFindings, res.VulnWithdrawn =
 		vulnAuditStatus(vrec, found, verr, auditSupersededReason(ctx, ctr.QueryVuln, coord, found, verr))
 	res.VulnStatus, res.VulnReason = auditSetAside(res.VulnStatus, res.VulnReason, found, verr, vaside)
+	markVulnIntegrity(&res, verr)
 
 	return res, nil
 }
@@ -1172,6 +1311,10 @@ func applyAuditStaleness(ctx context.Context, res *auditModuleResult, coord coor
 			// still marked unmeasured; only the repeated sentence is dropped.
 			if !errors.Is(lerr, errStalenessBatchReported) {
 				_, _ = fmt.Fprintf(stderr, "staleness %s: %v\n", coord.Path(), lerr)
+			}
+			if errors.Is(lerr, staleports.ErrPrivateModule) {
+				res.markStalenessUnmeasured(stalenessPrivateModule)
+				return
 			}
 			res.markStalenessUnmeasured(stalenessLookupFailed)
 			return
@@ -1455,6 +1598,7 @@ func buildStdlibAuditResult(ctx context.Context, coord coordinate.ModuleCoordina
 	res.VulnStatus, res.VulnReason, res.VulnFindings, res.VulnWithdrawn =
 		vulnAuditStatus(vrec, found, verr, auditSupersededReason(ctx, ctr.QueryVuln, coord, found, verr))
 	res.VulnStatus, res.VulnReason = auditSetAside(res.VulnStatus, res.VulnReason, found, verr, vaside)
+	markVulnIntegrity(&res, verr)
 	return res
 }
 

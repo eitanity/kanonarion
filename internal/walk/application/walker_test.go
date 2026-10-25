@@ -165,6 +165,14 @@ type fakeLocalFetcher struct {
 	mu      sync.Mutex
 	records map[string]domain2.CompositeRecord // key: path@version
 	errors  map[string]error
+	calls   []localFetchCall
+}
+
+// localFetchCall is one EnsureFetchedFromPath call: the directory read and the
+// path the record names.
+type localFetchCall struct {
+	coord                coordinate.ModuleCoordinate
+	absPath, writtenPath string
 }
 
 func newFakeLocalFetcher() *fakeLocalFetcher {
@@ -186,9 +194,10 @@ func (f *fakeLocalFetcher) addError(path, version string, err error) {
 	f.errors[wkey(path, version)] = err
 }
 
-func (f *fakeLocalFetcher) EnsureFetchedFromPath(_ context.Context, c coordinate.ModuleCoordinate, _ string) (walkports.LocalModuleFetchResult, error) {
+func (f *fakeLocalFetcher) EnsureFetchedFromPath(_ context.Context, c coordinate.ModuleCoordinate, absPath, writtenPath string) (walkports.LocalModuleFetchResult, error) {
 	k := wkey(c.Path(), c.Version())
 	f.mu.Lock()
+	f.calls = append(f.calls, localFetchCall{coord: c, absPath: absPath, writtenPath: writtenPath})
 	rec, hasRec := f.records[k]
 	err := f.errors[k]
 	f.mu.Unlock()
@@ -574,9 +583,9 @@ func TestWalker_Shallow_TargetFetchFails(t *testing.T) {
 	}
 }
 
-// A local main module's filesystem-replaced require lands in the graph as
-// ResolutionLocalReplace; with no LocalReplaceBase the walker records a
-// NodeLocalReplace per-node result without trying to fetch it, and the overall
+// A local main module's filesystem-replaced require lands in the graph at its
+// local identity. With no local fetcher wired the walker records a
+// NodeLocalReplace per-node result without trying to read it, and the overall
 // walk remains WalkSucceeded. (Local replaces are only honoured for the local
 // main module — a fetched target's own local replaces are ignored.)
 func TestWalker_ProjectLocalReplace_RecordedWithoutFetch(t *testing.T) {
@@ -605,7 +614,7 @@ replace example.com/dep => ../local/dep
 		t.Fatalf("Walk: %v", err)
 	}
 
-	depCoord := coord("example.com/dep", "v1.0.0")
+	depCoord := coord("example.com/dep", coordinate.LocalVersion)
 	depResult, ok := outcome.PerNodeResults[depCoord]
 	if !ok {
 		t.Fatalf("no PerNodeResults entry for local-replace node %s", depCoord)
@@ -645,17 +654,13 @@ func TestWalker_Shallow_IncludesDepNodes(t *testing.T) {
 	}
 }
 
-// when a local fetcher is wired and LocalReplaceBase is set, a local main
-// module's local-replace node is ingested from disk; the walker promotes it to
-// ResolutionLocalAnalysed and records NodeSucceeded. Walk overall succeeds.
-func TestWalker_ProjectLocalReplace_AnalysedFromBase(t *testing.T) {
+// A local replacement is read from disk on every project walk, under its local
+// identity: the node stays local_replace, names the require it replaces, and
+// the relative path is read against the project directory.
+func TestWalker_ProjectLocalReplace_AnalysedByDefault(t *testing.T) {
 	blobs := newFakeBlobStore()
-	rf := newFakeFetcher()
-
-	wf := newWalkerFetcher()
-
 	lf := newFakeLocalFetcher()
-	lf.addRecord(t, "example.com/dep", "v1.0.0")
+	lf.addRecord(t, "example.com/dep", coordinate.LocalVersion)
 
 	mainGoMod := []byte(`module example.com/project
 
@@ -666,31 +671,29 @@ require example.com/dep v1.0.0
 replace example.com/dep => ../local/dep
 `)
 
-	w := buildWalkerWithLocal(rf, wf, lf, blobs, 1)
+	w := buildWalkerWithLocal(newFakeFetcher(), newWalkerFetcher(), lf, blobs, 1)
 	outcome, err := w.Walk(context.Background(), application2.WalkRequest{
-		Target:           coord("example.com/project", coordinate.LocalVersion),
-		ProjectMode:      true,
-		MainModuleGoMod:  mainGoMod,
-		ProjectDir:       "/work/project",
-		LocalReplaceBase: "/some/project",
+		Target:          coord("example.com/project", coordinate.LocalVersion),
+		ProjectMode:     true,
+		MainModuleGoMod: mainGoMod,
+		ProjectDir:      "/work/project",
 	})
 	if err != nil {
 		t.Fatalf("Walk: %v", err)
 	}
 
-	depCoord := coord("example.com/dep", "v1.0.0")
+	depCoord := coord("example.com/dep", coordinate.LocalVersion)
 	res, ok := outcome.PerNodeResults[depCoord]
 	if !ok {
 		t.Fatalf("no PerNodeResults entry for local-replace node %s", depCoord)
 	}
-	if res.Status != domain.NodeSucceeded {
-		t.Errorf("status = %s, want succeeded", res.Status)
+	if res.Status != domain.NodeSucceeded || res.FetchRecord == nil {
+		t.Errorf("result = %s (record %v), want succeeded with the local record", res.Status, res.FetchRecord != nil)
 	}
-	if res.FetchRecord == nil {
-		t.Error("FetchRecord is nil; expected local FactRecord")
+	if len(lf.calls) != 1 || lf.calls[0].absPath != "/work/local/dep" || lf.calls[0].coord != depCoord {
+		t.Errorf("local fetcher calls = %+v, want one read of %s from /work/local/dep", lf.calls, depCoord)
 	}
 
-	// Graph node must be promoted to local_analysed.
 	var graphNode *domain.GraphNode
 	for i := range outcome.Graph.Nodes {
 		if outcome.Graph.Nodes[i].Coordinate == depCoord {
@@ -701,24 +704,59 @@ replace example.com/dep => ../local/dep
 	if graphNode == nil {
 		t.Fatalf("dep node not found in graph")
 	}
-	if graphNode.ResolutionSource != domain.ResolutionLocalAnalysed {
-		t.Errorf("ResolutionSource = %s, want local_analysed", graphNode.ResolutionSource)
+	if graphNode.ResolutionSource != domain.ResolutionLocalReplace {
+		t.Errorf("ResolutionSource = %s, want local_replace", graphNode.ResolutionSource)
+	}
+	if graphNode.OriginalCoordinate != coord("example.com/dep", "v1.0.0") {
+		t.Errorf("OriginalCoordinate = %s, want example.com/dep@v1.0.0", graphNode.OriginalCoordinate)
 	}
 	if outcome.OverallStatus != domain.WalkSucceeded {
 		t.Errorf("overall status = %s, want succeeded", outcome.OverallStatus)
 	}
 }
 
-// when the local fetch fails the walker falls back to NodeLocalReplace
-// (behavior) without failing the overall walk.
-func TestWalker_ProjectLocalReplace_FallsBackOnFetchError(t *testing.T) {
-	blobs := newFakeBlobStore()
-	rf := newFakeFetcher()
+// The record names a local replace by the path go.mod writes, never by the
+// directory it was read from. A relative target is read against the project
+// directory; an absolute one is read where it is, never joined onto it.
+func TestWalker_ProjectLocalReplace_RecordsThePathAsWritten(t *testing.T) {
+	cases := []struct{ name, projectDir, target, wantAbs string }{
+		{"relative", "/some/project", "../local/dep", "/some/local/dep"},
+		{"absolute", "/some/project", "/srv/local/dep", "/srv/local/dep"},
+	}
+	for _, tc := range cases {
+		mainGoMod := []byte("module example.com/project\n\ngo 1.21\n\nrequire example.com/dep v1.0.0\n\nreplace example.com/dep => " + tc.target + "\n")
+		t.Run(tc.name, func(t *testing.T) {
+			lf := newFakeLocalFetcher()
+			lf.addRecord(t, "example.com/dep", coordinate.LocalVersion)
+			blobs := newFakeBlobStore()
+			w := buildWalkerWithLocal(newFakeFetcher(), newWalkerFetcher(), lf, blobs, 1)
+			if _, err := w.Walk(context.Background(), application2.WalkRequest{
+				Target:          coord("example.com/project", coordinate.LocalVersion),
+				ProjectMode:     true,
+				MainModuleGoMod: mainGoMod,
+				ProjectDir:      tc.projectDir,
+			}); err != nil {
+				t.Fatalf("Walk: %v", err)
+			}
+			if len(lf.calls) != 1 {
+				t.Fatalf("local fetcher calls = %d, want 1", len(lf.calls))
+			}
+			got := lf.calls[0]
+			if got.writtenPath != tc.target {
+				t.Errorf("writtenPath = %q, want %q, the replace target as go.mod writes it", got.writtenPath, tc.target)
+			}
+			if got.absPath != tc.wantAbs {
+				t.Errorf("absPath = %q, want %q", got.absPath, tc.wantAbs)
+			}
+		})
+	}
+}
 
-	wf := newWalkerFetcher()
-
+// A local replacement the walk could not read leaves a module of the build
+// unanalysed, so the node is recorded failed and the walk partial.
+func TestWalker_ProjectLocalReplace_ReadFailureIsPartial(t *testing.T) {
 	lf := newFakeLocalFetcher()
-	lf.addError("example.com/dep", "v1.0.0", errors.New("directory not found"))
+	lf.addError("example.com/dep", coordinate.LocalVersion, errors.New("directory not found"))
 
 	mainGoMod := []byte(`module example.com/project
 
@@ -729,78 +767,59 @@ require example.com/dep v1.0.0
 replace example.com/dep => ../local/dep
 `)
 
-	w := buildWalkerWithLocal(rf, wf, lf, blobs, 1)
-	outcome, err := w.Walk(context.Background(), application2.WalkRequest{
-		Target:           coord("example.com/project", coordinate.LocalVersion),
-		ProjectMode:      true,
-		MainModuleGoMod:  mainGoMod,
-		ProjectDir:       "/work/project",
-		LocalReplaceBase: "/some/project",
-	})
-	if err != nil {
-		t.Fatalf("Walk: %v", err)
-	}
-
-	depCoord := coord("example.com/dep", "v1.0.0")
-	res, ok := outcome.PerNodeResults[depCoord]
-	if !ok {
-		t.Fatalf("no PerNodeResults entry for local-replace node %s", depCoord)
-	}
-	if res.Status != domain.NodeLocalReplace {
-		t.Errorf("status = %s, want local_replace", res.Status)
-	}
-	if outcome.OverallStatus != domain.WalkSucceeded {
-		t.Errorf("overall status = %s, want succeeded", outcome.OverallStatus)
-	}
-}
-
-// when LocalReplaceBase is empty the local fetcher is not invoked
-// and the node stays as NodeLocalReplace (behavior).
-func TestWalker_ProjectLocalReplace_SkippedWhenNoBase(t *testing.T) {
-	blobs := newFakeBlobStore()
-	rf := newFakeFetcher()
-
-	wf := newWalkerFetcher()
-
-	lf := newFakeLocalFetcher()
-	lf.addRecord(t, "example.com/dep", "v1.0.0")
-
-	mainGoMod := []byte(`module example.com/project
-
-go 1.21
-
-require example.com/dep v1.0.0
-
-replace example.com/dep => ../local/dep
-`)
-
-	w := buildWalkerWithLocal(rf, wf, lf, blobs, 1)
+	w := buildWalkerWithLocal(newFakeFetcher(), newWalkerFetcher(), lf, newFakeBlobStore(), 1)
 	outcome, err := w.Walk(context.Background(), application2.WalkRequest{
 		Target:          coord("example.com/project", coordinate.LocalVersion),
 		ProjectMode:     true,
 		MainModuleGoMod: mainGoMod,
 		ProjectDir:      "/work/project",
-		// LocalReplaceBase intentionally empty
 	})
 	if err != nil {
 		t.Fatalf("Walk: %v", err)
 	}
 
-	depCoord := coord("example.com/dep", "v1.0.0")
-	res, ok := outcome.PerNodeResults[depCoord]
-	if !ok {
-		t.Fatalf("no PerNodeResults entry for local-replace node %s", depCoord)
+	res := outcome.PerNodeResults[coord("example.com/dep", coordinate.LocalVersion)]
+	if res.Status != domain.NodeFetchFailed || res.Error == nil || res.Error.Type != "local_fetch_failed" {
+		t.Errorf("result = %+v, want fetch_failed of type local_fetch_failed", res)
 	}
-	if res.Status != domain.NodeLocalReplace {
-		t.Errorf("status = %s, want local_replace", res.Status)
-	}
-	if outcome.OverallStatus != domain.WalkSucceeded {
-		t.Errorf("overall status = %s, want succeeded", outcome.OverallStatus)
+	if outcome.OverallStatus != domain.WalkPartial {
+		t.Errorf("overall status = %s, want partial", outcome.OverallStatus)
 	}
 }
 
-// when no local fetcher is wired (nil) the node stays as
-// NodeLocalReplace regardless of LocalReplaceBase (behavior).
+// A relative replace path with no project directory to read it against is not
+// read from wherever the process happens to run: the node is recorded failed.
+func TestWalker_ProjectLocalReplace_NoProjectDirIsNotGuessed(t *testing.T) {
+	lf := newFakeLocalFetcher()
+	lf.addRecord(t, "example.com/dep", coordinate.LocalVersion)
+
+	mainGoMod := []byte(`module example.com/project
+
+go 1.21
+
+require example.com/dep v1.0.0
+
+replace example.com/dep => ../local/dep
+`)
+
+	w := buildWalkerWithLocal(newFakeFetcher(), newWalkerFetcher(), lf, newFakeBlobStore(), 1)
+	outcome, err := w.Walk(context.Background(), application2.WalkRequest{
+		Target:          coord("example.com/project", coordinate.LocalVersion),
+		ProjectMode:     true,
+		MainModuleGoMod: mainGoMod,
+	})
+	if err != nil {
+		t.Fatalf("Walk: %v", err)
+	}
+	if len(lf.calls) != 0 {
+		t.Errorf("local fetcher calls = %d, want 0", len(lf.calls))
+	}
+	if res := outcome.PerNodeResults[coord("example.com/dep", coordinate.LocalVersion)]; res.Status != domain.NodeFetchFailed {
+		t.Errorf("status = %s, want fetch_failed", res.Status)
+	}
+}
+
+// when no local fetcher is wired (nil) the node stays as NodeLocalReplace.
 func TestWalker_ProjectLocalReplace_SkippedWhenNoLocalFetcher(t *testing.T) {
 	blobs := newFakeBlobStore()
 	rf := newFakeFetcher()
@@ -818,17 +837,16 @@ replace example.com/dep => ../local/dep
 
 	w := buildWalker(rf, wf, blobs, 1) // nil localFetcher
 	outcome, err := w.Walk(context.Background(), application2.WalkRequest{
-		Target:           coord("example.com/project", coordinate.LocalVersion),
-		ProjectMode:      true,
-		MainModuleGoMod:  mainGoMod,
-		ProjectDir:       "/work/project",
-		LocalReplaceBase: "/some/project",
+		Target:          coord("example.com/project", coordinate.LocalVersion),
+		ProjectMode:     true,
+		MainModuleGoMod: mainGoMod,
+		ProjectDir:      "/work/project",
 	})
 	if err != nil {
 		t.Fatalf("Walk: %v", err)
 	}
 
-	depCoord := coord("example.com/dep", "v1.0.0")
+	depCoord := coord("example.com/dep", coordinate.LocalVersion)
 	res, ok := outcome.PerNodeResults[depCoord]
 	if !ok {
 		t.Fatalf("no PerNodeResults entry for local-replace node %s", depCoord)

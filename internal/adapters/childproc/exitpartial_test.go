@@ -66,3 +66,24 @@ func TestExitedAnalyserLimit_OnlyTheLimitRefusalCounts(t *testing.T) {
 		})
 	}
 }
+
+// Only the evidence-in-doubt exit counts as one: a parent stops a run on it,
+// and must not stop on any other exit.
+func TestExitedIntegrity_OnlyTheEvidenceInDoubtExitCounts(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"integrity", fakeExit{10}, true},
+		{"integrity, wrapped", fmt.Errorf("spawning child: %w", fakeExit{10}), true},
+		{"partial", fakeExit{1}, false},
+		{"config", fakeExit{20}, false},
+		{"not an exit", errors.New("boom"), false},
+		{"nil", nil, false},
+	} {
+		if got := ExitedIntegrity(tc.err); got != tc.want {
+			t.Errorf("%s: ExitedIntegrity = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}

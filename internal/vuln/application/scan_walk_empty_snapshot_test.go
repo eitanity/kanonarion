@@ -95,7 +95,7 @@ func TestPreExtractVulnDB_RefusesAnEmptyDatabaseAndCountsAPopulatedOne(t *testin
 		}
 		// The count is the whole content of the finding: it is what separates an
 		// empty database from a small one.
-		for _, want := range []string{"0 advisories", snapshot.Source(), snapshot.Version(), "--fresh"} {
+		for _, want := range []string{"0 advisories", snapshot.Source(), snapshot.Version(), "fetch a populated database"} {
 			if !strings.Contains(err.Error(), want) {
 				t.Errorf("the refusal must name %q: %v", want, err)
 			}

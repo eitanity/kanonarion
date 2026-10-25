@@ -50,7 +50,7 @@ func NewExtractGoDebugUseCase(cfg Config) *ExtractGoDebugUseCase {
 // audit event per setting. The returned record's settings carry their tier
 // and policy verdict.
 func (uc *ExtractGoDebugUseCase) Extract(
-	ctx context.Context, goModPath string, policy configdomain.GoDebugPolicy,
+	ctx context.Context, goModPath string, policy configdomain.GoDebugPolicy, configHash string,
 ) (domain.Record, error) {
 	lap := uc.stopwatch.Start()
 
@@ -80,6 +80,7 @@ func (uc *ExtractGoDebugUseCase) Extract(
 		ExtractedAt:       uc.clock.Now().UTC(),
 		SchemaVersion:     domain.GoDebugSchemaVersion,
 		PipelineVersion:   domain.PipelineVersion,
+		ConfigHash:        configHash,
 	}
 	rec.ContentHash = domain.Hash(ss)
 
@@ -87,7 +88,7 @@ func (uc *ExtractGoDebugUseCase) Extract(
 		return domain.Record{}, fmt.Errorf("persisting godebug record: %w", err)
 	}
 	for _, s := range ss {
-		if err := uc.audit.RecordEvent(auditEvent(res.ProjectModulePath, s)); err != nil {
+		if err := uc.audit.RecordEvent(auditEvent(res.ProjectModulePath, s, configHash)); err != nil {
 			return domain.Record{}, fmt.Errorf("recording godebug audit event: %w", err)
 		}
 	}
@@ -105,7 +106,7 @@ func (uc *ExtractGoDebugUseCase) Extract(
 // auditEvent builds the audit envelope for a classified setting. One
 // event per detected setting makes add/remove/modify between scans observable
 // from the append-only log without a bespoke diff schema.
-func auditEvent(project string, s domain.Setting) audit.Event {
+func auditEvent(project string, s domain.Setting, configHash string) audit.Event {
 	return audit.Event{
 		Type: audit.EventGoDebugSettingObserved,
 		Payload: map[string]any{
@@ -119,6 +120,7 @@ func auditEvent(project string, s domain.Setting) audit.Event {
 			"classification":  s.Tier.String(),
 			"policy_outcome":  s.PolicyOutcome,
 			"policy_blocking": s.PolicyBlocking,
+			"config_hash":     configHash,
 		},
 	}
 }

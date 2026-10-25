@@ -363,6 +363,11 @@ type SourceDirs struct {
 	GOROOT      string
 	BuildCache  string
 	ModuleCache string
+	// GOOS, GOARCH and GOARM are the platform the same go command resolves,
+	// asked in the same child so recording the frame costs no extra process.
+	GOOS   string
+	GOARCH string
+	GOARM  string
 }
 
 // newSourceRoots states the roots for one analysis.

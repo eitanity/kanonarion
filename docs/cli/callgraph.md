@@ -157,7 +157,8 @@ Two things can connect a caller to a function, and they are not the same fact.
 
 Both are edges. Every edge states its `kind` in JSON — `"Call"` or
 `"Reference"`, spelled out on both so a consumer never has to infer one from a
-missing field — and a reference carries a label in the text output:
+missing field (a record made under `--tinygo` has two more kinds of call, see
+[Edge kind](#edge-kind)) — and a reference carries a label in the text output:
 
 ```
 1 caller of pkg.(*H).confirmEmail:
@@ -330,11 +331,73 @@ kanonarion callgraph <module>@<version> [flags]
 | `--go-binary` | _(from `PATH`)_ | Path to the `go` binary if not on `PATH` |
 | `--no-progress` | `false` | Suppress the per-phase narration on stderr |
 | `--json` | `false` | Emit this run's summary as a JSON document (the record's scalars, without `nodes` and `edges`) |
+| `--target <GOOS/GOARCH>` | _(this host's platform)_ | Extract under this build target, e.g. `--target wasip1/wasm`. The analysis loads under it and the record names it. See [The build frame](conventions.md#the-build-frame) |
+| `--goos` / `--goarch` | _(this host's)_ | The two halves of `--target`, for a caller holding them separately. Both are required, and neither combines with `--target` |
+| `--tinygo <target>` | _(none)_ | Extract under a TinyGo target, e.g. `--tinygo wasip1`, as the `tinygo` command on `PATH` defines it: its platform, `GOROOT`, cgo and build tags. Mutually exclusive with `--target`, `--goos` and `--goarch`. Refused for the standard library, whose graph is read from a Go toolchain's own `GOROOT` |
 
 ```
 $ kanonarion callgraph golang.org/x/mod@v0.30.0
-golang.org/x/mod@v0.30.0: Extracted — 1039 nodes, 4201 edges [CHA]
+golang.org/x/mod@v0.30.0: Extracted — 1039 nodes, 4201 edges [CHA] frame linux/amd64
 ```
+
+### Under a TinyGo target
+
+With `--tinygo`, TinyGo's own packages are analysed with bodies: every package
+whose directory or files resolve under `$(tinygo env TINYGOROOT)/src`, such as
+`machine`, `device/arm`, `runtime`, `internal/task` and `sync`. Their functions
+are nodes with `module ''` and `role: external`, as the standard library's are,
+and their call edges are recorded, including a call back into the analysed
+module: `callers` on a function handed to `machine.Pin.SetInterrupt` names the
+`machine` function that calls it. Packages that come from Go's own `GOROOT`,
+such as `time` and `fmt`, stay standard library. The graph is much larger than
+the same program's under the host frame, because `device/*` packages declare a
+method per register.
+
+The record also holds what TinyGo adds beyond the source's calls:
+
+- **Calls the compiler inserts**, edge kind `compiler-inserted`: map, string,
+  channel, `append`, `panic`/`recover`, type assertion, interface comparison,
+  `go`, `defer`, heap allocation, the bounds, nil and divide-by-zero checks, and
+  `print`/`println` each become a call to the runtime function TinyGo emits for
+  them. The functions come from a table kanonarion keeps per TinyGo release.
+  Under a release the table does not cover, the record is `Partial` with
+  `compiler-inserted runtime calls and the entry points TinyGo exports by name
+  are not recorded: TinyGo <version> is outside kanonarion's lowering table,
+  which covers TinyGo <versions>`; everything else in it is measured as usual.
+- **Bodies `//go:linkname` supplies**, edge kind `linkname`, in both forms: the
+  implementing package names the declaration (`//go:linkname timeSleep
+  time.Sleep`), or a declaration without a body names its implementation
+  (`//go:linkname callMain main.main`).
+- **Entry points.** The `//export` functions in TinyGo's own packages carry
+  `export_directive`: `runtime.main` as `Reset_Handler`, the `<name>_IRQHandler`
+  stubs, the `__atomic_*` helpers. In a wasm build, `runtime.wasmEntryCommand`
+  carries `wasmexport` `_start`: TinyGo exports it by name, with no directive in
+  source, under the build mode `tinygo build` uses. A function handed to
+  `interrupt.New`, whether named, a method value or a function literal, carries
+  `interrupt_handler`, and reachability starts there as it does at an export.
+
+TinyGo's packages are written for TinyGo's cgo, so they are read the way TinyGo
+reads them: `import "C"` is removed and every `C.<name>` becomes the name TinyGo
+declares for it. A package that only imports `"C"` for its preamble needs
+nothing more. A file that references C names needs a C compiler: `clang` on
+`PATH`, else the highest-numbered `clang-<N>` (Debian and Ubuntu install only
+the versioned name). The preamble is compiled for the target with the
+`cflags`, `cpu` and ABI of its definition under `TINYGOROOT/targets/`, and its
+declarations become Go declarations. The record is `Partial` when:
+
+| Message | What it means |
+|---|---|
+| `package <path>: no C compiler found on PATH (looked for clang, then clang-<N>)` | The named file references C names and this host has no clang. Install one and re-analyse |
+| `clang rejected the preamble: <file>:<line>:<col>: error: …` | clang's first diagnostic for the file's preamble under this target |
+| `C.<name>: <C type> is a C type this analysis does not translate` | The C declaration uses a type outside the translated set: bit fields, a union of more than one field, `__int128`, `_Complex`, an anonymous struct named only inside another |
+| `C.<name>: the macro "<text>" is not a constant this analysis evaluates: …` | A referenced macro that is not an integer, float, character or string constant, or an expression of those |
+
+The result line names the frame the analysis ran under. With `--from-walk`, the
+walk's frame is the extraction frame: a walk resolved for another platform is
+analysed under that platform, and stderr says so. A declaration that disagrees
+with the walk is refused naming both frames. Without `--from-walk`, only walks of
+the analysis frame are searched for a build list; walks of other frames are
+passed over and the notice counts them.
 
 The analysis narrates the phase it is in on stderr, so a run that takes minutes
 is visibly working rather than apparently wedged:
@@ -435,7 +498,7 @@ it. The causes that recur:
 |---|---|
 | `no go.mod was synthesised: … imports packages outside the standard library: …` | A module published before Go modules whose imports no build list in this store resolves. Name a build that does with `--from-walk`, or walk a project that uses it |
 | `no package under <path>: the loader resolved N package(s) (…)` | Nothing the loader returned belongs to the module. The named packages say what it found instead |
-| `no packages found for <goos>/<goarch> …` | The module ships no Go source this platform compiles. A Windows-only module has no graph on Linux, and that is a joint fact about the module and the frame |
+| `no packages found for <frame> …` | The module ships no Go source the record's frame compiles — `linux/amd64`, or `tinygo/pico (linux/arm)` under a TinyGo declaration. A Windows-only module has no graph on Linux, and that is a joint fact about the module and the frame |
 | `none of the N package(s) under <path> type-checked: …` | The packages were found and the type-check failed; the loader's own errors follow |
 | `the loader reported: … missing go.sum entry for module providing package …; to add: …` | The tree's `go.sum` does not cover a module the load needs. `go mod tidy`, then re-analyse. A local analysis is read-only: it reports the gap rather than closing it in the tree it was asked to measure |
 | `package requires newer Go version goX (application built with goY)`, or `This application uses version goY of the source-processing packages but runs version goX of 'go list'` | This kanonarion was built with goY and the code requires goX. It type-checks with the Go compiled into the binary, so the `go` on `PATH` and `GOTOOLCHAIN` do not change it. Use a kanonarion built with goX or newer — a newer release, or `go install github.com/eitanity/kanonarion@latest` run with that Go — and re-analyse. The cause is `environment`, the record is never served as a cache hit, and the run exits `20`. `callers`, `callees`, `usage`, `capability` and `interface-diff --used-by` say the package was not analysed, rather than that it did not typecheck |
@@ -468,6 +531,10 @@ An incomplete population is reported rather than tolerated — the log names wha
 was written against what was requested, and which coordinates failed — because
 with the network off a missing version is the difference between a module that
 resolves and one that records an environment failure.
+
+Packages are loaded through the go command, for a fetched module and a working
+tree alike: `GOPACKAGESDRIVER` is not honoured, so a build that needs an external
+package driver is not analysable.
 
 Package membership is decided by the module path the analysed tree **declares**,
 not by the coordinate it was published under. A fork republished at a new path
@@ -506,14 +573,18 @@ kanonarion callgraph-show <module>@<version> [flags]
 | `--diff-to` | _(the most recent measurement)_ | With `--diff`: the generation on the right of the comparison. Takes a `record:` hash as `--history` prints it, or a unique prefix of one |
 | `--source` | _(default)_ | Restrict to graphs built from one source: `zip`, `worktree` or `toolchain-source` |
 | `--toolchain` | _(default)_ | Restrict to graphs built by one Go toolchain, in `go env GOVERSION` form (e.g. `go1.26.6`). A coordinate holding none of them reports no record |
+| `--target <GOOS/GOARCH>` | _(this host's platform)_ | Show the graph extracted under this build target. A coordinate holding none of that frame reports no record, naming the frames it does hold |
+| `--goos` / `--goarch` | _(this host's)_ | The two halves of `--target`. Both are required, and neither combines with `--target` |
+| `--tinygo <target>` | _(none)_ | Show the graph extracted under this TinyGo target. Mutually exclusive with `--target`, `--goos` and `--goarch` |
 
 ```
 $ kanonarion callgraph-show golang.org/x/mod@v0.30.0 --limit-nodes 2 --limit-edges 2
 golang.org/x/mod@v0.30.0  [CHA]  Extracted
   fidelity: BUILT_WITH_BODIES   source: zip   kind: Library   toolchain: go1.26.6
+  frame: linux/amd64
   analyser: golang.org/x/tools v0.49.0
   test scope: analysed — 290 of 1039 nodes are test declarations
-  interfaces: 11 declared, 29 implementations recorded (query with 'kanonarion implementers')
+  interfaces: 11 declared, 29 implementations recorded (query with 'kanonarion implementers <interface-id>')
 Legend: [api] exported symbol  [external] outside this module  [test] declared in a _test.go file  (no tag) unexported
 
 Nodes (1039 total, showing 2):
@@ -922,7 +993,7 @@ was told to re-measure regardless.
 
 ```
     derived:  ledger reuse gate consulted, held nothing restating this analysis
-    derived:  worktree reuse gate bypassed (--force)
+    derived:  worktree reuse gate bypassed (forced)
 ```
 
 The `worktree` gate is the one `kanonarion local` consults before analysing: the
@@ -972,6 +1043,11 @@ differently. A generation under another **pipeline** version is outside the view
 entirely — the header names the pipeline version being listed — and is reported
 only when nothing at the served one answers.
 
+The `frame:` line names the build frame the graph was extracted under:
+`goos/goarch`, or `tinygo/<target> (goos/goarch)` followed by the TinyGo release
+and build tags. `--json` carries the same as `frame`. A record from before
+pipeline `0.11.0` names no frame and prints no line.
+
 #### Composition
 
 A read returns one answer composed from the generations, on a stated ordering:
@@ -1003,6 +1079,20 @@ generation of that one and leaves the other standing; the refusal names
 `--history` and `--toolchain` and nothing else, because there is nothing else to
 run. `kanonarion config set callgraph.toolchain go1.26.6` records the choice so it
 does not have to be typed on every later read.
+
+The **build frame is a dimension too, selected before the ladder**, as the
+toolchain is. Build constraints decide which files a package compiles, so a
+`linux/amd64` graph and a `wasip1/wasm` graph of one module are two answers and
+neither is a lesser measurement of the other. Every read selects the frame the
+invocation declares or, with no declaration, this host's. `callgraph-show`,
+`callers`, `callees`, `implementers`, `usage` and `capability` take `--target`,
+`--goos`/`--goarch` and `--tinygo` for it; on the last five a walk named by
+`--walk-id` supplies the frame instead, and a declaration beside it is refused. A
+coordinate holding no graph of that frame has no answer: each of these reads
+exits `4`, naming the frames it does hold, the flag that reads each, and the
+command that produces this one. A symbol read reports a symbol it cannot find as
+a typo only when a graph of the read frame was searched. A record that names no
+frame is never read as the host's.
 
 The graph difference is what makes it a disagreement. Two toolchains that
 produced the **same** nodes and edges produced the same answer, so the read
@@ -1220,9 +1310,10 @@ kanonarion callers <symbol-id> [flags]
 | `--transitive` | `false` | Follow reachable edges transitively instead of only direct call sites |
 | `--depth` | `0` | Maximum traversal depth for `--transitive` (`0` = unlimited). A negative value is refused with exit `20` |
 | `--gomod <path>` | _(none; unrestricted)_ | Restrict results to the latest **code-scope** project walk for this `go.mod`, resolved for this platform. Takes a path, e.g. `--gomod ./go.mod`. Refuses, naming the scopes the store does hold, rather than answering from a walk of another scope or platform. The scope notice names that walk, its scope, the `GOOS/GOARCH` it resolved for, and that the `go.mod` was not re-resolved for the read (an edit made since that walk is not reflected; `walk --gomod` records the current resolution) |
-| `--target <GOOS/GOARCH>` | _(this host's platform)_ | Select the walk taken for this build target, e.g. `--target windows/amd64`. Applies to the `--gomod` route; refused by name on `--walk-id`, which names a walk that already recorded its platform. A refusal raised under a declared target prints a remedy carrying it. See [Declaring the build target](walk.md#declaring-the-build-target---target) |
+| `--target <GOOS/GOARCH>` | _(this host's platform)_ | Answer from the call graphs extracted under this build target, e.g. `--target wasip1/wasm`; on the `--gomod` route it also selects the walk taken for it. Refused by name beside `--walk-id`: the named walk's own frame is the read frame. A refusal raised under a declared target prints a remedy carrying it. See [Composition](#composition) and [Declaring the build target](walk.md#declaring-the-build-target---target) |
 | `--goos` / `--goarch` | _(this host's)_ | The two halves of `--target`, for a caller holding them separately. Both are required, and neither combines with `--target` |
-| `--walk-id` | _(none)_ | Restrict results to the resolved version set of this walk |
+| `--tinygo <target>` | _(none)_ | Answer from the call graphs extracted under this TinyGo target, e.g. `--tinygo wasip1`, and on the `--gomod` route select the walk taken with it; refused by name beside `--walk-id`. The `tinygo` command on `PATH` defines the target. Mutually exclusive with `--target`, `--goos` and `--goarch`. See [Declaring a TinyGo target](walk.md#declaring-a-tinygo-target---tinygo) |
+| `--walk-id` | _(none)_ | Restrict results to the resolved version set of this walk, and answer from the call graphs of the frame that walk was resolved for (the scope notice names it) |
 | `--no-progress` | `false` | Suppress the stderr progress lines a `--transitive` traversal writes |
 
 ```
@@ -1348,9 +1439,10 @@ method — an ID `callers` and `callees` also accept.
 |------|---------|-------------|
 | `--exclude-tests` | `false` | Omit implementations declared in `_test.go` files |
 | `--gomod <path>` | _(none; unrestricted)_ | Restrict results to the latest **code-scope** project walk for this `go.mod`, resolved for this platform. Takes a path, e.g. `--gomod ./go.mod`. Refuses, naming the scopes the store does hold, rather than answering from a walk of another scope or platform. The scope notice names that walk, its scope, the `GOOS/GOARCH` it resolved for, and that the `go.mod` was not re-resolved for the read (an edit made since that walk is not reflected; `walk --gomod` records the current resolution) |
-| `--target <GOOS/GOARCH>` | _(this host's platform)_ | Select the walk taken for this build target, e.g. `--target windows/amd64`. Applies to the `--gomod` route; refused by name on `--walk-id`, which names a walk that already recorded its platform. A refusal raised under a declared target prints a remedy carrying it. See [Declaring the build target](walk.md#declaring-the-build-target---target) |
+| `--target <GOOS/GOARCH>` | _(this host's platform)_ | Answer from the call graphs extracted under this build target, e.g. `--target wasip1/wasm`; on the `--gomod` route it also selects the walk taken for it. Refused by name beside `--walk-id`: the named walk's own frame is the read frame. A refusal raised under a declared target prints a remedy carrying it. See [Composition](#composition) and [Declaring the build target](walk.md#declaring-the-build-target---target) |
 | `--goos` / `--goarch` | _(this host's)_ | The two halves of `--target`, for a caller holding them separately. Both are required, and neither combines with `--target` |
-| `--walk-id` | _(none)_ | Restrict results to the resolved version set of this walk |
+| `--tinygo <target>` | _(none)_ | Answer from the call graphs extracted under this TinyGo target, e.g. `--tinygo wasip1`, and on the `--gomod` route select the walk taken with it; refused by name beside `--walk-id`. The `tinygo` command on `PATH` defines the target. Mutually exclusive with `--target`, `--goos` and `--goarch`. See [Declaring a TinyGo target](walk.md#declaring-a-tinygo-target---tinygo) |
+| `--walk-id` | _(none)_ | Restrict results to the resolved version set of this walk, and answer from the call graphs of the frame that walk was resolved for (the scope notice names it) |
 | `--json` | `false` | Emit the result, its `answer` and the scope as JSON |
 
 ```
@@ -1395,6 +1487,7 @@ Three failure modes are kept distinct rather than collapsed into an empty list:
 | Situation | Result |
 |---|---|
 | The module was never analysed | error directing you to `local` or `callgraph` |
+| The module's graphs are held only under other build frames | exit `4`, naming the frames held, the flag that reads each, and the command that produces this frame's |
 | The name is not an interface the module declares | error naming the module and how to list what was analysed |
 | The interface declares no such method | error listing the methods it does declare |
 
@@ -1425,7 +1518,8 @@ constructing them by hand.
 | `is_assembly_or_linkname` | The function has no Go body (assembly or `//go:linkname`) |
 | `uses_plugin` | The body references the Go `plugin` package |
 | `position_file`, `position_line` | Where the symbol is declared. Absent when the record states no position — see below |
-| `export_directive` | The function hands itself to a caller outside Go. `kind` is `wasmexport` (`//go:wasmexport`), `export` (`//export`, and TinyGo's `//go:export`) or `interrupt` (TinyGo's `//go:interrupt`); `name` is the exported name, absent for an interrupt. Read from the doc comment of a package-level function in the analysed packages; a method records none. Absent when the function carries no directive |
+| `export_directive` | The function hands itself to a caller outside Go. `kind` is `wasmexport` (`//go:wasmexport`), `export` (`//export`, and TinyGo's `//go:export`) or `interrupt` (TinyGo's `//go:interrupt`); `name` is the exported name, absent for an interrupt. Read from the doc comment of a package-level function in the analysed packages, and under `--tinygo` in TinyGo's own packages too; a method records none, and neither does an `//export` or `//go:export` on a declaration without a body, which imports a C symbol rather than exporting one. Absent when the function carries no directive |
+| `interrupt_handler` | Under `--tinygo` only: the function is installed as a hardware interrupt handler by `runtime/interrupt.New`. `kind` is `interrupt.New`; `site_file` and `site_line` are the registration call, the first in file and line order when there are several. Absent when nothing installs the function |
 
 The three body-level facts are ones a callee-identity map cannot witness. They
 are used by [`capability`](capability.md) analysis and by the answer layer,
@@ -1487,6 +1581,20 @@ unbounded are the five `reflect.Value` methods that pick their target at run tim
 `to_id` as well as on the attribute. On one 74,797-edge graph the attribute is set
 on 162 edges and 2 of them are of that kind, so reading the attribute alone
 overstates them by about eighty times.
+
+## Edge kind
+
+| `kind` | Meaning |
+|--------|---------|
+| `Call` | A call written in the source |
+| `Reference` | The callee's value is taken at the call site; not a call |
+| `compiler-inserted` | Under `--tinygo` only: a call TinyGo's compiler emits for a construct the source writes as an operator, builtin or statement — a map read calls `runtime.hashmapStringGet`, `go f()` calls `internal/task.start`, a bounds check calls `runtime.lookupPanic`. The call site is the construct's position |
+| `linkname` | Under `--tinygo` only: from a declaration without a body to the function `//go:linkname` makes implement it, such as `time.Sleep` → `runtime.timeSleep` |
+
+`callers`, `callees` and `usage` label the last two beside the edge, and a
+transitive traversal follows them as calls, because at run time they are.
+`callgraph-show` tags them on each edge line, and its frame line counts them
+when the record has any.
 
 Confidence answers *how was the target resolved*, a different question from
 *what kind of edge is it*. A reference edge is usually `Direct` — the analyser
@@ -1622,6 +1730,11 @@ notice: 7 coordinate(s) hold call graphs only from superseded extraction logic a
   working tree its newest graph recorded. When no graph recorded one, the line
   names the coordinate and reads `no stored record names the working tree, so
   run kanonarion local from inside it`.
+- For a `@local` dependency a project walk read from disk (a local-path
+  replacement or a go.work member), `callgraph-show` names `kanonarion callgraph
+  <path>@local`, or `kanonarion extract <walk-id> --stages callgraph` over the
+  walk that read it: the walk stored its directory, so no working tree is
+  needed.
 
 Under `--json`, the `--transitive` and `implementers` documents carry the same
 list as `not_searched`, sorted by coordinate. The key is absent when nothing was
@@ -1637,7 +1750,10 @@ skipped:
 ```
 
 `reason` is `superseded` (graphs only at older pipelines, listed in `pipelines`)
-or `not_analysed` (no graph at all; only under `--gomod` or `--walk-id`).
+or `not_analysed` (no graph at all; only under `--gomod` or `--walk-id`), or
+`other_frame` (held only under other build frames, listed in `frames`; text
+states these on a third line, `… are held only under other frames and were not
+searched: stdlib@v1.27.2 (wasip1/wasm; read with --target wasip1/wasm)`).
 `remedy` is absent for a local coordinate whose working tree no graph recorded.
 `callers` and `callees` without `--transitive` print a JSON array, so they state
 the notice on stderr instead.
@@ -1683,6 +1799,8 @@ and `local` treat that coordinate as not yet analysed and measure it again.
 
 A record whose stored bytes or edge rows do **not** hash to its seal has been
 altered, and every command that meets one refuses at exit `10`, as before.
+
+A record whose seal verifies but which is filed under another coordinate, or under a pipeline version, build frame, analysis root or scan digest its seal does not state, is refused at exit `10` too by every read that decodes it, naming the table: `callgraph` warns and analyses the coordinate again, and nothing removes the row, because the ledger is append-only.
 
 ## Which working tree answered
 

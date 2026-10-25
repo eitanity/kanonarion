@@ -2,7 +2,6 @@ package staticcha
 
 import (
 	"fmt"
-	"go/build"
 	"os"
 	"path/filepath"
 	"sort"
@@ -256,23 +255,6 @@ func declaredGoVersion(dir string) string {
 		return ""
 	}
 	return f.Go.Version
-}
-
-// platformFrame names the target platform the load resolved build constraints
-// against.
-//
-// A module that ships only Windows source has no packages on this host, and
-// "no packages found" reads as a statement about the artefact when it is a
-// statement about the artefact AND the frame it was read in — the same
-// distinction every platform-scoped answer in this tool is required to carry.
-// github.com/yusufpapurcu/wmi is the whole of its Go source behind a windows
-// build tag.
-//
-// It reads go/build's resolved context rather than runtime, because that is
-// what the loader itself honours: a GOOS in the environment moves the frame,
-// and a message naming the compiled-in platform would then name the wrong one.
-func platformFrame() string {
-	return build.Default.GOOS + "/" + build.Default.GOARCH
 }
 
 // moduleRelative rewrites paths under the per-run staging directory into

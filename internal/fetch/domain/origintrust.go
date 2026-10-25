@@ -3,6 +3,7 @@ package domain
 import (
 	"fmt"
 	"net/url"
+	"path"
 	"sort"
 	"strings"
 )
@@ -111,12 +112,11 @@ func NewVCSHostAllowlist(hosts []string) (VCSHostAllowlist, error) {
 }
 
 // ErrEmptyVCSHostAllowlist is returned when an allowlist is configured with no
-// entries. It names the supported way to turn VCS verification off so the
-// operator is not left guessing.
+// entries. The flag that turns the git leg off belongs to the commands that
+// define it, so the domain names none.
 var ErrEmptyVCSHostAllowlist = fmt.Errorf(
 	"VCS host allowlist must not be empty: it selects WHICH forges are trusted, not WHETHER " +
-		"cross-verification runs; to skip the git leg entirely use --skip-vcs-verify " +
-		"(checksum-database verification still runs)")
+		"cross-verification runs")
 
 // ValidateVCSHost checks that host is a bare, lowercased hostname: no scheme,
 // no port, no path, no user info, no wildcard. Exact matching is the whole
@@ -279,6 +279,26 @@ func (a VCSHostAllowlist) CheckOriginForCheckout(rawURL, ref, commit string) (st
 		return "", err
 	}
 	return warning, nil
+}
+
+// ValidateOriginSubdir checks the untrusted proxy's claim of where in the
+// repository a module lives. The value becomes a path inside a checkout, so
+// anything that could name a place outside it, or is not the canonical
+// slash-separated spelling, is refused rather than interpreted.
+func ValidateOriginSubdir(subdir string) error {
+	switch {
+	case subdir == "":
+		return nil
+	case strings.ContainsAny(subdir, "\\\x00"):
+		return fmt.Errorf("origin subdirectory %q contains a backslash or NUL", subdir)
+	case path.IsAbs(subdir):
+		return fmt.Errorf("origin subdirectory %q is absolute", subdir)
+	case path.Clean(subdir) != subdir:
+		return fmt.Errorf("origin subdirectory %q is not in clean form", subdir)
+	case subdir == ".." || strings.HasPrefix(subdir, "../"):
+		return fmt.Errorf("origin subdirectory %q leaves the repository", subdir)
+	}
+	return nil
 }
 
 // CheckCloneURL accepts only https URLs, and reports or refuses a host outside

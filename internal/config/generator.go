@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 
@@ -22,7 +24,7 @@ var knownSections = []string{
 	"copyright_declarations", "callgraph",
 	"staleness",
 	"directive_policy", "godebug_policy", "vendor_policy", "fips_policy",
-	"fetch_policy",
+	"fetch_policy", "storage", "vulndb",
 }
 
 // sectionDefaults maps a top-level section name to the YAML block appended
@@ -40,8 +42,8 @@ preferences:
   # Log level: debug | info | warn | error
   # log_level: warn
   # Throttled fetch-phase progress heartbeat on long walk/inspect runs, written
-  # to stderr (never stdout, so --json is unaffected). Set false (or pass
-  # --no-progress) for fully silent runs.
+  # to stderr (never stdout, so --json is unaffected). Set false for fully
+  # silent runs.
   # progress: true
 `,
 	"license_policy": `
@@ -110,8 +112,8 @@ callgraph:
   # The Go toolchain a read prefers when one coordinate holds graphs built by
   # two of them. A graph carries its toolchain's own stdlib, so two toolchains
   # are two answers with no ladder between them and the read refuses rather than
-  # picking; this names which one you mean, once, instead of passing --toolchain
-  # on every command. It only ever breaks that tie — a coordinate naming one
+  # picking; this names which one you mean, once, instead of on every
+  # command. It only ever breaks that tie — a coordinate naming one
   # toolchain, or none, is served exactly as it is with this unset.
   # toolchain: go1.26.6
 `,
@@ -121,7 +123,7 @@ staleness:
   # proxy is asked again. Commands that report staleness (latest, audit) write
   # every successful lookup to the store and read it back inside this window,
   # and always state the lookup time they used, so a served answer is never
-  # mistaken for a live one. Pass --fresh to bypass the ledger for one run.
+  # mistaken for a live one. Either command can bypass the ledger for one run.
   #
   # Set to 0 to disable serving entirely (every command re-pays the sweep).
   # ttl: 1h
@@ -198,7 +200,7 @@ fetch_policy:
   #
   # Naming the key switches to ENFORCING mode: a host outside the list is
   # refused. An empty list is rejected at load time rather than read as
-  # "trust nobody" — that is --skip-vcs-verify.
+  # "trust nobody".
   # allowed_vcs_hosts:
   #   - bitbucket.org
   #   - codeberg.org
@@ -206,6 +208,25 @@ fetch_policy:
   #   - gitlab.com
   #   - go.googlesource.com
   #   - gopkg.in
+`,
+	"storage": `
+storage:
+  # Where this store's records are kept. backend names a storage backend this
+  # binary registered; the kanonarion binary registers sqlite, which keeps
+  # mirror.db, blobs/ and audit.jsonl under the store root. A backend with
+  # settings of its own reads them from its own top-level section, written
+  # below.
+  # backend: sqlite
+  #
+  # The checksum-database tile cache. Empty means <store-root>/sumdb; a
+  # relative path is resolved against the store root.
+  # sumdb_cache: ""
+`,
+	"vulndb": `
+vulndb:
+  # The base of a mirror of https://vuln.go.dev serving vulndb.zip,
+  # index/db.json and index/modules.json.gz. https only.
+  # url: https://vuln.go.dev
 `,
 }
 
@@ -215,7 +236,10 @@ fetch_policy:
 // written as a literal. The loader only rejects versions NEWER than supported,
 // so a stale literal loads silently while claiming a schema the binary no
 // longer emits — a defect no test of the load path can catch.
-func DefaultYAML() []byte {
+//
+// Each spec, a registered backend's own section, follows the known sections
+// with its defaults commented out.
+func DefaultYAML(specs ...ConfigSpec) []byte {
 	header := fmt.Sprintf(`# kanonarion configuration — edit to customise behaviour.
 # Run 'kanonarion config show' to see the resolved effective config.
 version: %q
@@ -224,14 +248,59 @@ version: %q
 	for _, section := range knownSections {
 		out = append(out, []byte(sectionDefaults[section])...)
 	}
+	for _, spec := range specs {
+		out = append(out, specYAML(spec)...)
+	}
 	return out
+}
+
+// Commented is implemented by a ConfigSpec's Defaults to put an explanation at
+// the top of its section in the generated file.
+type Commented interface {
+	ConfigComment() string
+}
+
+// IsKnownSection reports whether name is a top-level section this schema
+// defines, which a registered spec may not reuse.
+func IsKnownSection(name string) bool {
+	return name == "version" || slices.Contains(knownSections, name)
+}
+
+// specYAML renders a spec's section: its header, then its comment and its
+// defaults as comment lines, so the file sets nothing until a line is
+// uncommented.
+func specYAML(spec ConfigSpec) []byte {
+	var b strings.Builder
+	fmt.Fprintf(&b, "\n%s:\n", spec.Section)
+	if c, ok := spec.Defaults.(Commented); ok {
+		for line := range strings.SplitSeq(strings.TrimRight(c.ConfigComment(), "\n"), "\n") {
+			b.WriteString(strings.TrimRight("  # "+line, " ") + "\n")
+		}
+	}
+	if spec.Defaults == nil {
+		return []byte(b.String())
+	}
+	data, err := yaml.Marshal(spec.Defaults)
+	if err != nil {
+		// Written into the file rather than dropped, so the gap is visible where
+		// an operator reads the section.
+		fmt.Fprintf(&b, "  # defaults could not be rendered: %v\n", err)
+		return []byte(b.String())
+	}
+	if strings.TrimSpace(string(data)) != "{}" {
+		for line := range strings.SplitSeq(strings.TrimRight(string(data), "\n"), "\n") {
+			b.WriteString("  # " + line + "\n")
+		}
+	}
+	return []byte(b.String())
 }
 
 // EnsureConfig writes the default config file at path when it does not exist.
 // When the file exists but is missing sections known to this binary, the missing
 // sections are appended (non-destructive: existing content and comments are
-// preserved).
-func EnsureConfig(path string) error {
+// preserved). specs are the registered backends' sections, written and appended
+// the same way after the known ones.
+func EnsureConfig(path string, specs ...ConfigSpec) error {
 	data, err := os.ReadFile(path) // #nosec G304 -- operator-supplied store-root path is intentional
 	if err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
@@ -240,7 +309,7 @@ func EnsureConfig(path string) error {
 		if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 			return fmt.Errorf("creating config directory: %w", err)
 		}
-		if err := os.WriteFile(path, DefaultYAML(), 0o600); err != nil { // #nosec G304 -- same path
+		if err := os.WriteFile(path, DefaultYAML(specs...), 0o600); err != nil { // #nosec G304 -- same path
 			return fmt.Errorf("writing config %s: %w", path, err)
 		}
 		return nil
@@ -258,6 +327,11 @@ func EnsureConfig(path string) error {
 	for _, section := range knownSections {
 		if _, ok := existing[section]; !ok {
 			appended = append(appended, []byte(sectionDefaults[section])...)
+		}
+	}
+	for _, spec := range specs {
+		if _, ok := existing[spec.Section]; !ok {
+			appended = append(appended, specYAML(spec)...)
 		}
 	}
 	if len(appended) == 0 {

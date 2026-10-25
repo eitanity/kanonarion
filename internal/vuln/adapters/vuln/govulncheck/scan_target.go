@@ -58,7 +58,7 @@ func (s *Scanner) ScanTargetModule(ctx context.Context, req ports.TargetScanRequ
 	// The target of a coordinate-keyed walk is a published zip extracted into a
 	// scratch directory, not a working tree, so there is no vendor/ tree to root
 	// at and this path is fetched-surface by construction.
-	env := s.target.Apply(scanEnv(os.Environ(), req.GoModCache, surfaceNormalised))
+	env := s.tinygo.Apply(s.target.Apply(scanEnv(os.Environ(), req.GoModCache, surfaceNormalised)))
 
 	// The environment above pins the toolchain so no scan child can download one,
 	// which also refuses a toolchain already unpacked on this host. One decision
@@ -110,16 +110,24 @@ func (s *Scanner) ScanTargetModule(ctx context.Context, req ports.TargetScanRequ
 	}
 	s.logMem(ctx, "target_deps_downloaded")
 
-	s.logger.Info("vuln-scan: running target-rooted govulncheck source mode", "dir", scanDir, "db", dbArg)
+	mode, listFault, err := s.scanModeFor(ctx, toolchains, env, scanDir)
+	if err != nil {
+		return domain.ProjectScanResult{}, err
+	}
+	if listFault != nil {
+		return domain.ProjectScanResult{Status: listFault.status, ErrorDetail: listFault.errorDetail, AdvisoryCount: advisories}, nil
+	}
+
+	s.logger.Info("vuln-scan: running target-rooted govulncheck "+string(mode)+" mode", "dir", scanDir, "db", dbArg)
 	var byModule map[coordinate.ModuleCoordinate][]domain.VulnerabilityFinding
 	run, err := runGovulncheck(toolchains, env, func(childEnv []string) *exec.Cmd {
-		cmd := childproc.CommandContext(ctx, tool.bin, "-json", "-db", dbArg, "./...") // #nosec G204 -- binary path from exec.LookPath
+		cmd := childproc.CommandContext(ctx, tool.bin, s.scanArgs(dbArg, mode)...) // #nosec G204 -- binary path from exec.LookPath
 		cmd.Dir = scanDir
 		cmd.Env = childEnv
 		return cmd
 	}, func(r io.Reader) error {
 		var perr error
-		byModule, perr = s.parseResultsByModule(ctx, r, domain.ScanModeSource)
+		byModule, perr = s.parseResultsByModule(ctx, r, mode)
 		return perr
 	})
 	if err != nil {
@@ -145,6 +153,7 @@ func (s *Scanner) ScanTargetModule(ctx context.Context, req ports.TargetScanRequ
 			UnscannableReason: f.unscannableReason,
 			FailureCause:      f.cause,
 			AdvisoryCount:     advisories,
+			ScanMode:          mode,
 		}, nil
 	}
 	if run.parseErr != nil {
@@ -160,5 +169,6 @@ func (s *Scanner) ScanTargetModule(ctx context.Context, req ports.TargetScanRequ
 		FindingsByModule: byModule,
 		Status:           status,
 		AdvisoryCount:    advisories,
+		ScanMode:         mode,
 	}, nil
 }

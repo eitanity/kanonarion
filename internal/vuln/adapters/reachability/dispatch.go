@@ -212,6 +212,13 @@ func annotateHop(
 			Graph:  coord.String(),
 			Reason: "the call graph for " + coord.String() + ", the module this call site is in, could not be read: " + held.err.Error(),
 		}
+	case !held.answer.Served && held.answer.FrameMiss != "":
+		return domain.HopDispatch{
+			Kind:  domain.DispatchNotAnnotated,
+			Graph: coord.String(),
+			Reason: held.answer.FrameMiss + ", or produce this frame's with: " + held.answer.FrameMissRemedy +
+				"; the route stands as the analyser reported it",
+		}
 	case !held.answer.Served:
 		return domain.HopDispatch{
 			Kind:  domain.DispatchNotAnnotated,

@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -122,6 +123,10 @@ func TestAnalyseDir_ChildProcessEnvironmentIsHermetic(t *testing.T) {
 		}
 	}
 
+	// The platform is pinned to the invocation's frame, the host's when nothing
+	// was declared, rather than left to the calling shell.
+	assertHostPair(t, child)
+
 	// And the toolchain the analysis installed.
 	if want := filepath.Dir(fakeGo); !strings.Contains(child["PATH"], "kanonarion-bin-") && !strings.Contains(child["PATH"], want) {
 		t.Errorf("the subprocess PATH does not lead with the toolchain setupGoEnv installed: %q", child["PATH"])
@@ -205,5 +210,14 @@ func TestAnalyseDir_WorkingTreeUnderAWorkspaceKeepsIt(t *testing.T) {
 	}
 	if child["GOFLAGS"] != "-mod=readonly" {
 		t.Errorf("the subprocess was given GOFLAGS=%q, want -mod=readonly: workspace mode refuses -mod=mod", child["GOFLAGS"])
+	}
+}
+
+// assertHostPair fails when a child was not handed this host's GOOS/GOARCH.
+func assertHostPair(t *testing.T, child map[string]string) {
+	t.Helper()
+	if child["GOOS"] != runtime.GOOS || child["GOARCH"] != runtime.GOARCH {
+		t.Errorf("the subprocess was given GOOS/GOARCH %s/%s, want the host pair %s/%s",
+			child["GOOS"], child["GOARCH"], runtime.GOOS, runtime.GOARCH)
 	}
 }

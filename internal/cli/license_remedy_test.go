@@ -27,7 +27,7 @@ import (
 // produce their record.
 const (
 	analyseRootRemedy  = "--analyse-root"
-	analyseLocalRemedy = "--analyse-local"
+	analyseLocalRemedy = "from the local path this build replaces it with"
 	analyseDepRemedy   = "kanonarion license "
 )
 
@@ -205,7 +205,7 @@ func TestMissingLicenceRecordRemedy_NamesTheCommandTheComponentCanFollow(t *test
 			name:   "a locally replaced module is ingested from the path replacing it",
 			coord:  localTarget,
 			build:  build,
-			want:   "run 'kanonarion walk --gomod " + goMod + " --analyse-local'",
+			want:   "run 'kanonarion walk --gomod " + goMod + "' then 'kanonarion extract <walk-id>' to analyse example.com/local@local",
 			absent: []string{analyseRootRemedy, analyseDepRemedy},
 		},
 		{
@@ -227,7 +227,7 @@ func TestMissingLicenceRecordRemedy_NamesTheCommandTheComponentCanFollow(t *test
 		},
 		{
 			// The same coordinate, asked without a build. Nothing has been
-			// measured, so nothing is inferred: a wrong --analyse-local is the
+			// measured, so nothing is inferred: a wrong local-path walk is the
 			// same defect as a wrong 'license', pointed the other way.
 			name:   "an unknown build never guesses a local replace",
 			coord:  localTarget,
@@ -278,7 +278,7 @@ replace example.com/local => example.com/fork v3.0.0
 
 // All three kinds in one document get all three sentences, and the components
 // that share a remedy are counted rather than restated. The locally replaced
-// ones are covered by the run already named: one --analyse-local walk ingests
+// ones are covered by the run already named: one project walk reads
 // every local-replace target the build has.
 func TestMissingLicenceRecordRemedies_StatesEachKindOnce(t *testing.T) {
 	goMod := localReplaceProject(t)
@@ -293,7 +293,7 @@ func TestMissingLicenceRecordRemedies_StatesEachKindOnce(t *testing.T) {
 
 	for _, want := range []string{
 		"--analyse-root",
-		"--gomod " + goMod + " --analyse-local",
+		"--gomod " + goMod + "' then",
 		"run 'kanonarion license example.com/dep@v1.0.0'",
 		"and the same for the other 1 component(s) named",
 	} {
@@ -305,8 +305,8 @@ func TestMissingLicenceRecordRemedies_StatesEachKindOnce(t *testing.T) {
 
 // The branch has to reach the printed message, not just the function: 'sbom'
 // reads the build from the walk the document was generated from, so a
-// local-replace target in that walk is told to run --analyse-local.
-func TestSBOMUndeterminedLocalReplaceTarget_NamesTheAnalyseLocalRemedy(t *testing.T) {
+// local-replace target in that walk is told to run a project walk.
+func TestSBOMUndeterminedLocalReplaceTarget_NamesTheProjectWalkRemedy(t *testing.T) {
 	goMod := localReplaceProject(t)
 	walks := testfakes.NewFakeQueryWalks()
 	walks.AddWalk(walkdomain.WalkRecord{ID: "W9", ProjectDir: filepath.Dir(goMod)})
@@ -316,8 +316,8 @@ func TestSBOMUndeterminedLocalReplaceTarget_NamesTheAnalyseLocalRemedy(t *testin
 		`"licenses":[{"license":{"id":"MIT"}}]}},`+
 		`"components":[{"name":"example.com/local","version":"v0.0.0-00010101000000-000000000000"}]}`, "W9")
 
-	if !strings.Contains(msg, "--gomod "+goMod+" --analyse-local") {
-		t.Errorf("a local-replace target must be sent to --analyse-local: %s", msg)
+	if !strings.Contains(msg, "--gomod "+goMod+"' then") || !strings.Contains(msg, analyseLocalRemedy) {
+		t.Errorf("a local-replace target must be sent to a project walk: %s", msg)
 	}
 	if strings.Contains(msg, analyseDepRemedy) {
 		t.Errorf("a local-replace target must not be sent to 'license', which fetches a module that was never published: %s", msg)

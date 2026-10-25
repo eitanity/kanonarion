@@ -272,7 +272,7 @@ func (uc *ExtractExampleUseCase) openZip(ctx context.Context, req ExtractRequest
 	}
 	zipReader, err := uc.blobs.Get(ctx, zipIdentity)
 	if err != nil {
-		return nil, fmt.Errorf("opening blob %s: %w", factRecord.ContentLocation, err)
+		return nil, fmt.Errorf("opening blob %s: %w", factRecord.ContentLocation, fetchports.AttributeBlobTamper(err, req.Coordinate))
 	}
 	return zipReader, nil
 }

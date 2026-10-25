@@ -248,6 +248,22 @@ const (
 	// Copying them here would make the log an unsealed second summary of a run
 	// the store already holds sealed, and one that would go stale silently.
 	EventVulnScanServed EventType = "vuln_scan_served"
+
+	// EventConfigChanged records that `config set` rewrote the configuration.
+	// Payload names the key set and the config hash before and after; a set
+	// that leaves the hash unchanged appends nothing.
+	EventConfigChanged EventType = "config_changed"
+
+	// EventConfigDriftObserved records that a gate-evaluating command found the
+	// configuration's hash differs from the last one the ledger holds. An edit
+	// kanonarion did not make cannot be witnessed when it happens, so this is
+	// appended at first use and says so; the old hash is empty on a store whose
+	// ledger names none.
+	EventConfigDriftObserved EventType = "config_drift_observed"
+
+	// EventConfigOverride records that a flag changed a gate for one invocation:
+	// the flag, its value, and the config hash it overrode.
+	EventConfigOverride EventType = "config_override"
 )
 
 // knownEventTypes is the closed set of recognised discriminators. A gap
@@ -278,6 +294,9 @@ var knownEventTypes = map[EventType]struct{}{
 	EventSBOMServed:               {},
 	EventAdvisorySnapshotRecorded: {},
 	EventVulnScanServed:           {},
+	EventConfigChanged:            {},
+	EventConfigDriftObserved:      {},
+	EventConfigOverride:           {},
 }
 
 // KnownEventTypes returns the recognised discriminators, sorted.

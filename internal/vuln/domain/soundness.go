@@ -1,9 +1,6 @@
 package domain
 
-import (
-	"encoding/json"
-	"fmt"
-)
+import "fmt"
 
 // ReachabilitySoundness states how thorough the search behind a NEGATIVE
 // reachability answer was.
@@ -117,7 +114,7 @@ func (s ReachabilitySoundness) String() string {
 // says this answer has no absence to qualify, and the key absent says the
 // producer does not derive the rung at all.
 func (s ReachabilitySoundness) MarshalJSON() ([]byte, error) {
-	b, err := json.Marshal(s.String())
+	b, err := wordMarshal(s.String())
 	if err != nil {
 		return nil, fmt.Errorf("marshalling reachability soundness: %w", err)
 	}

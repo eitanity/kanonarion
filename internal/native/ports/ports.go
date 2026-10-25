@@ -138,6 +138,10 @@ type NativeSummary struct {
 	LinkedExternal []string
 	ExtractedAt    time.Time
 	ContentHash    string
+	// SupersededByIdentity marks a record of a directory read under this
+	// published coordinate before local code had its own identity. It answers
+	// no read and is listed only when every generation is asked for.
+	SupersededByIdentity bool
 
 	// Conflict is non-nil when the store holds another record describing a
 	// different artefact for this coordinate at this generation. Both rows are

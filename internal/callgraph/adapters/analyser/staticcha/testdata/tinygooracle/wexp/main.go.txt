@@ -1,0 +1,16 @@
+package main
+
+import (
+	"fmt"
+
+	"golang.org/x/mod/semver"
+)
+
+//go:wasmexport compare
+func compare(a, b int32) int32 {
+	return int32(semver.Compare(fmt.Sprintf("v%d.0.0", a), fmt.Sprintf("v%d.0.0", b)))
+}
+
+func onlyFromMain() string { return semver.Canonical("v1.2") }
+
+func main() { fmt.Println(onlyFromMain()) }

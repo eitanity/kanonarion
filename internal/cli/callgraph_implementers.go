@@ -50,7 +50,7 @@ the callers and callees queries also accept.`,
 			if len(args) != 1 {
 				return usageErr(cmd)
 			}
-			if berr := scopeFlags.bind(cmd); berr != nil {
+			if berr := scopeFlags.bindCallGraphRead(cmd); berr != nil {
 				return berr
 			}
 			logger := buildLogger(logLevel, stderr)
@@ -59,6 +59,9 @@ the callers and callees queries also accept.`,
 				return fmt.Errorf("initialising store: %w", err)
 			}
 			defer releaseStore(cleanup)
+			if aerr := adoptNamedWalkFrame(cmd.Context(), ctr.QueryWalks, scopeFlags.walkID); aerr != nil {
+				return aerr
+			}
 			sc, err := scopeFlags.resolve(cmd.Context(), ctr.QueryWalks)
 			if err != nil {
 				return err
@@ -150,7 +153,7 @@ func runImplementers(ctx context.Context, queryID string, jsonOut bool, uc Query
 		return err
 	}
 	if !found.declared {
-		return implementersUnknownError(interfaceID, found.modulePath, found.moduleAnalysed, found.analysedVersions)
+		return implementersMiss(ctx, uc, interfaceID, found)
 	}
 	if perMethod && !found.hasMethod(method) {
 		return fmt.Errorf(
@@ -192,6 +195,26 @@ func runImplementers(ctx context.Context, queryID string, jsonOut bool, uc Query
 	return writeImplementersText(stdout, queryID, method, perMethod, impls, verdict, scopeLine, sc, foreignDrawOfImplementers(impls))
 }
 
+// implementersMiss refuses an interface no served record declares. One sought
+// only in records the read frame serves, where none was served, is a frame miss.
+func implementersMiss(ctx context.Context, uc QueryCallGraphUseCase, interfaceID string, found implementerLookup) error {
+	if !found.moduleAnalysed {
+		stored, err := listStoredCoordinates(ctx, uc, coordinate.ModuleSet{})
+		if err != nil {
+			return err
+		}
+		if miss := stdlibFrameMiss(ctx, uc, interfaceID, stored); miss != nil {
+			return miss
+		}
+	}
+	if found.moduleAnalysed && !found.servedAny {
+		if miss := moduleFrameMiss(ctx, uc, found.modulePath, found.analysedVersions); miss != nil {
+			return miss
+		}
+	}
+	return implementersUnknownError(interfaceID, found.modulePath, found.moduleAnalysed, found.analysedVersions)
+}
+
 // scopedImplementer is one implementation plus the record it was measured in.
 type scopedImplementer struct {
 	impl          domain.InterfaceImplementation
@@ -225,6 +248,9 @@ type implementerLookup struct {
 	// supersededCoords are the module's coordinates held only at a superseded
 	// pipeline: each would have been searched had it been re-derived.
 	supersededCoords []coordinate.ModuleCoordinate
+	// servedAny is whether any record of the module was served under the read
+	// frame, so an undeclared interface can be told from an unsearched one.
+	servedAny bool
 }
 
 func (l implementerLookup) hasMethod(method string) bool {
@@ -326,6 +352,7 @@ func gatherImplementers(ctx context.Context, interfaceID string, uc QueryCallGra
 		if !ok {
 			continue
 		}
+		out.servedAny = true
 		iface, declared := domain.InterfaceByID(rec, interfaceID)
 		if !declared {
 			continue

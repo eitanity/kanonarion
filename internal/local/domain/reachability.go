@@ -5,6 +5,7 @@ import (
 	"sort"
 	"time"
 
+	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
 	"github.com/eitanity/kanonarion/internal/versionorder"
 )
 
@@ -119,6 +120,9 @@ func SortUncovered(mods []UncoveredModule) {
 type ProbedBinary struct {
 	// ImportPath is the main package's import path.
 	ImportPath string
+	// Builder is the command that produced the artefact: ProbeBuilderGo or
+	// ProbeBuilderTinyGo.
+	Builder string
 	// BuildError is the failure that stopped this binary being probed, empty
 	// when it was probed. A main that fails to build is not fatal to the probe
 	// and is not silent either: the answer rests on the binaries that did
@@ -238,6 +242,13 @@ const (
 	// ProbeKindSkipped means no matched finding carried affected symbols, so no
 	// probe binary was built at all.
 	ProbeKindSkipped = "skipped"
+)
+
+// The builders a probe artefact is produced by. A TinyGo frame is built by
+// tinygo, whose symbol table is a different program's output from go build's.
+const (
+	ProbeBuilderGo     = "go build"
+	ProbeBuilderTinyGo = "tinygo build"
 )
 
 // The soundness rungs this probe's own measurements earn, spelled exactly as
@@ -368,6 +379,12 @@ type LocalReachabilityResult struct {
 	// "library" when a synthetic harness was generated, or "skipped" when no
 	// matched finding had AffectedSymbols so the probe build was elided.
 	ProbeKind string
+	// ProbeBuilder is the command that built the probe artefacts, empty when the
+	// probe was skipped.
+	ProbeBuilder string
+	// Frame is the build frame the probe resolved and built in: the declared one,
+	// or this host's.
+	Frame cgdomain.BuildFrame
 	// Modules contains one entry per dependency module that had stored CVE
 	// findings. Modules with no stored findings are omitted — Coverage says how
 	// many were omitted and why, so the omission is stated rather than inferred.

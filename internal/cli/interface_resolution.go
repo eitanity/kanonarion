@@ -72,12 +72,8 @@ func supersededInterfacePipelines(coord coordinate.ModuleCoordinate, stored []if
 // version this build serves, because "re-extract" is only actionable against a
 // coordinate and the reader has no other way to see why the record went dark.
 func supersededInterfaceLine(coord coordinate.ModuleCoordinate, pipelines []string) string {
-	return fmt.Sprintf(
-		"the interface record for %s was produced by superseded extraction logic: this build "+
-			"serves pipeline %s and the store holds this coordinate at pipeline %s. A superseded "+
-			"record is not served, so this answer is empty for want of a measurement of this "+
-			"module, not because the coordinate is wrong. Re-extract it:\n  kanonarion interface %s",
-		coord, ifaceapp.PipelineVersion, strings.Join(pipelines, ", "), coord)
+	return supersededRecordLine("interface record", coord, ifaceapp.PipelineVersion, pipelines,
+		"Re-extract", "kanonarion interface "+coord.String())
 }
 
 // symbolQuery is a symbol lookup's argument. A Go identifier holds no dot, so

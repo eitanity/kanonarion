@@ -336,6 +336,10 @@ func (f *fakeVulnStore) ListDatabaseSnapshots(_ context.Context) ([]domain.Datab
 func (f *fakeVulnStore) ListVulnerabilityRecordsByFindingID(_ context.Context, _, _ string) ([]domain.VulnerabilityRecord, error) {
 	return nil, nil
 }
+
+func (f *fakeVulnStore) ListCoordinatesByFindingID(_ context.Context, _, _ string) ([]coordinate.ModuleCoordinate, error) {
+	return nil, nil
+}
 func (f *fakeVulnStore) ListVulnerabilityRecords(_ context.Context, _ string) ([]domain.VulnerabilityRecord, error) {
 	return nil, nil
 }

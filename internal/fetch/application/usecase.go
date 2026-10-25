@@ -18,6 +18,7 @@ import (
 	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/fetch/ports"
 	"golang.org/x/mod/modfile"
+	"golang.org/x/mod/module"
 
 	"github.com/oklog/ulid/v2"
 )
@@ -79,6 +80,11 @@ type FetchModuleUseCase struct {
 	// stronger stored record. Default false. Set via
 	// WithAllowVerificationDowngrade — deliberately not --force.
 	allowVerificationDowngrade bool
+
+	// private names the modules read through the module-cache route against
+	// privateAnchor, the project go.sum. Set via WithPrivateModules.
+	private       func(path string) (string, bool)
+	privateAnchor ports.SumDBClient
 }
 
 // WithProjectGoSum layers a walk-root go.sum verifier onto the normal network
@@ -203,8 +209,8 @@ func blobIdentities(dl ports.ModuleDownload) (zip, goMod ports.BlobIdentity, err
 // Verification failures (UnverifiedX statuses) do not fail Execute; they are
 // recorded in the FactRecord. Proxy, VCS, and storage errors do fail Execute.
 func (uc *FetchModuleUseCase) Execute(ctx context.Context, req FetchRequest) (_ FetchResult, retErr error) {
-	if uc.modcache {
-		return uc.executeModcache(ctx, req)
+	if res, handled, err := uc.executeOffProxy(ctx, req); handled {
+		return res, err
 	}
 	if req.GoModOnly {
 		return uc.executeGoModOnly(ctx, req)
@@ -318,6 +324,7 @@ func (uc *FetchModuleUseCase) Execute(ctx context.Context, req FetchRequest) (_ 
 		SumDBCheck:         sumdbLeg(sumdbAnswered),
 		VCSCheck:           vcsLeg(req.SkipVCSVerify, vcsLegUnavailable),
 		VCSURLBinding:      urlBinding,
+		VersionTime:        info.Time,
 	}
 
 	// Step 7: seal and append. Sealing computes the content hash at construction,
@@ -905,7 +912,7 @@ func (uc *FetchModuleUseCase) verify(
 	// Verified meaning "git ref resolved, ready to cross-verify" — not that the
 	// zip was reproduced from the git tree. crossVerify is what actually
 	// reproduces it, and it is the only step skipVCSVerify gates.
-	gitRef, vcsStatus, vcsDetail, originRefusal, urlBinding, vcsCouldNotRun := uc.resolveGitRef(ctx, log, coord, info, vcsHosts)
+	gitRef, vcsStatus, vcsDetail, originRefusal, urlBinding, vcsCouldNotRun, loc := uc.resolveGitRef(ctx, log, coord, info, vcsHosts)
 	// urlBinding says where the clone URL came from. It is only ATTRIBUTED to
 	// the record where a reproduction was actually attempted against that URL,
 	// below: a run that resolved a URL and never cloned from it established
@@ -923,7 +930,7 @@ func (uc *FetchModuleUseCase) verify(
 			vcsDetail = "VCS cross-verification skipped"
 		}
 	case vcsStatus == domain2.Verified && gitRef.CommitHash != "":
-		vcsStatus, vcsDetail, vcsCouldNotRun = uc.crossVerify(ctx, log, coord, gitRef.URL, gitRef.CommitHash, dl.ZipHash)
+		vcsStatus, vcsDetail, gitRef.Subdir, vcsCouldNotRun = uc.crossVerify(ctx, log, coord, gitRef, loc, dl.ZipHash)
 		establishedBinding = urlBinding
 		log.InfoContext(ctx, "vcs_cross_verify",
 			slog.String("status", string(vcsStatus)),
@@ -1171,16 +1178,17 @@ func isReplaced(coord, original coordinate.ModuleCoordinate) bool {
 	return original.Path() != "" && original != coord
 }
 
-// resolveGitRef determines the GitReference for the module. The final bool
-// reports that the git leg could not run: the remote did not answer within the
-// bound while the tag was being resolved.
+// resolveGitRef determines the GitReference for the module and where in the
+// repository the module lives. The bool reports that the git leg could not
+// run: the remote did not answer within the bound while the tag was being
+// resolved.
 func (uc *FetchModuleUseCase) resolveGitRef(
 	ctx context.Context,
 	log *slog.Logger,
 	coord coordinate.ModuleCoordinate,
 	info ports.ModuleInfo,
 	vcsHosts domain2.VCSHostAllowlist,
-) (domain2.GitReference, domain2.VerificationStatus, string, string, domain2.VCSURLBinding, bool) {
+) (domain2.GitReference, domain2.VerificationStatus, string, string, domain2.VCSURLBinding, bool, moduleLocation) {
 	var originRejected string
 	if info.Origin != nil && info.Origin.URL != "" && info.Origin.Hash != "" {
 		// The module proxy is untrusted (T1/T2), so its Origin metadata is too.
@@ -1188,6 +1196,9 @@ func (uc *FetchModuleUseCase) resolveGitRef(
 		// a failing claim is treated as a missing Origin (fall through to the
 		// inferred-URL path below), never trusted as Verified.
 		warning, err := vcsHosts.CheckOriginForCheckout(info.Origin.URL, info.Origin.Ref, info.Origin.Hash)
+		if err == nil {
+			err = domain2.ValidateOriginSubdir(info.Origin.Subdir)
+		}
 		if err == nil {
 			// The URL-only guard has passed, so the host is not a private
 			// literal. Resolve it: a name is the form the guard cannot settle
@@ -1216,15 +1227,17 @@ func (uc *FetchModuleUseCase) resolveGitRef(
 			// comparison below settles — and it is settled HERE, at measurement
 			// time, so the answer is sealed into the record rather than
 			// recomputed from it later.
-			return domain2.GitReference{
+			ref := domain2.GitReference{
 				URL:        info.Origin.URL,
 				Ref:        info.Origin.Ref,
 				CommitHash: info.Origin.Hash,
-			}, domain2.Verified, "", "", bindingForProxyURL(coord.Path(), info.Origin.URL), false
+			}
+			return ref, domain2.Verified, "", "", bindingForProxyURL(coord.Path(), info.Origin.URL), false,
+				originLocation(coord.Path(), info.Origin.Subdir)
 		}
 	}
 
-	gitRef, status, detail, timedOut := uc.resolveInferredGitRef(ctx, log, coord, vcsHosts)
+	gitRef, status, detail, timedOut, loc := uc.resolveInferredGitRef(ctx, log, coord, vcsHosts)
 	// The refusal is returned separately rather than folded into detail here.
 	// Folding it in loses it twice over: the inferred path can return a
 	// provisional Verified (so there is no failure to attach it to), and
@@ -1240,7 +1253,7 @@ func (uc *FetchModuleUseCase) resolveGitRef(
 	if gitRef.URL != "" {
 		binding = domain2.VCSURLBindingCoordinateDerived
 	}
-	return gitRef, status, detail, originRejected, binding, timedOut
+	return gitRef, status, detail, originRejected, binding, timedOut, loc
 }
 
 // bindingForProxyURL says whether a clone URL the proxy supplied is nonetheless
@@ -1264,40 +1277,46 @@ func bindingForProxyURL(modulePath, originURL string) domain2.VCSURLBinding {
 }
 
 // resolveInferredGitRef resolves a GitReference without any trusted proxy
-// Origin, using the pseudo-version commit prefix or an inferred forge URL. The
-// bool reports that tag resolution could not run because the remote did not
-// answer within the bound.
+// Origin, using the pseudo-version commit prefix or an inferred forge URL, and
+// the module's location derived from its path. The bool reports that tag
+// resolution could not run because the remote did not answer within the bound.
 func (uc *FetchModuleUseCase) resolveInferredGitRef(
 	ctx context.Context,
 	log *slog.Logger,
 	coord coordinate.ModuleCoordinate,
 	vcsHosts domain2.VCSHostAllowlist,
-) (domain2.GitReference, domain2.VerificationStatus, string, bool) {
+) (domain2.GitReference, domain2.VerificationStatus, string, bool, moduleLocation) {
+	loc, ok := inferredLocation(coord.Path())
+	if !ok {
+		_, pathMajor, _ := module.SplitPathVersion(coord.Path())
+		loc = moduleLocation{pathMajor: pathMajor}
+	}
 	if coord.IsPseudoVersion() {
 		prefix, err := coord.ExtractCommitPrefix()
 		if err != nil {
 			return domain2.GitReference{}, domain2.UnverifiedMissingOrigin,
-				fmt.Sprintf("could not extract commit prefix from pseudo-version: %v", err), false
+				fmt.Sprintf("could not extract commit prefix from pseudo-version: %v", err), false, loc
 		}
 		repoURL, detail := inferAllowedRepoURL(ctx, log, coord.Path(), vcsHosts)
 		if repoURL == "" {
-			return domain2.GitReference{}, domain2.UnverifiedMissingOrigin, detail, false
+			return domain2.GitReference{}, domain2.UnverifiedMissingOrigin, detail, false, loc
 		}
 		log.InfoContext(ctx, "pseudo_version_resolve", slog.String("prefix", prefix), slog.String("url", repoURL))
 		return domain2.GitReference{
 			URL:        repoURL,
 			CommitHash: prefix,
-		}, domain2.Verified, "", false
+		}, domain2.Verified, "", false, loc
 	}
 
 	repoURL, detail := inferAllowedRepoURL(ctx, log, coord.Path(), vcsHosts)
 	if repoURL == "" {
-		return domain2.GitReference{}, domain2.UnverifiedMissingOrigin, detail, false
+		return domain2.GitReference{}, domain2.UnverifiedMissingOrigin, detail, false, loc
 	}
 	// GitTagVersion, not Version: a +incompatible coordinate names a tag that
 	// never carries the suffix, and "refs/tags/v2.22.0+incompatible" resolves to
 	// nothing. The coordinate recorded alongside this ref keeps the full version.
-	ref := "refs/tags/" + coord.GitTagVersion()
+	// A module below the repository root is tagged under its directory.
+	ref := loc.tagRef(coord.GitTagVersion())
 	commit, err := uc.vcs.ResolveTag(ctx, repoURL, ref)
 	if err != nil {
 		status := domain2.UnverifiedNoVCS
@@ -1306,30 +1325,32 @@ func (uc *FetchModuleUseCase) resolveInferredGitRef(
 		}
 		// A timed-out ls-remote could not run, exactly as a timed-out fetch.
 		return domain2.GitReference{URL: repoURL, Ref: ref}, status,
-			fmt.Sprintf("resolving tag %s: %v", ref, err), errors.Is(err, ports.ErrVCSRemoteTimeout)
+			fmt.Sprintf("resolving tag %s: %v", ref, err), errors.Is(err, ports.ErrVCSRemoteTimeout), loc
 	}
 	log.InfoContext(ctx, "tag_resolved", slog.String("commit", commit))
 	return domain2.GitReference{
 		URL:        repoURL,
 		Ref:        ref,
 		CommitHash: commit,
-	}, domain2.Verified, "", false
+	}, domain2.Verified, "", false, loc
 }
 
-// crossVerify checks out the git commit and compares its directory hash to
-// the proxy zip hash. The bool reports that the leg could not run (no git on
-// the host, or the remote did not answer within the fetch bound), which is not
-// an answer about the module.
+// crossVerify checks out the git commit and compares the hash of the module's
+// directory in it to the proxy zip hash. It returns the directory it hashed,
+// relative to the repository root, and a bool reporting that the leg could not
+// run (no git on the host, or the remote did not answer within the fetch
+// bound), which is not an answer about the module.
 func (uc *FetchModuleUseCase) crossVerify(
 	ctx context.Context,
 	log *slog.Logger,
 	coord coordinate.ModuleCoordinate,
-	repoURL, commit string,
+	gitRef domain2.GitReference,
+	loc moduleLocation,
 	proxyZipHash domain2.ModuleHash,
-) (domain2.VerificationStatus, string, bool) {
+) (domain2.VerificationStatus, string, string, bool) {
 	tmpDir, err := os.MkdirTemp("", "kanonarion-verify-*")
 	if err != nil {
-		return domain2.UnverifiedNoVCS, fmt.Sprintf("creating temp dir: %v", err), false
+		return domain2.UnverifiedNoVCS, fmt.Sprintf("creating temp dir: %v", err), "", false
 	}
 	defer func() {
 		if rmErr := os.RemoveAll(tmpDir); rmErr != nil {
@@ -1340,53 +1361,64 @@ func (uc *FetchModuleUseCase) crossVerify(
 		}
 	}()
 
-	if checkoutErr := uc.vcs.CheckoutToDir(ctx, repoURL, commit, tmpDir); checkoutErr != nil {
+	if checkoutErr := uc.vcs.CheckoutToDir(ctx, gitRef.URL, gitRef.CommitHash, tmpDir); checkoutErr != nil {
 		detail := fmt.Sprintf("checkout: %v", checkoutErr)
 		switch {
 		case errors.Is(checkoutErr, ports.ErrVCSToolMissing):
-			return domain2.UnverifiedVCSToolMissing, detail, true
+			return domain2.UnverifiedVCSToolMissing, detail, "", true
 		case errors.Is(checkoutErr, ports.ErrVCSRemoteTimeout):
-			return domain2.UnverifiedNoVCS, detail, true
+			return domain2.UnverifiedNoVCS, detail, "", true
 		default:
-			return domain2.UnverifiedNoVCS, detail, false
+			return domain2.UnverifiedNoVCS, detail, "", false
 		}
 	}
 
 	if rmErr := os.RemoveAll(filepath.Join(tmpDir, ".git")); rmErr != nil {
-		return domain2.UnverifiedNoVCS, fmt.Sprintf("removing.git from checkout: %v", rmErr), false
+		return domain2.UnverifiedNoVCS, fmt.Sprintf("removing.git from checkout: %v", rmErr), "", false
 	}
 
-	// For modules that follow the major-version-subdirectory convention
-	// (e.g. modernc.org/gc/v3 lives in v3/ of the gc repo), the proxy zips the
-	// subdirectory, not the repo root. Hashing the root produces a guaranteed
-	// mismatch for any such module, so locate the subdirectory whose go.mod
-	// declares the module path before hashing.
-	moduleDir := findModuleSubdir(tmpDir, coord.Path())
+	// The proxy zips exactly one directory, chosen by the go command's rule;
+	// hashing any other would report the module's own tree as a mismatch.
+	at := gitRef.Ref
+	if at == "" {
+		at = gitRef.CommitHash
+	}
+	rel, missing := selectModuleDir(tmpDir, loc, at)
+	if missing != "" {
+		return domain2.UnverifiedNoVCS, missing, "", false
+	}
+	moduleDir, err := containedModuleDir(tmpDir, rel)
+	if err != nil {
+		return domain2.UnverifiedNoVCS, err.Error(), "", false
+	}
 
-	// Mirror CreateFromVCS behaviour: if the module lives in a subdirectory and
-	// the subdirectory has no LICENSE file, copy the root LICENSE into the
-	// subdirectory so the hash matches the proxy zip (which does the same thing,
-	// per golang.org/x/mod zip.go lines 712-724).
-	if moduleDir != tmpDir {
+	// The go command adds the repository's LICENSE to a module below the root
+	// that has none of its own.
+	if rel != "" {
 		copyRootLicenseIfMissing(tmpDir, moduleDir, log, ctx)
 	}
 
 	dirHash, err := uc.verifier.HashDirAsModuleZip(moduleDir, coord)
 	if err != nil {
-		return domain2.UnverifiedNoVCS, fmt.Sprintf("hashing checkout: %v", err), false
+		return domain2.UnverifiedNoVCS, fmt.Sprintf("hashing checkout: %v", err), "", false
 	}
 
 	log.InfoContext(ctx, "cross_verify",
 		slog.String("proxy_hash", proxyZipHash.String()),
 		slog.String("git_hash", dirHash.String()),
+		slog.String("git_subdir", rel),
 	)
 
+	hashed := rel
+	if hashed == "" {
+		hashed = domain2.RepoRoot
+	}
 	if !dirHash.Equal(proxyZipHash) {
 		return domain2.UnverifiedHashMismatch,
-			fmt.Sprintf("proxy hash %s does not match git checkout hash %s",
-				proxyZipHash.String(), dirHash.String()), false
+			fmt.Sprintf("proxy hash %s does not match git checkout hash %s of %s",
+				proxyZipHash.String(), dirHash.String(), displayDir(rel)), hashed, false
 	}
-	return domain2.Verified, "", false
+	return domain2.Verified, "", hashed, false
 }
 
 // checkZipVersionPrefix verifies that all files in the zip begin with the
@@ -1478,62 +1510,33 @@ func compareVersion(a, b string) int {
 	return 1
 }
 
-// copyRootLicenseIfMissing replicates the golang.org/x/mod CreateFromVCS
-// behaviour: when a module lives in a subdirectory and has no LICENSE file of
-// its own, the repo-root LICENSE is included in the module zip. Without this
-// step, HashDirAsModuleZip (which uses CreateFromDir) would produce a different
-// hash than the proxy for such modules.
+// copyRootLicenseIfMissing replicates the go command: a module below the
+// repository root with no LICENSE entry of its own gets the root's. Both are
+// read without following symlinks, as git serves a link's target text, so
+// nothing outside the checkout is read or written.
 func copyRootLicenseIfMissing(repoRoot, moduleDir string, log *slog.Logger, ctx context.Context) {
-	if _, err := os.Stat(filepath.Join(moduleDir, "LICENSE")); err == nil {
-		return // subdir already has a LICENSE; nothing to do
+	if _, err := os.Lstat(filepath.Join(moduleDir, "LICENSE")); err == nil {
+		return // the module has its own LICENSE entry; nothing to do
 	}
 	src := filepath.Join(repoRoot, "LICENSE")
-	data, err := os.ReadFile(src) // #nosec G304 — path is always tmpDir-rooted
+	info, err := os.Lstat(src)
 	if err != nil {
-		return // no root LICENSE (or unreadable); hash still computed without it
+		return // no root LICENSE; hash still computed without it
+	}
+	var data []byte
+	if info.Mode()&os.ModeSymlink != 0 {
+		target, rerr := os.Readlink(src)
+		if rerr != nil {
+			return
+		}
+		data = []byte(target)
+	} else if data, err = os.ReadFile(src); err != nil { // #nosec G304 — path is always tmpDir-rooted
+		return
 	}
 	dst := filepath.Join(moduleDir, "LICENSE")
 	if werr := os.WriteFile(dst, data, 0o600); werr != nil { // #nosec G703 — path is always tmpDir-rooted
 		log.WarnContext(ctx, "cross_verify_license_copy_failed", slog.String("error", werr.Error()))
 	}
-}
-
-// findModuleSubdir locates the directory within root whose go.mod declares the
-// given module path, returning the matching directory or root if none is found.
-// Only direct children of root are checked — Go's major-version-subdirectory
-// convention places the module directly under the repo root (e.g. v3/).
-func findModuleSubdir(root, modulePath string) string {
-	if goModMatchesPath(filepath.Join(root, "go.mod"), modulePath) {
-		return root
-	}
-	entries, err := os.ReadDir(root)
-	if err != nil {
-		return root
-	}
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		sub := filepath.Join(root, e.Name())
-		if goModMatchesPath(filepath.Join(sub, "go.mod"), modulePath) {
-			return sub
-		}
-	}
-	return root
-}
-
-// goModMatchesPath reports whether the go.mod at goModPath declares the given
-// module path.
-func goModMatchesPath(goModPath, modulePath string) bool {
-	data, err := os.ReadFile(goModPath) // #nosec G304 — path is always tmpDir-rooted, never user-supplied
-	if err != nil {
-		return false
-	}
-	f, err := modfile.Parse("go.mod", data, nil)
-	if err != nil {
-		return false
-	}
-	return f.Module != nil && f.Module.Mod.Path == modulePath
 }
 
 // checkOriginResolves resolves a proxy-supplied Origin host and refuses it when

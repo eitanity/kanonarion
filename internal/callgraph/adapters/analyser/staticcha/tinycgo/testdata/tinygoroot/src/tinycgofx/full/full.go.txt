@@ -1,0 +1,53 @@
+// Package full declares one C name of every kind the translation covers.
+package full
+
+/*
+#include "fakeboard.h"
+#include <stddef.h>
+#include <stdint.h>
+
+typedef uint32_t fake_word;
+
+#define FAKE_INT 0x10000000
+#define FAKE_NAME "fakeboard"
+#define FAKE_SHIFT(n) ((n) << 4)
+#define FAKE_EXPR (FAKE_SHIFT(2) | FAKE_HEADER_VALUE)
+
+struct fake_point { int x; int y; struct fake_point *next; };
+
+enum fake_mode { FAKE_OFF, FAKE_ON = 5, FAKE_AUTO };
+
+extern volatile uint32_t fake_counter;
+
+void fake_copy(const uint8_t *src, uint8_t *dst, size_t n);
+*/
+import "C"
+
+import _ "syscall" // TinyGo's generated cgo file imports it; machine reaches it the same way
+
+const (
+	Int  = C.FAKE_INT
+	Name = C.FAKE_NAME
+	Expr = C.FAKE_EXPR
+	Auto = C.FAKE_AUTO
+)
+
+func Copy(src, dst []byte) {
+	C.fake_copy((*C.uint8_t)(&src[0]), (*C.uint8_t)(&dst[0]), C.size_t(len(src)))
+}
+
+func Word() C.fake_word { return C.fake_word(C.FAKE_INT) }
+
+func Point() C.struct_fake_point { return C.struct_fake_point{x: 1} }
+
+func Mode() C.enum_fake_mode { return C.FAKE_ON }
+
+func Counter() uint32 { return uint32(C.fake_counter) }
+
+// Run calls back into the program that hands it cb.
+func Run(cb func(int)) {
+	helper()
+	cb(1)
+}
+
+func helper() {}
