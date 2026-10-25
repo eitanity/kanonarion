@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"slices"
@@ -16,6 +17,7 @@ import (
 
 	vulnapp "github.com/eitanity/kanonarion/internal/vuln/application"
 	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
+	vulnports "github.com/eitanity/kanonarion/internal/vuln/ports"
 	"github.com/spf13/cobra"
 )
 
@@ -384,7 +386,7 @@ func explainWalkRecordAbsence(
 		// subject. But scanning a resolution that a fresher walk has already
 		// superseded produces a second scan surface for an outdated build list,
 		// so a newer succeeded walk of the same root is worth one line.
-		msg := fmt.Sprintf("no vulnerability scan run for walk %s — run: kanonarion vuln-scan %s", walkID, walkID)
+		msg := vulnports.WalkNotScanned{WalkID: walkID}.Error()
 		if note := newerWalkNote(ctx, walks, walkID); note != "" {
 			msg += "\n" + note
 		}
@@ -731,6 +733,9 @@ func runVulnByID(ctx context.Context, findingID, walkID string, jsonOut bool, uc
 	// the answer rather than a reason to withhold it: one drifted row used to
 	// take out every other module this advisory touches. Any other error still
 	// aborts.
+	if nerr := walkNotScanned(err); nerr != nil {
+		return nerr
+	}
 	unreadable, survivable := unreadableRowReport(err)
 	if err != nil && !survivable {
 		return fmt.Errorf("vuln-by-id: %w", err)
@@ -823,4 +828,15 @@ func supersededByIDNote(records []vuldomain.VulnerabilityRecord) string {
 			"        They are the newest evidence the store holds for those coordinates, and they are not\n"+
 			"        what a current scan would answer. Re-scan a coordinate to replace one.\n",
 		n, len(records), vulnPipelineVersion)
+}
+
+// walkNotScanned is the refusal for a walk-scoped read of a walk that was never
+// scanned: its one sentence at exit 4, as vuln-show prints it, without the
+// layers' wrapping. nil for any other error.
+func walkNotScanned(err error) error {
+	var wns vulnports.WalkNotScanned
+	if !errors.As(err, &wns) {
+		return nil
+	}
+	return &exitError{code: ExitNotFound, msg: wns.Error()}
 }

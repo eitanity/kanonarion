@@ -13,25 +13,25 @@ import (
 	"github.com/eitanity/kanonarion/internal/vuln/ports"
 )
 
-// FindingTimelines lists, per coordinate ListRecordsByFindingID names and per
+// FindingTimelines lists, per coordinate the findings index names and per
 // analysis frame, the changes of state findingID went through across every
 // stored record. Rows the store could not read come back beside the timelines
 // as one *ports.UnreadableRows, or a *recordseal.SetAside when every one is
 // generation drift, as the store's own listings report them.
 func (uc *QueryVulnUseCase) FindingTimelines(ctx context.Context, findingID, walkID string) ([]domain.FindingTimeline, error) {
-	named, err := uc.ListRecordsByFindingID(ctx, findingID, walkID)
+	// The index names the modules, not the served records: a module whose served
+	// record no longer carries the advisory is the history this read exists for.
+	named, err := uc.store.ListCoordinatesByFindingID(ctx, findingID, walkID)
+	if err != nil {
+		err = fmt.Errorf("listing modules indexed for %q: %w", findingID, err)
+	}
 	bad, err := collectUnreadable(nil, err)
 	if err != nil {
 		return nil, err
 	}
-	seen := map[string]bool{}
 	var all []domain.VulnerabilityRecord
-	for _, rec := range named {
-		if seen[rec.Coordinate.String()] {
-			continue
-		}
-		seen[rec.Coordinate.String()] = true
-		recs, herr := uc.ListRecordsForModuleAllGenerations(ctx, rec.Coordinate)
+	for _, coord := range named {
+		recs, herr := uc.ListRecordsForModuleAllGenerations(ctx, coord)
 		if bad, herr = collectUnreadable(bad, herr); herr != nil {
 			return nil, herr
 		}

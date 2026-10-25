@@ -5,7 +5,6 @@ package testfakes
 
 import (
 	"context"
-	"fmt"
 	"maps"
 	"slices"
 	"sort"
@@ -1837,7 +1836,7 @@ func (f *FakeQueryVuln) ListRecordsByFindingID(_ context.Context, _, walkID stri
 	}
 	recs, ok := f.byIDForWalk[walkID]
 	if !ok {
-		return nil, fmt.Errorf("no vulnerability scan run for walk %s", walkID)
+		return nil, vulnports.WalkNotScanned{WalkID: walkID}
 	}
 	return recs, nil
 }

@@ -56,6 +56,10 @@ func (c ToolchainConflict) Error() string {
 		c.Coordinate, c.Values, c.ContentHashes, strings.Join(lines, "\n  "))
 }
 
+// Unwrap makes errors.Is(err, ErrVulnConflict) hold: two toolchains' verdicts
+// are two records that disagree, which the CLI exits 10 on.
+func (c ToolchainConflict) Unwrap() error { return ErrVulnConflict }
+
 // findToolchainConflict reports two toolchains that reached DIFFERENT verdicts
 // for one coordinate against the SAME advisory-database snapshot, or nil.
 //

@@ -239,7 +239,8 @@ func TestCompose_IsOrderIndependent(t *testing.T) {
 	t.Parallel()
 	recs := []domain.VulnerabilityRecord{
 		composeRecord(t, composeSpec{rooting: domain.RootingIsolated, findings: advisory("GO-2026-0001")}),
-		composeRecord(t, composeSpec{rooting: domain.RootingIsolated, findings: advisory("GO-2026-0002")}),
+		// Another frame, so the content hash rather than a dispute decides.
+		composeRecord(t, composeSpec{rooting: domain.RootingTargetRooted, findings: advisory("GO-2026-0002")}),
 		composeRecord(t, composeSpec{rooting: domain.RootingIsolated, status: domain.StatusClean}),
 	}
 	forward, err := domain.Compose(recs)

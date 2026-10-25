@@ -24,6 +24,9 @@ type timelineJSON struct {
 // could not read.
 func runVulnTimeline(ctx context.Context, findingID, walkID string, jsonOut bool, uc QueryVulnUseCase, stdout io.Writer) error {
 	timelines, err := uc.FindingTimelines(ctx, findingID, walkID)
+	if nerr := walkNotScanned(err); nerr != nil {
+		return nerr
+	}
 	unreadable, survivable := unreadableRowReport(err)
 	if err != nil && !survivable {
 		return fmt.Errorf("vuln-by-id: %w", err)

@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/versionorder"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/ports"
@@ -50,11 +51,12 @@ import (
 // two walks names only one of them and filtering on it would drop the other
 // walk's module. ListVulnerabilityRecordsForModuleInWalk takes the same route.
 //
-// Each row is the generation the index row describes and never a sibling at its
-// key: unscoped, the record the index was composed from (domain.ComposeForIndex);
-// walk-scoped, the generation the walk's run named. Either way a record that
-// does not carry the advisory is not listed, so after a Go upgrade the older
-// toolchain's record is not reported for an advisory only the newer one found.
+// Each row is the record vuln-show serves for the module in the index row's
+// frame and pipeline, across every snapshot: unscoped, domain.ComposeForIndex;
+// walk-scoped, the walk's own selection (servedInWalk). A module whose served
+// record does not carry the advisory is not listed, so a row an older snapshot
+// or an older toolchain left in the index answers nothing. The index is the
+// lookup; the composition decides.
 //
 // An unknown walkID is an error rather than an empty result: "no modules are
 // affected by this CVE" is the wrong answer to give for a walk that was never
@@ -74,7 +76,7 @@ func (s *Store) ListVulnerabilityRecordsByFindingID(ctx context.Context, finding
 			return nil, kerr
 		}
 		if !known {
-			return nil, fmt.Errorf("no vulnerability scan run for walk %s — run: kanonarion vuln-scan %s", walkID, walkID)
+			return nil, ports.WalkNotScanned{WalkID: walkID}
 		}
 		groups, bad, err = s.byFindingInWalk(ctx, findingID, walkID)
 	}
@@ -82,24 +84,186 @@ func (s *Store) ListVulnerabilityRecordsByFindingID(ctx context.Context, finding
 		return nil, err
 	}
 	carrying := make([]domain.VulnerabilityRecord, 0, len(groups))
+	seen := map[servedQuestion]bool{}
+	reads := map[servedQuestion]moduleRead{}
 	for key, gens := range groups {
-		if walkID == "" {
-			served, ok, cerr := domain.ComposeForIndex(gens, frames[key])
-			if cerr != nil {
-				return nil, fmt.Errorf("composing the record the finding index describes: %w", cerr)
+		for _, rec := range gens {
+			q := servedQuestion{rec.Coordinate, rec.PipelineVersion, domain.RecordRooting(rec)}
+			if walkID == "" {
+				q.rooting = frames[key]
 			}
-			if !ok {
+			if seen[q] {
 				continue
 			}
-			gens = []domain.VulnerabilityRecord{served}
-		}
-		for _, rec := range gens {
-			if recordFindingIDs(rec)[findingID] {
-				carrying = append(carrying, rec)
+			seen[q] = true
+			served, ok, more, serr := s.servedFor(ctx, q, walkID, reads)
+			bad = append(bad, more...)
+			if serr != nil {
+				return nil, serr
+			}
+			if ok && recordFindingIDs(served)[findingID] {
+				carrying = append(carrying, served)
 			}
 		}
 	}
-	return onePerCoordinate(carrying), listingErr(bad)
+	return onePerCoordinate(dedupeServed(carrying)), listingErr(dedupeRows(bad))
+}
+
+// ListCoordinatesByFindingID returns every module version the index lists for
+// findingID, restricted to walkID's runs when set. Nothing is composed: a module
+// whose served record no longer carries the advisory is still named, which is
+// what a history read needs.
+func (s *Store) ListCoordinatesByFindingID(ctx context.Context, findingID, walkID string) ([]coordinate.ModuleCoordinate, error) {
+	q := `SELECT DISTINCT module_path, module_version FROM vulnerability_findings_index WHERE finding_id = ?`
+	args := []any{findingID}
+	if walkID != "" {
+		known, kerr := s.walkHasScanRun(ctx, walkID)
+		if kerr != nil {
+			return nil, kerr
+		}
+		if !known {
+			return nil, ports.WalkNotScanned{WalkID: walkID}
+		}
+		q = `
+SELECT DISTINCT fi.module_path, fi.module_version
+FROM vulnerability_findings_index fi
+JOIN walk_scan_run_modules m
+  ON m.module_path      = fi.module_path
+ AND m.module_version   = fi.module_version
+ AND m.pipeline_version = fi.pipeline_version
+ AND m.snapshot_source  = fi.snapshot_source
+ AND m.snapshot_version = fi.snapshot_version
+JOIN walk_scan_runs wsr ON wsr.id = m.walk_scan_run_id
+WHERE fi.finding_id = ? AND wsr.walk_id = ?`
+		args = append(args, walkID)
+	}
+	rows, err := s.db.DB().QueryContext(ctx, q+` ORDER BY 1, 2`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("querying modules indexed for %s: %w", findingID, err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []coordinate.ModuleCoordinate
+	for rows.Next() {
+		var path, version string
+		if serr := rows.Scan(&path, &version); serr != nil {
+			return nil, fmt.Errorf("scanning modules indexed for %s: %w", findingID, serr)
+		}
+		c, cerr := coordinate.NewModuleCoordinate(path, version)
+		if cerr != nil {
+			return nil, fmt.Errorf("module indexed for %s: %w", findingID, cerr)
+		}
+		out = append(out, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating modules indexed for %s: %w", findingID, err)
+	}
+	return out, nil
+}
+
+// servedQuestion is one module, pipeline and frame a by-advisory read asks
+// vuln-show's question about.
+type servedQuestion struct {
+	coord    coordinate.ModuleCoordinate
+	pipeline string
+	rooting  domain.Rooting
+}
+
+// moduleRead is one module's generations at one pipeline and the rows that
+// could not be read, kept so each frame of a module costs one read.
+type moduleRead struct {
+	recs []domain.VulnerabilityRecord
+	bad  []ports.UnreadableRow
+}
+
+// servedFor is the record vuln-show serves for q across every snapshot: in the
+// row's frame unscoped, and by the walk's own frame selection walk-scoped.
+func (s *Store) servedFor(ctx context.Context, q servedQuestion, walkID string, reads map[servedQuestion]moduleRead) (domain.VulnerabilityRecord, bool, []ports.UnreadableRow, error) {
+	key := servedQuestion{coord: q.coord, pipeline: q.pipeline}
+	read, cached := reads[key]
+	if !cached {
+		var err error
+		if walkID == "" {
+			const stmt = `
+SELECT serialised FROM vulnerability_records
+WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
+ORDER BY julianday(scanned_at) DESC, rowid DESC`
+			read.recs, read.bad, err = s.queryRecordRows(ctx, "vulnerability records for module",
+				selectedBy(q.coord.Path(), q.coord.Version(), filedAs{"pipeline_version", q.pipeline}), stmt,
+				q.coord.Path(), q.coord.Version(), q.pipeline)
+		} else {
+			read.recs, read.bad, err = s.moduleInWalkRows(ctx, q.coord, q.pipeline, walkID)
+		}
+		if err != nil {
+			return domain.VulnerabilityRecord{}, false, nil, err
+		}
+		reads[key] = read
+	}
+	recs, bad := read.recs, read.bad
+	if walkID == "" {
+		served, ok, cerr := domain.ComposeForIndex(recs, q.rooting)
+		if cerr != nil {
+			return domain.VulnerabilityRecord{}, false, bad, fmt.Errorf("composing the record vuln-show serves for %s: %w", q.coord, cerr)
+		}
+		return served, ok, bad, nil
+	}
+	served, _, _, ok, cerr := domain.ComposeInFrame(recs, walkFrame(recs, q.rooting))
+	if cerr != nil {
+		return domain.VulnerabilityRecord{}, false, bad, fmt.Errorf("composing the records walk %s holds for %s: %w", walkID, q.coord, cerr)
+	}
+	return served, ok, bad, nil
+}
+
+// walkFrame is the frame vuln-show --walk-id selects in: the one target-rooted
+// frame the walk's records state, else the isolated frame. A walk whose records
+// state several (a run that named no hash) is asked in the row's own frame.
+func walkFrame(recs []domain.VulnerabilityRecord, row domain.Rooting) domain.Rooting {
+	var target domain.Rooting
+	for _, r := range recs {
+		f := domain.RecordRooting(r)
+		if !f.IsTargetRooted() || f == target {
+			continue
+		}
+		if target != "" {
+			return row
+		}
+		target = f
+	}
+	if target == "" {
+		return domain.RootingIsolated
+	}
+	return target
+}
+
+// dedupeServed keeps one copy of each served record: two rows can name the same.
+func dedupeServed(recs []domain.VulnerabilityRecord) []domain.VulnerabilityRecord {
+	seen := map[string]bool{}
+	out := recs[:0]
+	for _, r := range recs {
+		if !seen[r.ContentHash] {
+			seen[r.ContentHash] = true
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// dedupeRows keeps one report of each unreadable row, in a stable order: the
+// index join and the module reads can both meet it.
+func dedupeRows(rows []ports.UnreadableRow) []ports.UnreadableRow {
+	byKey := map[string]ports.UnreadableRow{}
+	for _, r := range rows {
+		byKey[r.ID+"\x00"+r.ContentHash] = r
+	}
+	keys := make([]string, 0, len(byKey))
+	for k := range byKey {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	out := make([]ports.UnreadableRow, 0, len(keys))
+	for _, k := range keys {
+		out = append(out, byKey[k])
+	}
+	return out
 }
 
 // byFindingGenerations returns, per index row's key and frame, every readable

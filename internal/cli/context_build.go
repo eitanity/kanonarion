@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"slices"
@@ -11,16 +12,20 @@ import (
 	fetchsqlite "github.com/eitanity/kanonarion/internal/adapters/factstore/sqlite"
 	cgapp "github.com/eitanity/kanonarion/internal/callgraph/application"
 	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
+	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	exsqlite "github.com/eitanity/kanonarion/internal/example/adapters/store/sqlite"
 	exapp "github.com/eitanity/kanonarion/internal/example/application"
 	exdomain "github.com/eitanity/kanonarion/internal/example/domain"
+	exampleports "github.com/eitanity/kanonarion/internal/example/ports"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	ifaceapp "github.com/eitanity/kanonarion/internal/iface/application"
 	ifacedomain "github.com/eitanity/kanonarion/internal/iface/domain"
+	ifaceports "github.com/eitanity/kanonarion/internal/iface/ports"
 	licsqlite "github.com/eitanity/kanonarion/internal/license/adapters/store/sqlite"
 	licapp "github.com/eitanity/kanonarion/internal/license/application"
 	licdomain "github.com/eitanity/kanonarion/internal/license/domain"
+	licenceports "github.com/eitanity/kanonarion/internal/license/ports"
 	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
@@ -289,7 +294,7 @@ func buildLicense(
 		return contextLicense{Status: sectionStatusSetAside, Error: aside.statement(), SetAside: aside.json()}
 	}
 	if err != nil {
-		return contextLicense{Status: sectionStatusReadError, Error: err.Error()}
+		return contextLicense{Status: failedReadStatus(err, licenceports.ErrLicenceConflict), Error: err.Error()}
 	}
 	if !found {
 		if line := supersededLicenceLine(ctx, uc, coord); line != "" {
@@ -440,7 +445,7 @@ func buildStdlibLicense(ctx context.Context, coord coordinate.ModuleCoordinate, 
 func buildInterface(ctx context.Context, coord coordinate.ModuleCoordinate, uc QueryInterfaceUseCase, compact bool, pkgFilter string) contextInterface {
 	rec, found, err := uc.GetInterfaceRecord(ctx, coord, ifaceapp.PipelineVersion)
 	if err != nil {
-		return contextInterface{Status: sectionStatusReadError, Error: err.Error()}
+		return contextInterface{Status: failedReadStatus(err, ifaceports.ErrInterfaceConflict), Error: err.Error()}
 	}
 	if !found {
 		// "Never extracted" and "extracted under logic this build no longer
@@ -549,7 +554,7 @@ func contextCallGraphMiss(ctx context.Context, coord coordinate.ModuleCoordinate
 func buildCallGraph(ctx context.Context, coord coordinate.ModuleCoordinate, uc QueryCallGraphUseCase, entryPointsFull bool, pkgFilter string) (contextCallGraph, contextCapability) {
 	rec, found, err := uc.GetCallGraphRecord(ctx, coord, cgapp.PipelineVersion)
 	if err != nil {
-		cg := contextCallGraph{Status: sectionStatusReadError, Error: err.Error()}
+		cg := contextCallGraph{Status: failedReadStatus(err, cgports.ErrCallGraphConflict), Error: err.Error()}
 		return cg, capabilityFollowing(cg)
 	}
 	if !found {
@@ -617,7 +622,7 @@ func buildExamples(ctx context.Context, coord coordinate.ModuleCoordinate, uc Qu
 		return contextExamples{Status: sectionStatusSetAside, Error: aside.statement(), SetAside: aside.json()}
 	}
 	if err != nil {
-		return contextExamples{Status: sectionStatusReadError, Error: err.Error()}
+		return contextExamples{Status: failedReadStatus(err, exampleports.ErrExampleConflict), Error: err.Error()}
 	}
 	if !found {
 		if line := supersededExamplesLine(ctx, uc, coord); line != "" {
@@ -689,4 +694,15 @@ func stripDocComment(sig string) string {
 		}
 	}
 	return sig
+}
+
+// failedReadStatus is the section status for a record read that failed with
+// err: conflict when it carries the store's disagreement sentinel, so the
+// section states the dispute rather than calling the store unreadable, and
+// read_error otherwise.
+func failedReadStatus(err, conflict error) string {
+	if errors.Is(err, conflict) {
+		return sectionStatusConflict
+	}
+	return sectionStatusReadError
 }

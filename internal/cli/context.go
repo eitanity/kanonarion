@@ -142,6 +142,9 @@ const (
 	// sectionStatusOtherFrame: the call graph is held only under build frames
 	// other than the read's; held_frames and read_with name them.
 	sectionStatusOtherFrame = "other_frame"
+	// sectionStatusConflict: the records that would answer disagree, so none
+	// is served. The error field states the disagreement.
+	sectionStatusConflict = "conflict"
 )
 
 // Fork-heuristic status strings, mirrored from the domain status names so the

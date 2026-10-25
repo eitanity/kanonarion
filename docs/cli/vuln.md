@@ -1847,11 +1847,10 @@ store cannot support. The walk constraint resolves through scan-run membership,
 not the `walk_id` provenance column on the record, so a scan two walks share is
 reported for both.
 
-**One row per module version.** A module's records disagree across pipeline
-versions and snapshots. The row is a record reporting the advisory; among
-records that agree the newest scan wins, so a later all-clear never retires a
-finding. Each row carries its snapshot and scan time; `vuln-show --history`
-lists every record.
+**One row per module version.** Within a pipeline version and frame the row is
+the record `vuln-show` serves, so a module whose served record no longer reports
+the advisory is not listed; `--timeline` still shows it. Across pipeline
+versions a record reporting the advisory wins, newest first.
 
 **Every row names its pipeline version**, marked `[superseded]` when this build
 does not serve it: `vuln-show` and `reachability` will not answer from such a

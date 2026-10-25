@@ -37,7 +37,8 @@ enumerated module. To cover a full transitive closure of an arbitrary walk use
 All sections are always present. A section nothing has run for reports
 `"status": "not_run"`; one whose every stored record predates this build's
 pipeline reports `superseded`, its `error` naming the pipelines and the command
-that re-derives it; a store error reports `read_error`.
+that re-derives it; a store error reports `read_error`, and records that
+disagree `conflict`, naming them in `error`.
 
 The `dependencies` section is drawn from the walk the rest of the document is
 based on - the walk the vulnerability section names as its `walk basis`, the
@@ -488,13 +489,13 @@ suggests a fork of `<canonical>` - verify"* - never a verdict.
 
 | Field | Type | Description |
 |---|---|---|
-| `status` | string | `not_run` / `superseded` / `set_aside` / `read_error` / detector status (e.g. `Detected`, `Unclassified`) |
+| `status` | string | `not_run` / `superseded` / `set_aside` / `conflict` / `read_error` / detector status (e.g. `Detected`, `Unclassified`) |
 | `spdx` | string | Primary SPDX identifier; empty when `status` is `Unclassified` |
 | `low_confidence_spdx` | string | A recognisable but sub-threshold licence fragment, set only when `spdx` is empty. Present when a root licence file was found and a known licence was partially matched but coverage fell below the substantive floor - e.g. a truncated AGPL-3.0 whose only matching span is the "how to apply" appendix |
 | `low_confidence_coverage` | float\|null | Coverage fraction (0.0-1.0) of the `low_confidence_spdx` match. Always present; `null` when no sub-threshold fragment was matched, which is every confidently classified module |
 | `extracted_at` | string | RFC3339 extraction timestamp |
 | `custody` | object | Standard library only - the chain of custody its licence identity comes from (see below) |
-| `error` | string | Set when `status` is `read_error`, `superseded` or `set_aside`, or extraction detail |
+| `error` | string | Set when `status` is `read_error`, `superseded`, `set_aside` or `conflict`, or extraction detail |
 | `set_aside` | array | Stored licence generations the read left out because this build cannot reproduce them: `kind`, `coordinate`, `pipeline_version`, `content_hash`, `reason`. Absent when none. See [licence](license.md#a-stored-record-this-build-cannot-verify) |
 
 An `Unclassified` status means a licence file **was** found at the module root
@@ -540,7 +541,7 @@ measurement carried one - the same two words `audit` prints for the same node.
 
 | Field | Type | Description |
 |---|---|---|
-| `status` | string | `not_run` / `superseded` / `read_error` / extractor status |
+| `status` | string | `not_run` / `superseded` / `conflict` / `read_error` / extractor status |
 | `packages` | array | Public packages (internal, `main` and out-of-frame excluded) |
 | `packages[].import_path` | string | Import path |
 | `packages[].types` | array | Exported type signatures (doc only with `--full`) |
@@ -550,13 +551,13 @@ measurement carried one - the same two words `audit` prints for the same node.
 | `packages[].vars` | array | Exported variable names, with type if present |
 | `extracted_at` | string | RFC3339 extraction timestamp |
 | `build_frame` | string | The build the API was measured in, or `unrecorded` |
-| `error` | string | Set when `status` is `read_error` or `superseded` |
+| `error` | string | Set when `status` is `read_error`, `superseded` or `conflict` |
 
 ### `call_graph`
 
 | Field | Type | Description |
 |---|---|---|
-| `status` | string | `not_run` / `superseded` / `other_frame` / `read_error` / extractor status. `other_frame` means the graph is held only under build frames other than the read's; text prints `(held under wasip1/wasm — read with --target wasip1/wasm)` |
+| `status` | string | `not_run` / `superseded` / `other_frame` / `conflict` / `read_error` / extractor status. `other_frame` means the graph is held only under build frames other than the read's; text prints `(held under wasip1/wasm — read with --target wasip1/wasm)` |
 | `held_frames` | array | On `other_frame`: the frames the graph is held under |
 | `read_with` | array | On `other_frame`: the flag that reads each held frame |
 | `algorithm` | string | Analysis algorithm used (e.g. `CHA`) |
@@ -566,7 +567,7 @@ measurement carried one - the same two words `audit` prints for the same node.
 | `entry_points` | array | Flat list of entry point IDs (only with `--entry-points-full`) |
 | `entry_point_count` | int\|null | Entry points in the package `--package` named. Always present; `null` without that flag, where no single-package count is derived and `entry_points_by_package` carries the breakdown |
 | `extracted_at` | string | RFC3339 extraction timestamp |
-| `error` | string | Set when `status` is `read_error` or `superseded` |
+| `error` | string | Set when `status` is `read_error`, `superseded` or `conflict` |
 
 ### `capability`
 
@@ -587,7 +588,7 @@ Text hides suppressed labels, as `capability` does.
 
 | Field | Type | Description |
 |---|---|---|
-| `status` | string | `not_run` / `superseded` / `set_aside` / `read_error` / `Found` / `None` |
+| `status` | string | `not_run` / `superseded` / `set_aside` / `conflict` / `read_error` / `Found` / `None` |
 | `count` | int | Number of examples (after any `--package` filter). Always present; `0` is the measurement that the module has none |
 | `examples` | array | Example entries |
 | `examples[].name` | string | Example function name |
@@ -596,7 +597,7 @@ Text hides suppressed labels, as `capability` does.
 | `examples[].output` | string | `// Output:` block contents |
 | `examples[].doc` | string | Doc comment (omitted unless `--full`) |
 | `extracted_at` | string | RFC3339 extraction timestamp |
-| `error` | string | Set when `status` is `read_error`, `superseded` or `set_aside` |
+| `error` | string | Set when `status` is `read_error`, `superseded`, `set_aside` or `conflict` |
 | `set_aside` | array | Stored example generations the read left out because this build cannot reproduce them, as for `license`. Absent when none. See [examples](examples.md#a-stored-record-this-build-cannot-verify) |
 
 ### `vulnerabilities`
@@ -660,9 +661,7 @@ stderr, so `--json` / `--stream` stdout is unaffected.
 
 Read the annotation accordingly: `[walk: affected via …]` names affected peers in
 the closure of the build that produced this answer, not in the newest build that
-happens to cover the module. Another walk may hold a different answer for the
-same module; the answer moves only when better-founded evidence lands, not when a
-neighbouring project walks a tree containing it. A walk older than the ten most
+happens to cover the module. A walk older than the ten most
 recent — the window whose runs are loaded — still serves its record and names
 itself as the basis, but has no run context to report, so no walk status word or
 peer annotation appears. To ask about a specific build, pass `--walk-id` or
@@ -670,8 +669,8 @@ peer annotation appears. To ask about a specific build, pass `--walk-id` or
 
 | Field | Type | Description |
 |---|---|---|
-| `status` | string | `not_run` / `superseded` / `set_aside` / `read_error` / scan status (`Clean`, `Affected`, `Withdrawn`, `Unscannable`, `ScanFailed`) |
-| | | `superseded`: the store holds records for this module only at pipeline versions this build no longer serves. `error` carries the statement, the generations held, and the re-scan to run. It is not `not_run`: the scan ran. |
+| `status` | string | `not_run` / `superseded` / `set_aside` / `conflict` / `read_error` / scan status (`Clean`, `Affected`, `Withdrawn`, `Unscannable`, `ScanFailed`) |
+| | | `superseded`: the store holds records for this module only at pipeline versions this build no longer serves. `error` carries the statement, the generations held, and the re-scan to run. |
 | | | `set_aside`: every record this build reads for this module was written in a canonical shape it cannot reproduce. `error` names each by `content_hash`. See [vuln](vuln.md#a-stored-record-this-build-cannot-verify). |
 | `set_aside` | array | Stored generations the section's reads left out because this build cannot reproduce them: `kind`, `coordinate` (or `id`), `pipeline_version`, `database_snapshot`, `content_hash`, `reason`. Absent when none |
 | `findings` | array | CVE findings |
@@ -685,13 +684,6 @@ peer annotation appears. To ask about a specific build, pass `--walk-id` or
 | `findings[].reachable` | bool\|null | reachability answer. Always present; `null` when no reachability analysis answered for this finding — `soundness` cannot stand in for it, since it reads `not stated` for a positive answer too |
 | `findings[].soundness` | string | How thorough the search behind a **negative** was: `confirmed`, `inferred`, `unconfirmed`, `unsearchable`, `disputed`, or `not stated` where there is no absence to qualify. Always present. Derived at read time, so it is on records scanned long before the field existed. See [reachability](reachability.md#a-negative-states-how-sound-the-search-behind-it-was) |
 | `findings[].soundness_reason` | string | The basis for that rung in the producing analyser's own terms. Absent where no rung is stated |
-
-A retracted advisory stays in `findings` as the historical fact, so a module whose
-every advisory was withdrawn reports `status: Withdrawn` with its findings intact
-rather than reading as never-affected. It does **not** appear in any peer's
-`walk_affected`, which names only modules something must be done about. In text
-output the tally beside the status counts the two apart — `Withdrawn (1 retracted)`,
-or `Affected (2 finding(s), 1 retracted)` for a mixture.
 | `walk_status` | string | The walk run's collapsed `overall_status` (`AllClean` / `Affected` / `Partial` / `ScanFailed`), carried as a compatibility summary. It collapses two independent axes into one word, so read `walk_coverage` for coverage rather than deriving it here |
 | `walk_coverage` | string | The coverage axis of the walk run, set only when the run left modules unanalysed (`Partial` or `Failed`). Independent of findings: it surfaces alongside `walk_affected`, so an incomplete-coverage run that also carries an affected peer states both |
 | `walk_affected` | array | Affected walk peers (`module@version`) that lie in **this module's own transitive dependency closure**, sorted; empty/omitted when no affected peer is reachable from this module |
@@ -704,7 +696,14 @@ or `Affected (2 finding(s), 1 retracted)` for a mixture.
 | `snapshot_retrieved_at` | string | When that snapshot was fetched. Absent when the record's snapshot carries no retrieval time |
 | `snapshot_age_days` | int\|null | How old the snapshot was when the answer was validated. Always present; `0` is the freshest answer the field has — validated against a snapshot pulled the same day — and `null` means the snapshot carries no retrieval time to measure from |
 | `extracted_at` | string | RFC3339 scan timestamp |
-| `error` | string | Set when `status` is `read_error`, `superseded` or `set_aside` |
+| `error` | string | Set when `status` is `read_error`, `superseded`, `set_aside` or `conflict` |
+
+A retracted advisory stays in `findings` as the historical fact, so a module whose
+every advisory was withdrawn reports `status: Withdrawn` with its findings intact
+rather than reading as never-affected. It does **not** appear in any peer's
+`walk_affected`, which names only modules something must be done about. In text
+output the tally beside the status counts the two apart — `Withdrawn (1 retracted)`,
+or `Affected (2 finding(s), 1 retracted)` for a mixture.
 
 The walk-level annotation carries two independent axes and prints each when it
 says something this module's own line does not, together when both do:

@@ -1853,7 +1853,7 @@ var evidenceInDoubt = []error{
 	licenceports.ErrLicenceIntegrity, licenceports.ErrLicenceConflict,
 	exampleports.ErrExampleIntegrity, exampleports.ErrExampleConflict,
 	extractports.ErrExtractionRunIntegrity,
-	vulnports.ErrVulnIntegrity, vulnports.ErrSnapshotIntegrity,
+	vulnports.ErrVulnIntegrity, vulnports.ErrVulnConflict, vulnports.ErrSnapshotIntegrity,
 	stdlibports.ErrFactsIntegrity, stdlibports.ErrFactsConflict,
 	fetchports.ErrFetchRecordIntegrity,
 	nativeports.ErrNativeConflict,
@@ -1909,8 +1909,8 @@ func ExitCodeForError(err error) int {
 		}
 	}
 	// A walk id that reached a use case without the up-front lookup is still an
-	// absent record, not a malformed invocation.
-	if isWalkNotFound(err) {
+	// absent record, not a malformed invocation; so is a walk never scanned.
+	if isWalkNotFound(err) || errors.Is(err, vulnports.ErrWalkNotScanned) {
 		return ExitNotFound
 	}
 	// Every stored generation was set aside, or a refusal was decided without

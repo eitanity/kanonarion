@@ -589,7 +589,7 @@ func auditOutcomeErr(results []auditModuleResult, d auditDerivation) error {
 		if r.integrity != nil {
 			failed = append(failed, r.integrity.Error())
 		}
-		vulnMarked = vulnMarked || r.VulnStatus == auditIntegrityFailed
+		vulnMarked = vulnMarked || r.VulnStatus == auditIntegrityFailed || r.VulnStatus == auditRecordsConflict
 	}
 	if !vulnMarked && ExitCodeForError(d.scanErr) == ExitIntegrity {
 		failed = append(failed, d.scanErr.Error())
@@ -600,7 +600,7 @@ func auditOutcomeErr(results []auditModuleResult, d auditDerivation) error {
 		}
 		return auditScanExit(d)
 	}
-	return &exitError{code: ExitIntegrity, msg: fmt.Sprintf("%d dependency(ies) with a stored record that failed its integrity check:\n  %s",
+	return &exitError{code: ExitIntegrity, msg: fmt.Sprintf("%d dependency(ies) with stored records that failed their integrity check or disagree:\n  %s",
 		len(failed), strings.Join(failed, "\n  "))}
 }
 
@@ -930,13 +930,22 @@ func markRefusedVulnRecords(ctx context.Context, uc QueryVulnUseCase, results []
 // verify; the run exits 10 on it once the table is out.
 const auditIntegrityFailed = "(integrity check failed)"
 
+// auditRecordsConflict is the cell of a column whose stored records disagree;
+// the run exits 10 on it as on a failed integrity check.
+const auditRecordsConflict = "(conflicting records)"
+
 // markVulnIntegrity marks the vulnerability column of a row whose stored record
-// failed its integrity check, which outranks the column's other answers.
+// failed its integrity check, or whose records disagree, which outranks the
+// column's other answers.
 func markVulnIntegrity(res *auditModuleResult, err error) {
-	if !errors.Is(err, vulnports.ErrVulnIntegrity) {
+	switch {
+	case errors.Is(err, vulnports.ErrVulnIntegrity):
+		res.VulnStatus, res.VulnReason = auditIntegrityFailed, "reading vulnerability record: "+err.Error()
+	case errors.Is(err, vulnports.ErrVulnConflict):
+		res.VulnStatus, res.VulnReason = auditRecordsConflict, err.Error()
+	default:
 		return
 	}
-	res.VulnStatus, res.VulnReason = auditIntegrityFailed, "reading vulnerability record: "+err.Error()
 	res.VulnFindings, res.VulnWithdrawn = 0, 0
 	if res.integrity == nil {
 		res.integrity = err

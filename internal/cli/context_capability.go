@@ -86,6 +86,8 @@ func capabilityLine(c contextCapability) string {
 		return "(not run — see Call Graph)"
 	case c.Status == sectionStatusReadError:
 		return "(failed — see Call Graph)"
+	case c.Status == sectionStatusConflict:
+		return "(conflict — see Call Graph)"
 	case c.Status == sectionStatusSuperseded:
 		return "(superseded — see Call Graph)"
 	case c.Status == sectionStatusOtherFrame:

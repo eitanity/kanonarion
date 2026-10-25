@@ -608,9 +608,10 @@ recorded.
 Reading the scan line: **"reused run … of &lt;date&gt;"** names the scan run whose
 answers you are reading and when it was made; `govulncheck` did not run.
 **"failed — &lt;reason&gt;"** means the scan did not answer or analysed no module;
-**"it analysed N of M modules"** marks a partial run. Both exit `1`. A stored
+**"it analysed N of M modules"** marks a partial run. Both exit `1`. A
 vulnerability record failing its integrity check reads `(integrity check failed)`
-in its row and exits `10`. Precedence: `10`, `5`, `1`.
+in its row, and records that disagree `(conflicting records)`; both exit `10`.
+Precedence: `10`, `5`, `1`.
 
 Which advisories apply is fixed by the resolved versions, so reuse is sound
 there. Reachability reads source, which is no reuse condition, so its clause

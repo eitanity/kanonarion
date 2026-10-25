@@ -216,6 +216,17 @@ func (m memoryVulns) ListVulnerabilityRecordsByFindingID(_ context.Context, id, 
 	return out, nil
 }
 
+func (m memoryVulns) ListCoordinatesByFindingID(ctx context.Context, id, walkID string) ([]coordinate.ModuleCoordinate, error) {
+	recs, err := m.ListVulnerabilityRecordsByFindingID(ctx, id, walkID)
+	var out []coordinate.ModuleCoordinate
+	for _, r := range recs {
+		if !slices.Contains(out, r.Coordinate) {
+			out = append(out, r.Coordinate)
+		}
+	}
+	return out, err
+}
+
 func (m memoryVulns) ListVulnerabilityRecordsForModuleAllGenerations(_ context.Context, c coordinate.ModuleCoordinate) ([]kanonarion.VulnerabilityRecord, error) {
 	var out []kanonarion.VulnerabilityRecord
 	for _, r := range m.f.records {

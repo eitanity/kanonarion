@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
+	"slices"
 	"sort"
 	"time"
 
@@ -885,8 +887,8 @@ DO NOTHING`
 // The index is composed over the generations this build can reproduce. The ones
 // it cannot are returned as set aside, for the caller to state; a generation
 // whose bytes do not hash to their own seal aborts the write. A frame two
-// toolchains scanned is indexed for the newest one (domain.ComposeForIndex), so
-// the first scan after a Go upgrade completes instead of refusing.
+// toolchains scanned is indexed for the newest one, and a disputed group is
+// indexed whole (domain.IndexedAt), so neither refuses the append.
 func (s *Store) reconcileFindingsIndex(
 	ctx context.Context,
 	tx execQuerier,
@@ -899,7 +901,7 @@ func (s *Store) reconcileFindingsIndex(
 	if err != nil {
 		return nil, err
 	}
-	served, ok, cerr := domain.ComposeForIndex(generations, rooting)
+	indexed, ok, cerr := domain.IndexedAt(generations, rooting)
 	if cerr != nil {
 		return nil, fmt.Errorf("composing %s to reconcile its finding index: %w", record.Coordinate, cerr)
 	}
@@ -939,18 +941,15 @@ INSERT INTO vulnerability_findings_index (
 ) VALUES (?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT DO NOTHING`
 
-	for _, f := range served.Findings {
-		// Index all aliases too (CVE, GHSA, etc.) so queries by any identifier work.
-		ids := append([]string{f.ID}, f.Aliases...)
-		for _, id := range ids {
-			if _, err = tx.ExecContext(ctx, idxQ,
-				id,
-				record.Coordinate.Path(), record.Coordinate.Version(), record.PipelineVersion,
-				record.DatabaseSnapshot.Source(), record.DatabaseSnapshot.Version(),
-				string(rooting),
-			); err != nil {
-				return nil, fmt.Errorf("inserting finding index entry %s: %w", id, err)
-			}
+	ids := slices.Sorted(maps.Keys(indexedFindingIDs(indexed)))
+	for _, id := range ids {
+		if _, err = tx.ExecContext(ctx, idxQ,
+			id,
+			record.Coordinate.Path(), record.Coordinate.Version(), record.PipelineVersion,
+			record.DatabaseSnapshot.Source(), record.DatabaseSnapshot.Version(),
+			string(rooting),
+		); err != nil {
+			return nil, fmt.Errorf("inserting finding index entry %s: %w", id, err)
 		}
 	}
 	return aside, nil
@@ -1196,6 +1195,21 @@ func (s *Store) ListVulnerabilityRecordsForModuleInWalk(
 	if coord.IsZero() {
 		return nil, coordinate.ErrZeroCoordinate
 	}
+	records, unreadable, err := s.moduleInWalkRows(ctx, coord, pipelineVersion, walkID)
+	if err != nil {
+		return nil, err
+	}
+	return records, listingErr(unreadable)
+}
+
+// moduleInWalkRows is ListVulnerabilityRecordsForModuleInWalk returning the rows
+// it could not read beside the records.
+func (s *Store) moduleInWalkRows(
+	ctx context.Context,
+	coord coordinate.ModuleCoordinate,
+	pipelineVersion string,
+	walkID string,
+) ([]domain.VulnerabilityRecord, []ports.UnreadableRow, error) {
 	// A run that named its record's content hash reaches that generation only;
 	// one written before the column reaches every generation of the key. Without
 	// the hash term a walk taken after a Go upgrade also reached the older
@@ -1219,7 +1233,7 @@ ORDER BY julianday(vr.scanned_at) ASC, vr.rowid ASC`
 
 	rows, err := s.db.DB().QueryContext(ctx, q, coord.Path(), coord.Version(), pipelineVersion, walkID)
 	if err != nil {
-		return nil, fmt.Errorf("querying vulnerability records for walk: %w", err)
+		return nil, nil, fmt.Errorf("querying vulnerability records for walk: %w", err)
 	}
 	defer func() {
 		_ = rows.Close() //nolint:errcheck // rows.Err() checked below
@@ -1234,7 +1248,7 @@ ORDER BY julianday(vr.scanned_at) ASC, vr.rowid ASC`
 		var scannedAt string // ordering keys only; the record carries its own timestamp.
 		var rowID int64
 		if serr := rows.Scan(&serialised, &scannedAt, &rowID); serr != nil {
-			return nil, fmt.Errorf("scanning vulnerability record: %w", serr)
+			return nil, nil, fmt.Errorf("scanning vulnerability record: %w", serr)
 		}
 		rec, bad := recordRow(serialised, selectedBy(coord.Path(), coord.Version(), filedAs{"pipeline_version", pipelineVersion}))
 		if bad != nil {
@@ -1244,18 +1258,28 @@ ORDER BY julianday(vr.scanned_at) ASC, vr.rowid ASC`
 		records = append(records, rec)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterating vulnerability records for walk: %w", err)
+		return nil, nil, fmt.Errorf("iterating vulnerability records for walk: %w", err)
 	}
-	return records, listingErr(unreadable)
+	return records, unreadable, nil
 }
 
 // queryRecords runs a query selecting only the serialised column and decodes
 // every row, verifying each record's seal. what names the read in error
 // messages.
 func (s *Store) queryRecords(ctx context.Context, what string, sel recordSelection, query string, args ...any) ([]domain.VulnerabilityRecord, error) {
+	out, unreadable, err := s.queryRecordRows(ctx, what, sel, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	return out, listingErr(unreadable)
+}
+
+// queryRecordRows is queryRecords returning the rows it could not read beside
+// the records, for a caller that merges them into a wider listing.
+func (s *Store) queryRecordRows(ctx context.Context, what string, sel recordSelection, query string, args ...any) ([]domain.VulnerabilityRecord, []ports.UnreadableRow, error) {
 	rows, err := s.db.DB().QueryContext(ctx, query, args...)
 	if err != nil {
-		return nil, fmt.Errorf("querying %s: %w", what, err)
+		return nil, nil, fmt.Errorf("querying %s: %w", what, err)
 	}
 	defer func() {
 		_ = rows.Close() //nolint:errcheck // rows.Err() checked below
@@ -1268,7 +1292,7 @@ func (s *Store) queryRecords(ctx context.Context, what string, sel recordSelecti
 	for rows.Next() {
 		var serialised []byte
 		if serr := rows.Scan(&serialised); serr != nil {
-			return nil, fmt.Errorf("scanning %s: %w", what, serr)
+			return nil, nil, fmt.Errorf("scanning %s: %w", what, serr)
 		}
 		rec, bad := recordRow(serialised, sel)
 		if bad != nil {
@@ -1278,9 +1302,9 @@ func (s *Store) queryRecords(ctx context.Context, what string, sel recordSelecti
 		out = append(out, rec)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterating %s: %w", what, err)
+		return nil, nil, fmt.Errorf("iterating %s: %w", what, err)
 	}
-	return out, listingErr(unreadable)
+	return out, unreadable, nil
 }
 
 // PutWalkScanRun persists a walk scan run and its per-module membership index.

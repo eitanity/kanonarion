@@ -67,6 +67,10 @@ func (s *timelineStore) ListVulnerabilityRecordsByFindingID(context.Context, str
 	return s.byID, s.byIDErr
 }
 
+func (s *timelineStore) ListCoordinatesByFindingID(context.Context, string, string) ([]coordinate.ModuleCoordinate, error) {
+	return coordinatesOf(s.byID), s.byIDErr
+}
+
 func (s *timelineStore) ListVulnerabilityRecordsForModuleAllGenerations(_ context.Context, c coordinate.ModuleCoordinate) ([]domain.VulnerabilityRecord, error) {
 	s.histReads++
 	return s.history[c.String()], s.historyErr

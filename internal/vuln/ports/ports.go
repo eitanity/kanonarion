@@ -52,6 +52,29 @@ var ErrCallGraphNotFound = errors.New("call graph record not found")
 // failure without importing the store.
 var ErrVulnIntegrity = errors.New("vulnerability record integrity check failed")
 
+// ErrWalkNotScanned is wrapped by WalkNotScanned: a walk-scoped read named a
+// walk with no vulnerability scan run. It is an absent record, not a bad
+// invocation, and the CLI exits 4 on it.
+var ErrWalkNotScanned = errors.New("walk has no vulnerability scan run")
+
+// WalkNotScanned is the refusal for a walk-scoped read of a walk that was never
+// scanned. Its message is the one sentence every such read prints.
+type WalkNotScanned struct{ WalkID string }
+
+func (e WalkNotScanned) Error() string {
+	return fmt.Sprintf("no vulnerability scan run for walk %s — run: kanonarion vuln-scan %s", e.WalkID, e.WalkID)
+}
+
+// Unwrap makes errors.Is(err, ErrWalkNotScanned) hold.
+func (e WalkNotScanned) Unwrap() error { return ErrWalkNotScanned }
+
+// ErrVulnConflict is wrapped by every refusal of composition to pick between
+// vulnerability records that disagree: two toolchains' verdicts on one snapshot
+// (domain.ToolchainConflict), or two analysed finding sets of one snapshot,
+// frame, toolchain and pipeline (domain.FindingConflict). Readers call
+// composition directly, so the domain declares it and this names it.
+var ErrVulnConflict = domain.ErrVulnConflict
+
 // ErrWalkScanRunExists is returned by PutWalkScanRun when the store already holds
 // a run under the id being written. A run is written once: merging a second scan
 // into it would leave one id naming two scans' records.
@@ -494,6 +517,12 @@ type VulnerabilityStore interface {
 	// generations this build can reproduce, return the rest as set aside, and
 	// fail closed on an altered row.
 	ListVulnerabilityRecordsByFindingID(ctx context.Context, findingID, walkID string) ([]domain.VulnerabilityRecord, error)
+
+	// ListCoordinatesByFindingID returns, in a stable order, every module version
+	// the findings index lists for findingID, under walkID's runs when it is set,
+	// whatever its served record now says. It is the lookup a history read starts
+	// from; an unknown walkID is an error, as on ListVulnerabilityRecordsByFindingID.
+	ListCoordinatesByFindingID(ctx context.Context, findingID, walkID string) ([]coordinate.ModuleCoordinate, error)
 
 	// ListVulnerabilityRecords returns all vulnerability records for a walk scan
 	// run.

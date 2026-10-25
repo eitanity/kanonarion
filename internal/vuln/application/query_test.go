@@ -81,6 +81,10 @@ func (s *queryVulnFakeStore) ListVulnerabilityRecordsByFindingID(_ context.Conte
 	return s.findingRecords, s.storeErr
 }
 
+func (s *queryVulnFakeStore) ListCoordinatesByFindingID(_ context.Context, _, _ string) ([]coordinate.ModuleCoordinate, error) {
+	return coordinatesOf(s.findingRecords), s.storeErr
+}
+
 func (s *queryVulnFakeStore) ListVulnerabilityRecords(_ context.Context, _ string) ([]domain.VulnerabilityRecord, error) {
 	return nil, nil
 }

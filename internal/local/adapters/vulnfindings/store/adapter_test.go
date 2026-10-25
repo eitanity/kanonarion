@@ -103,6 +103,10 @@ func (s *fakeVulnStore) ListDatabaseSnapshots(_ context.Context) ([]vulndomain.D
 func (s *fakeVulnStore) ListVulnerabilityRecordsByFindingID(_ context.Context, _, _ string) ([]vulndomain.VulnerabilityRecord, error) {
 	panic("unexpected call: ListVulnerabilityRecordsByFindingID")
 }
+
+func (s *fakeVulnStore) ListCoordinatesByFindingID(_ context.Context, _, _ string) ([]coordinate.ModuleCoordinate, error) {
+	panic("unexpected call: ListCoordinatesByFindingID")
+}
 func (s *fakeVulnStore) ListVulnerabilityRecords(_ context.Context, _ string) ([]vulndomain.VulnerabilityRecord, error) {
 	panic("unexpected call: ListVulnerabilityRecords")
 }

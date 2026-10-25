@@ -123,6 +123,8 @@ func printFullLicense(w *errWriter, l contextLicense, cmd string) {
 		}
 	case sectionStatusReadError:
 		w.printf("(failed: %s)\n", l.Error)
+	case sectionStatusConflict:
+		w.printf("(%s)\n", l.Error)
 	case sectionStatusSetAside:
 		w.printf("(no record this build can serve — %s)\n", l.Error)
 	case sectionStatusSuperseded:
@@ -177,6 +179,8 @@ func printFullInterface(w *errWriter, ifc contextInterface, cmd string) {
 		}
 	case sectionStatusReadError:
 		w.printf("(failed: %s)\n", ifc.Error)
+	case sectionStatusConflict:
+		w.printf("(%s)\n", ifc.Error)
 	default:
 		w.printf("Status:       %s\n", ifc.Status)
 		if ifc.ExtractedAt != "" {
@@ -217,39 +221,46 @@ func printFullCallGraph(w *errWriter, cg contextCallGraph, cmd string) {
 		}
 	case sectionStatusReadError:
 		w.printf("(failed: %s)\n", cg.Error)
+	case sectionStatusConflict:
+		w.printf("(%s)\n", cg.Error)
 	case sectionStatusOtherFrame:
 		w.printf("%s\n", otherFrameSection(cg))
 	case sectionStatusSuperseded:
 		w.printf("(superseded — %s)\n", cg.Error)
 	default:
-		w.printf("Status:       %s\n", cg.Status)
-		if cg.ExtractedAt != "" {
-			w.printf("Extracted At: %s\n", cg.ExtractedAt)
+		printFullCallGraphRecord(w, cg)
+	}
+}
+
+// printFullCallGraphRecord is the call-graph section of a served record.
+func printFullCallGraphRecord(w *errWriter, cg contextCallGraph) {
+	w.printf("Status:       %s\n", cg.Status)
+	if cg.ExtractedAt != "" {
+		w.printf("Extracted At: %s\n", cg.ExtractedAt)
+	}
+	w.printf("Algorithm:    %s\n", cg.Algorithm)
+	w.printf("Nodes:        %d\n", cg.NodeCount)
+	w.printf("Edges:        %d\n", cg.EdgeCount)
+	if cg.Error != "" {
+		w.printf("Detail:       %s\n", cg.Error)
+	}
+	if cg.EntryPointCount != nil && *cg.EntryPointCount > 0 {
+		w.printf("Entry Points: %d\n", *cg.EntryPointCount)
+	} else if len(cg.EntryPointsByPackage) > 0 {
+		w.printf("Entry Points by Package:\n")
+		pkgs := make([]string, 0, len(cg.EntryPointsByPackage))
+		for pkg := range cg.EntryPointsByPackage {
+			pkgs = append(pkgs, pkg)
 		}
-		w.printf("Algorithm:    %s\n", cg.Algorithm)
-		w.printf("Nodes:        %d\n", cg.NodeCount)
-		w.printf("Edges:        %d\n", cg.EdgeCount)
-		if cg.Error != "" {
-			w.printf("Detail:       %s\n", cg.Error)
+		sort.Strings(pkgs)
+		for _, pkg := range pkgs {
+			w.printf("  %s: %d\n", pkg, cg.EntryPointsByPackage[pkg])
 		}
-		if cg.EntryPointCount != nil && *cg.EntryPointCount > 0 {
-			w.printf("Entry Points: %d\n", *cg.EntryPointCount)
-		} else if len(cg.EntryPointsByPackage) > 0 {
-			w.printf("Entry Points by Package:\n")
-			pkgs := make([]string, 0, len(cg.EntryPointsByPackage))
-			for pkg := range cg.EntryPointsByPackage {
-				pkgs = append(pkgs, pkg)
-			}
-			sort.Strings(pkgs)
-			for _, pkg := range pkgs {
-				w.printf("  %s: %d\n", pkg, cg.EntryPointsByPackage[pkg])
-			}
-		}
-		if len(cg.EntryPoints) > 0 {
-			w.printf("Entry Points:\n")
-			for _, ep := range cg.EntryPoints {
-				w.printf("  %s\n", ep)
-			}
+	}
+	if len(cg.EntryPoints) > 0 {
+		w.printf("Entry Points:\n")
+		for _, ep := range cg.EntryPoints {
+			w.printf("  %s\n", ep)
 		}
 	}
 }
@@ -264,6 +275,8 @@ func printFullExamples(w *errWriter, ex contextExamples, cmd string) {
 		}
 	case sectionStatusReadError:
 		w.printf("(failed: %s)\n", ex.Error)
+	case sectionStatusConflict:
+		w.printf("(%s)\n", ex.Error)
 	case sectionStatusSetAside:
 		w.printf("(no record this build can serve — %s)\n", ex.Error)
 	case sectionStatusSuperseded:
@@ -312,6 +325,8 @@ func printFullVulnerabilities(w *errWriter, v contextVulnerabilities, cmd contex
 		}
 	case sectionStatusReadError:
 		w.printf("(failed: %s)\n", v.Error)
+	case sectionStatusConflict:
+		w.printf("(%s)\n", v.Error)
 	case sectionStatusSuperseded:
 		w.printf("(superseded — %s)\n", v.Error)
 		printSetAsideLines(w, "Set Aside:    ", v.SetAside)

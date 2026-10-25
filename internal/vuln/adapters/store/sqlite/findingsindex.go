@@ -208,7 +208,8 @@ func indexRowLess(a, b indexRow) bool {
 // let the one check aimed at this defect class be the one that looks away. A
 // drifted generation is set aside exactly as the write's reconciliation sets it
 // aside, so the check composes the same set the index was written from, and it
-// resolves a toolchain conflict by the writer's rule, domain.ComposeForIndex.
+// resolves a toolchain conflict and a disputed group by the writer's rule,
+// domain.IndexedAt.
 func (s *Store) composedFindingIDs(
 	ctx context.Context,
 	path, version, pipeline, snapSource, snapVersion string,
@@ -221,11 +222,23 @@ func (s *Store) composedFindingIDs(
 	if len(generations) == 0 {
 		return nil, reasonNoRecord
 	}
-	served, ok, cerr := domain.ComposeForIndex(generations, rooting)
+	indexed, ok, cerr := domain.IndexedAt(generations, rooting)
 	if cerr != nil || !ok {
 		return nil, reasonNoRecord
 	}
-	return recordFindingIDs(served), ""
+	return indexedFindingIDs(indexed), ""
+}
+
+// indexedFindingIDs is every identifier the index lists for a key: the union of
+// recordFindingIDs over the records IndexedAt returned.
+func indexedFindingIDs(recs []domain.VulnerabilityRecord) map[string]bool {
+	ids := make(map[string]bool)
+	for _, r := range recs {
+		for id := range recordFindingIDs(r) {
+			ids[id] = true
+		}
+	}
+	return ids
 }
 
 // recordFindingIDs returns every identifier the record's findings can legally be

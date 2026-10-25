@@ -2,6 +2,8 @@ package sqlite_test
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -10,6 +12,7 @@ import (
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/adapters/store/sqlite"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
+	"github.com/eitanity/kanonarion/internal/vuln/ports"
 	"github.com/eitanity/kanonarion/internal/vuln/vulntest"
 )
 
@@ -133,49 +136,201 @@ func TestPutVulnerabilityRecord_BareCleanReScanDoesNotRetractAFinding(t *testing
 	}
 }
 
-// TestPutVulnerabilityRecord_ReScanRetractsOnlyRetiredFindings proves the
-// reconciliation is a rewrite, not a purge: a finding the served record still
-// reports keeps its index row, and only the one that stopped applying is
-// dropped.
-//
-// The re-scan supersedes its predecessor on the completeness rung, not on the
-// clock: both records report an advisory, so the ladder's first two rungs tie
-// and the better-founded call graph decides. That is the only way one
-// finding-bearing record displaces another, and it is what makes the drop of
-// the retired row a statement about evidence rather than about recency.
+// TestPutVulnerabilityRecord_ReScanRetractsOnlyRetiredFindings proves an
+// advisory is retired only across snapshots: a newer database that no longer
+// matches it is served, and its key's index lists only what it still reports.
+// Within one snapshot the same drop is a dispute, not a retirement.
 func TestPutVulnerabilityRecord_ReScanRetractsOnlyRetiredFindings(t *testing.T) {
 	ctx := t.Context()
 	store := newTestStore(t)
 
-	both := indexTestRecordAt(t, domain.RootingIsolated, "METADATA_ONLY",
+	both := indexTestRecordAt(t, domain.RootingIsolated, "BUILT_WITH_BODIES",
 		time.Date(2026, 7, 17, 20, 0, 0, 0, time.UTC), domain.StatusAffected,
 		finding("GO-2026-0001"), finding("GO-2026-0002"))
 	if err := store.PutVulnerabilityRecord(ctx, both); err != nil {
 		t.Fatalf("first scan: %v", err)
 	}
 
+	newer := both
+	newer.DatabaseSnapshot = vulntest.MustSealOver("govulndb", "2026-07-24T19:42:05Z",
+		time.Date(2026, 7, 24, 19, 42, 5, 0, time.UTC), []byte("advisories, one corrected"))
+	newer.ScannedAt = time.Date(2026, 7, 25, 20, 0, 0, 0, time.UTC)
+	newer.Findings = []domain.VulnerabilityFinding{finding("GO-2026-0001")}
+	newer = seal(t, newer)
+	if err := store.PutVulnerabilityRecord(ctx, newer); err != nil {
+		t.Fatalf("re-scan against the newer snapshot: %v", err)
+	}
+
+	history, err := store.ListVulnerabilityRecordsForModule(ctx, both.Coordinate, both.PipelineVersion)
+	if err != nil {
+		t.Fatalf("ListVulnerabilityRecordsForModule: %v", err)
+	}
+	served, err := domain.Compose(history)
+	if err != nil {
+		t.Fatalf("Compose over both snapshots: %v — a drop across snapshots is a retirement, not a dispute", err)
+	}
+	if served.ContentHash != newer.ContentHash {
+		t.Fatalf("served %s, want the newer snapshot's record %s", served.ContentHash, newer.ContentHash)
+	}
+	if got := indexRowsAt(t, store, newer); !equalStrings(got, []string{"GO-2026-0001"}) {
+		t.Fatalf("the newer snapshot's index = %v, want only the advisory it still reports", got)
+	}
+
+	assertByIDServesTheNewerSnapshot(t, store, both, newer)
+
+	defects, err := store.CheckFindingsIndex(ctx)
+	if err != nil {
+		t.Fatalf("CheckFindingsIndex: %v", err)
+	}
+	if len(defects) != 0 {
+		t.Fatalf("CheckFindingsIndex found %d defect(s): %v", len(defects), sqlite.FindingsIndexDefectsError(defects))
+	}
+}
+
+// assertByIDServesTheNewerSnapshot checks vuln-by-id answers from the served,
+// newer record: the advisory it still reports lists it, the one it dropped lists
+// no module, and the older index rows stay as the lookup --timeline reads.
+func assertByIDServesTheNewerSnapshot(t *testing.T, store *sqlite.Store, older, newer domain.VulnerabilityRecord) {
+	t.Helper()
+	ctx := t.Context()
+	kept, err := store.ListVulnerabilityRecordsByFindingID(ctx, "GO-2026-0001", "")
+	if err != nil || len(kept) != 1 || kept[0].ContentHash != newer.ContentHash {
+		t.Fatalf("a still-reported finding matched %v, %v; want the newer record", kept, err)
+	}
+	if got := indexRowsAt(t, store, older); !equalStrings(got, []string{"GO-2026-0001", "GO-2026-0002"}) {
+		t.Fatalf("the older snapshot's index = %v, want its rows kept", got)
+	}
+	retired, err := store.ListVulnerabilityRecordsByFindingID(ctx, "GO-2026-0002", "")
+	if err != nil || len(retired) != 0 {
+		t.Fatalf("a retired finding matched %v, %v; want no module, as vuln-show serves the newer record", retired, err)
+	}
+	if coords, cerr := store.ListCoordinatesByFindingID(ctx, "GO-2026-0002", ""); cerr != nil || len(coords) != 1 || coords[0] != older.Coordinate {
+		t.Fatalf("history lookup = %v, %v; want the module, so --timeline still shows the retirement", coords, cerr)
+	}
+}
+
+// TestPutVulnerabilityRecord_ADisputeIsAppendedIndexedAndRefused plants the
+// in-snapshot drop through the store's own write path. The write appends, the
+// index keeps both records' rows, the verifier agrees with the writer, and
+// every composed read refuses while --history lists both.
+func TestPutVulnerabilityRecord_ADisputeIsAppendedIndexedAndRefused(t *testing.T) {
+	ctx := t.Context()
+	store := newTestStore(t)
+
+	both := indexTestRecordAt(t, domain.RootingIsolated, "METADATA_ONLY",
+		time.Date(2026, 7, 17, 20, 0, 0, 0, time.UTC), domain.StatusAffected,
+		finding("GO-2026-0001"), finding("GO-2026-0002", "CVE-2026-0002"))
 	one := indexTestRecordAt(t, domain.RootingIsolated, "BUILT_WITH_BODIES",
 		time.Date(2026, 7, 18, 20, 0, 0, 0, time.UTC), domain.StatusAffected,
 		finding("GO-2026-0001"))
-	if err := store.PutVulnerabilityRecord(ctx, one); err != nil {
-		t.Fatalf("re-scan: %v", err)
+	for _, rec := range []domain.VulnerabilityRecord{both, one} {
+		if err := store.PutVulnerabilityRecord(ctx, rec); err != nil {
+			t.Fatalf("PutVulnerabilityRecord(%s): %v — a disputing record must still be appended", rec.ContentHash, err)
+		}
+	}
+
+	if got, want := indexRowsAt(t, store, one), []string{"CVE-2026-0002", "GO-2026-0001", "GO-2026-0002"}; !equalStrings(got, want) {
+		t.Fatalf("index = %v, want both records' identifiers %v", got, want)
+	}
+	defects, err := store.CheckFindingsIndex(ctx)
+	if err != nil {
+		t.Fatalf("CheckFindingsIndex: %v", err)
+	}
+	if len(defects) != 0 {
+		t.Fatalf("CheckFindingsIndex found %d defect(s) on a disputed group: %v", len(defects), sqlite.FindingsIndexDefectsError(defects))
+	}
+
+	for _, id := range []string{"GO-2026-0001", "GO-2026-0002", "CVE-2026-0002"} {
+		if _, lerr := store.ListVulnerabilityRecordsByFindingID(ctx, id, ""); !errors.Is(lerr, ports.ErrVulnConflict) {
+			t.Errorf("ListVulnerabilityRecordsByFindingID(%s) = %v, want the dispute", id, lerr)
+		}
+	}
+	if _, _, gerr := store.GetVulnerabilityRecordAt(ctx, one.Coordinate, one.PipelineVersion, indexTestSnapshot(), domain.RootingIsolated); !errors.Is(gerr, ports.ErrVulnConflict) {
+		t.Errorf("GetVulnerabilityRecordAt = %v, want the dispute", gerr)
+	}
+	for _, hash := range []string{both.ContentHash, one.ContentHash} {
+		if !strings.Contains(fmt.Sprint(composeErr(t, store, one)), hash) {
+			t.Errorf("the refusal does not name %s", hash)
+		}
+	}
+
+	history, err := store.ListVulnerabilityRecordsForModule(ctx, one.Coordinate, one.PipelineVersion)
+	if err != nil || len(history) != 2 {
+		t.Fatalf("history = %d records, %v; want both", len(history), err)
+	}
+}
+
+// A dispute under an older snapshot is history once a newer snapshot is
+// served: the by-advisory read answers from the newer record, and the advisory
+// only the disputed group carried lists no module.
+func TestListVulnerabilityRecordsByFindingID_AnOlderDisputeIsHistory(t *testing.T) {
+	ctx := t.Context()
+	store := newTestStore(t)
+
+	both := indexTestRecordAt(t, domain.RootingIsolated, "", time.Date(2026, 7, 17, 20, 0, 0, 0, time.UTC),
+		domain.StatusAffected, finding("GO-2026-0001"), finding("GO-2026-0002"))
+	one := indexTestRecordAt(t, domain.RootingIsolated, "", time.Date(2026, 7, 18, 20, 0, 0, 0, time.UTC),
+		domain.StatusAffected, finding("GO-2026-0001"))
+	newer := one
+	newer.DatabaseSnapshot = vulntest.MustSealOver("govulndb", "2026-07-24T19:42:05Z",
+		time.Date(2026, 7, 24, 19, 42, 5, 0, time.UTC), []byte("advisories, later"))
+	newer.ScannedAt = time.Date(2026, 7, 25, 20, 0, 0, 0, time.UTC)
+	newer = seal(t, newer)
+	for _, rec := range []domain.VulnerabilityRecord{both, one} {
+		if err := store.PutVulnerabilityRecord(ctx, rec); err != nil {
+			t.Fatalf("PutVulnerabilityRecord: %v", err)
+		}
+	}
+	if _, err := store.ListVulnerabilityRecordsByFindingID(ctx, "GO-2026-0001", ""); !errors.Is(err, ports.ErrVulnConflict) {
+		t.Fatalf("before the newer snapshot: %v, want the dispute", err)
+	}
+	if err := store.PutVulnerabilityRecord(ctx, newer); err != nil {
+		t.Fatalf("PutVulnerabilityRecord(newer): %v", err)
 	}
 
 	kept, err := store.ListVulnerabilityRecordsByFindingID(ctx, "GO-2026-0001", "")
-	if err != nil {
-		t.Fatalf("ListVulnerabilityRecordsByFindingID(kept): %v", err)
+	if err != nil || len(kept) != 1 || kept[0].ContentHash != newer.ContentHash {
+		t.Fatalf("GO-2026-0001 = %v, %v; want the newer record", kept, err)
 	}
-	if len(kept) != 1 {
-		t.Fatalf("a still-reported finding matched %d records, want 1 — the rewrite dropped a live row", len(kept))
+	dropped, err := store.ListVulnerabilityRecordsByFindingID(ctx, "GO-2026-0002", "")
+	if err != nil || len(dropped) != 0 {
+		t.Fatalf("GO-2026-0002 = %v, %v; want no module", dropped, err)
 	}
+}
 
-	retired, err := store.ListVulnerabilityRecordsByFindingID(ctx, "GO-2026-0002", "")
+// composeErr is the refusal a composed read of rec's coordinate returns.
+func composeErr(t *testing.T, store *sqlite.Store, rec domain.VulnerabilityRecord) error {
+	t.Helper()
+	_, _, err := store.GetVulnerabilityRecordAt(t.Context(), rec.Coordinate, rec.PipelineVersion, rec.DatabaseSnapshot, domain.RecordRooting(rec))
+	return err
+}
+
+// indexRowsAt is the findings index for rec's key and frame, sorted.
+func indexRowsAt(t *testing.T, store *sqlite.Store, rec domain.VulnerabilityRecord) []string {
+	t.Helper()
+	rows, err := store.InternalDB().DB().QueryContext(t.Context(), `
+SELECT finding_id FROM vulnerability_findings_index
+WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
+  AND snapshot_source = ? AND snapshot_version = ? AND rooting = ?
+ORDER BY finding_id`,
+		rec.Coordinate.Path(), rec.Coordinate.Version(), rec.PipelineVersion,
+		rec.DatabaseSnapshot.Source(), rec.DatabaseSnapshot.Version(), string(domain.RecordRooting(rec)))
 	if err != nil {
-		t.Fatalf("ListVulnerabilityRecordsByFindingID(retired): %v", err)
+		t.Fatalf("reading the findings index: %v", err)
 	}
-	if len(retired) != 0 {
-		t.Fatalf("a retired finding still matched %d records, want 0", len(retired))
+	defer func() { _ = rows.Close() }()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			t.Fatalf("scanning the findings index: %v", err)
+		}
+		ids = append(ids, id)
 	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterating the findings index: %v", err)
+	}
+	return ids
 }
 
 // TestPutVulnerabilityRecord_FramesDoNotRetractEachOther is the defect this

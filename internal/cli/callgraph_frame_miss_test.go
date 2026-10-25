@@ -101,12 +101,15 @@ func frameMissStore(t *testing.T, root string, frames []cgdomain.BuildFrame) (tr
 		}
 	}
 	dep := mustCoord(t, "example.com/dep", "v1.0.0")
+	// The walks record the toolchain the tree resolves today, so the golden pins
+	// frame misses and not this host's Go release.
+	goVersion := currentWalkBuildEnv(context.Background(), "", tree, nil).toolchain
 	for i, w := range []struct {
 		id  string
 		env walkdomain.BuildEnv
 	}{
-		{frameMissHostWalk, walkdomain.BuildEnv{GOOS: hostFrame().GOOS, GOARCH: hostFrame().GOARCH, GoVersion: "go1.27.2"}},
-		{frameMissWasmWalk, walkdomain.BuildEnv{GOOS: "wasip1", GOARCH: "wasm", GoVersion: "go1.27.2"}},
+		{frameMissHostWalk, walkdomain.BuildEnv{GOOS: hostFrame().GOOS, GOARCH: hostFrame().GOARCH, GoVersion: goVersion}},
+		{frameMissWasmWalk, walkdomain.BuildEnv{GOOS: "wasip1", GOARCH: "wasm", GoVersion: goVersion}},
 	} {
 		started := at.Add(time.Duration(i) * time.Minute)
 		graph := walkdomain.Graph{Target: app, Nodes: []walkdomain.GraphNode{
