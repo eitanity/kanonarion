@@ -43,6 +43,7 @@ func poisonBlobTemps(t *testing.T, root string) {
 // absent from stdout: an assertion that stdout is clean is worthless if
 // nothing logged at all.
 func TestQueryCommands_LogsGoToStderrNotStdout(t *testing.T) {
+	seeded := seedOneWalkStore(t)
 	for _, tc := range []struct {
 		name string
 		args []string
@@ -71,7 +72,7 @@ func TestQueryCommands_LogsGoToStderrNotStdout(t *testing.T) {
 			// A walk the store holds, since a missing one is refused before the
 			// store is opened; no network, so the re-scan fails fast.
 			t.Setenv("GOPROXY", "off")
-			root := seedOneWalkStore(t)
+			root := copyOfStore(t, seeded)
 			poisonBlobTemps(t, root)
 
 			var stdout, stderr bytes.Buffer

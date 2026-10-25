@@ -89,10 +89,11 @@ jobs:
       # Single instrumented run: the whole suite executes once under -race with
       # coverage collected in the same pass. atomic mode is required because
       # -race runs tests concurrently. This is both the race gate and the
-      # coverage source — there is no separate coverage job.
+      # coverage source — there is no separate coverage job. The cli package runs
+      # mostly serially and exceeds go test's 10m default on the hosted runner.
       - name: Run tests with race and coverage
         run: |
-          go test -race -count=1 \
+          go test -race -count=1 -timeout 30m \
             -coverprofile=coverage.out \
             -covermode=atomic \
             -coverpkg=./... \

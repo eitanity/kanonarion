@@ -140,6 +140,17 @@ func seedOneWalkStore(t *testing.T) string {
 	return root
 }
 
+// copyOfStore is a fresh root holding a copy of the closed store at template,
+// so a table seeds once and each subtest may still write to or poison its own.
+func copyOfStore(t *testing.T, template string) string {
+	t.Helper()
+	root := t.TempDir()
+	if err := os.CopyFS(root, os.DirFS(template)); err != nil {
+		t.Fatalf("copying the seeded store: %v", err)
+	}
+	return root
+}
+
 // Every command that takes a walk id answers one the store does not hold the
 // same way: exit 4, the matched-walk statement, no remedy naming the id, and —
 // for a writer — nothing written.

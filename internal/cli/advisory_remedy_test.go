@@ -5,7 +5,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -21,10 +23,23 @@ func withSnapshotsHeld(t *testing.T, held []vuldomain.DatabaseSnapshot, err erro
 	storedSnapshots = func(context.Context) ([]vuldomain.DatabaseSnapshot, error) { return held, err }
 }
 
+// govulncheckStubOnPath puts a stub govulncheck first on PATH, so the scanner
+// pre-flight passes on a host without one and the test reaches what it asserts.
+func govulncheckStubOnPath(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("the govulncheck stub is a POSIX shell script")
+	}
+	dir := t.TempDir()
+	writeStub(t, filepath.Join(dir, "govulncheck"), "#!/bin/sh\nexit 1\n")
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
 // The advisory-database refusal names only what the command that hit it
 // accepts: --fresh only when it was given, the pin only on the re-scan, and no
 // pin at all from a store that holds no snapshot.
 func TestAdvisoryRefusal_NamesWhatTheCommandAccepts(t *testing.T) {
+	govulncheckStubOnPath(t)
 	seeded := seedOneWalkStore(t)
 	held := []vuldomain.DatabaseSnapshot{fixtureSnap}
 	pin := "kanonarion vuln-scan-rescan " + nsWalkID + " --snapshot-source govulndb --snapshot-version v2025-01-01T00-00-00"
