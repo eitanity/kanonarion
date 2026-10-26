@@ -5,11 +5,11 @@ import (
 	"errors"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 
-	"github.com/eitanity/kanonarion/internal/audit"
-	"github.com/eitanity/kanonarion/internal/extract/domain"
-	"github.com/eitanity/kanonarion/internal/failurecause"
+	"code.eitanity.com/kanonarion/internal/audit"
+	"code.eitanity.com/kanonarion/internal/extract/domain"
+	"code.eitanity.com/kanonarion/internal/failurecause"
 )
 
 // AuditSink appends an audit event to the assurance log. The shared JSONL

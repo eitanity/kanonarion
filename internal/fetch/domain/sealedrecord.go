@@ -4,7 +4,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 )
 
 // ErrUnsealedRecord is the invariant behind SealedRecord, stated for the one

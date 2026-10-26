@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
-	walksqlite "github.com/eitanity/kanonarion/internal/walk/adapters/walks/sqlite"
-	"github.com/eitanity/kanonarion/internal/walk/domain"
-	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
+	"code.eitanity.com/kanonarion/internal/adapters/recordseal"
+	walksqlite "code.eitanity.com/kanonarion/internal/walk/adapters/walks/sqlite"
+	"code.eitanity.com/kanonarion/internal/walk/domain"
+	walkports "code.eitanity.com/kanonarion/internal/walk/ports"
 )
 
 // A walk is chosen by its id, or by a listing over its columns that then reads

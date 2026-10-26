@@ -5,7 +5,7 @@ import (
 	"slices"
 	"testing"
 
-	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
+	cgdomain "code.eitanity.com/kanonarion/internal/callgraph/domain"
 )
 
 // assertOrders checks that less decides a pair differing in exactly one field,

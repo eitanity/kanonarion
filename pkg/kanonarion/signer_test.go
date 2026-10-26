@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/eitanity/kanonarion/pkg/kanonarion"
+	"code.eitanity.com/kanonarion/pkg/kanonarion"
 )
 
 // NewNoopSigner satisfies the published Signer port.

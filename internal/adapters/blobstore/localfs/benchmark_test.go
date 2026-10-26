@@ -8,10 +8,10 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
-	"github.com/eitanity/kanonarion/internal/fetch/ports"
+	"code.eitanity.com/kanonarion/internal/fetch/fetchtest"
+	"code.eitanity.com/kanonarion/internal/fetch/ports"
 
-	"github.com/eitanity/kanonarion/internal/adapters/blobstore/localfs"
+	"code.eitanity.com/kanonarion/internal/adapters/blobstore/localfs"
 )
 
 // BenchmarkPut measures streaming blob storage for various payload sizes.

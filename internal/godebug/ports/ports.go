@@ -6,8 +6,8 @@ package ports
 import (
 	"context"
 
-	"github.com/eitanity/kanonarion/internal/audit"
-	"github.com/eitanity/kanonarion/internal/godebug/domain"
+	"code.eitanity.com/kanonarion/internal/audit"
+	"code.eitanity.com/kanonarion/internal/godebug/domain"
 )
 
 // GoDebugScanner scans a project's source tree (and any vendored dependency

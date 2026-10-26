@@ -4,8 +4,8 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/eitanity/kanonarion/internal/walk/adapters/buildlist/gotoolchain"
-	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
+	"code.eitanity.com/kanonarion/internal/walk/adapters/buildlist/gotoolchain"
+	walkports "code.eitanity.com/kanonarion/internal/walk/ports"
 )
 
 // walkBuildEnv names the build a walk taken here and now would be resolved in,

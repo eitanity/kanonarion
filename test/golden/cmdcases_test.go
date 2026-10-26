@@ -101,8 +101,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/adapters/goenv"
-	"github.com/eitanity/kanonarion/internal/cli"
+	"code.eitanity.com/kanonarion/internal/adapters/goenv"
+	"code.eitanity.com/kanonarion/internal/cli"
 )
 
 // TestCommandGolden records what each covered command prints and compares it

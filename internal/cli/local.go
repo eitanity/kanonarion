@@ -6,11 +6,11 @@ import (
 	"io"
 	"path/filepath"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 
 	"github.com/spf13/cobra"
 
-	cgapp "github.com/eitanity/kanonarion/internal/callgraph/application"
+	cgapp "code.eitanity.com/kanonarion/internal/callgraph/application"
 )
 
 type localFlags struct {

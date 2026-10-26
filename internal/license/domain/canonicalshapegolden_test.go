@@ -4,10 +4,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/canonicalshape"
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
-	"github.com/eitanity/kanonarion/internal/license/domain"
+	"code.eitanity.com/kanonarion/internal/canonicalshape"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	fetchdomain "code.eitanity.com/kanonarion/internal/fetch/domain"
+	"code.eitanity.com/kanonarion/internal/license/domain"
 )
 
 // TestCanonicalShape_IsPinned fails when the bytes this domain seals over

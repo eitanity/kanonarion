@@ -5,11 +5,11 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 
-	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
-	domain3 "github.com/eitanity/kanonarion/internal/walk/domain"
-	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
+	domain2 "code.eitanity.com/kanonarion/internal/fetch/domain"
+	domain3 "code.eitanity.com/kanonarion/internal/walk/domain"
+	walkports "code.eitanity.com/kanonarion/internal/walk/ports"
 )
 
 // stdlibNode returns the injected standard-library node from g, or fails.

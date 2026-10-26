@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/local/adapters/probe/builder"
-	"github.com/eitanity/kanonarion/internal/local/localtest"
+	"code.eitanity.com/kanonarion/internal/local/adapters/probe/builder"
+	"code.eitanity.com/kanonarion/internal/local/localtest"
 )
 
 // TestProbe_SettlesTheToolchainOnceAndEveryChildRunsUnderIt is the defect on the

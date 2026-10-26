@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	cgapp "github.com/eitanity/kanonarion/internal/callgraph/application"
-	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
-	"github.com/eitanity/kanonarion/internal/cli/testfakes"
+	cgapp "code.eitanity.com/kanonarion/internal/callgraph/application"
+	cgdomain "code.eitanity.com/kanonarion/internal/callgraph/domain"
+	"code.eitanity.com/kanonarion/internal/cli/testfakes"
 )
 
 // nodeFilterRecord is a record shaped like the one the defect was measured on: a

@@ -5,10 +5,10 @@ import (
 	"testing"
 	"time"
 
-	domain2 "github.com/eitanity/kanonarion/internal/license/domain"
+	domain2 "code.eitanity.com/kanonarion/internal/license/domain"
 
-	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"code.eitanity.com/kanonarion/internal/coordinate/coordinatetest"
+	fetchdomain "code.eitanity.com/kanonarion/internal/fetch/domain"
 )
 
 // stampRecord is the smallest sealed licence record whose extraction time is the

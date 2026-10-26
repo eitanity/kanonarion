@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/config/adapters/store/yaml"
-	"github.com/eitanity/kanonarion/internal/gotoolchain"
+	"code.eitanity.com/kanonarion/internal/config/adapters/store/yaml"
+	"code.eitanity.com/kanonarion/internal/gotoolchain"
 )
 
 // TestParse_CallgraphToolchain: the preference reaches the typed config, and an

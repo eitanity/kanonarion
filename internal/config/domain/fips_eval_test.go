@@ -3,7 +3,7 @@ package domain_test
 import (
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/config/domain"
+	"code.eitanity.com/kanonarion/internal/config/domain"
 )
 
 // TestFIPSPolicyEvaluate is the regression for governance evaluation:

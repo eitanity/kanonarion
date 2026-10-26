@@ -5,7 +5,7 @@ import (
 
 	"golang.org/x/mod/module"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 )
 
 // IsBuildIncompatibility reports whether a scan-failure detail indicates the

@@ -6,10 +6,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/sbom/adapters/generator/cyclonedx"
+	"code.eitanity.com/kanonarion/internal/sbom/adapters/generator/cyclonedx"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
-	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
+	fetchdomain "code.eitanity.com/kanonarion/internal/fetch/domain"
+	walkdomain "code.eitanity.com/kanonarion/internal/walk/domain"
 )
 
 // custodyBOM is the CycloneDX shape needed to assert the stdlib chain of custody

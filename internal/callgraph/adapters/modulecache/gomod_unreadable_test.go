@@ -9,9 +9,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/callgraph/adapters/modulecache"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
-	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
+	"code.eitanity.com/kanonarion/internal/callgraph/adapters/modulecache"
+	fetchdomain "code.eitanity.com/kanonarion/internal/fetch/domain"
+	fetchports "code.eitanity.com/kanonarion/internal/fetch/ports"
 )
 
 const goModUnreadableMsg = "callgraph: a requirement's stored go.mod could not be read, treating it as pre-pruning"

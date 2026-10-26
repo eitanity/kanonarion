@@ -4,13 +4,13 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 
-	callgraphdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
-	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
+	callgraphdomain "code.eitanity.com/kanonarion/internal/callgraph/domain"
+	cgports "code.eitanity.com/kanonarion/internal/callgraph/ports"
 
-	"github.com/eitanity/kanonarion/internal/vuln/domain"
-	"github.com/eitanity/kanonarion/internal/vuln/ports"
+	"code.eitanity.com/kanonarion/internal/vuln/domain"
+	"code.eitanity.com/kanonarion/internal/vuln/ports"
 )
 
 // CallGraphStoreLoader adapts a cgports.CallGraphStore to ports.CallGraphLoader.

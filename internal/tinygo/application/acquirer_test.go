@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/tinygo/application"
-	"github.com/eitanity/kanonarion/internal/tinygo/domain"
-	"github.com/eitanity/kanonarion/internal/tinygo/ports"
+	"code.eitanity.com/kanonarion/internal/tinygo/application"
+	"code.eitanity.com/kanonarion/internal/tinygo/domain"
+	"code.eitanity.com/kanonarion/internal/tinygo/ports"
 )
 
 const (

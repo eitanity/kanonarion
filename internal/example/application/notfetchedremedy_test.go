@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	"github.com/eitanity/kanonarion/internal/example/application"
-	"github.com/eitanity/kanonarion/internal/example/ports"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/example/application"
+	"code.eitanity.com/kanonarion/internal/example/ports"
 )
 
 // Same hole as the licence surface: the local root cannot be fetched, so the

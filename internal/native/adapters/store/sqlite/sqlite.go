@@ -10,14 +10,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/adapters/blobcodec"
-	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
-	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
-	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
-	"github.com/eitanity/kanonarion/internal/native/domain"
-	"github.com/eitanity/kanonarion/internal/native/ports"
+	"code.eitanity.com/kanonarion/internal/adapters/blobcodec"
+	"code.eitanity.com/kanonarion/internal/adapters/recordseal"
+	"code.eitanity.com/kanonarion/internal/adapters/sqlitestore"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	fetchdomain "code.eitanity.com/kanonarion/internal/fetch/domain"
+	fetchports "code.eitanity.com/kanonarion/internal/fetch/ports"
+	"code.eitanity.com/kanonarion/internal/native/domain"
+	"code.eitanity.com/kanonarion/internal/native/ports"
 )
 
 // Store is the SQLite-backed native-component store.

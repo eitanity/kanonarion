@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/audit"
+	"code.eitanity.com/kanonarion/internal/audit"
 )
 
 func TestEventType_Known(t *testing.T) {

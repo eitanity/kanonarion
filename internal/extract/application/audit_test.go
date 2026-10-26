@@ -6,11 +6,11 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/audit"
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	"github.com/eitanity/kanonarion/internal/extract/domain"
-	"github.com/eitanity/kanonarion/internal/extract/ports"
-	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
+	"code.eitanity.com/kanonarion/internal/audit"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/extract/domain"
+	"code.eitanity.com/kanonarion/internal/extract/ports"
+	walkdomain "code.eitanity.com/kanonarion/internal/walk/domain"
 )
 
 // recordingSink captures the events a run appends.

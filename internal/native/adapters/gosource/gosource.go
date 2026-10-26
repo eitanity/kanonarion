@@ -16,7 +16,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/eitanity/kanonarion/internal/native/domain"
+	"code.eitanity.com/kanonarion/internal/native/domain"
 )
 
 // Reader reads the import paths and cgo preamble of a Go source file.

@@ -10,11 +10,11 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/adapters/clock"
-	fetchsqlite "github.com/eitanity/kanonarion/internal/adapters/factstore/sqlite"
-	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
-	"github.com/eitanity/kanonarion/internal/composition"
-	stdlibsqlite "github.com/eitanity/kanonarion/internal/stdlib/adapters/store/sqlite"
+	"code.eitanity.com/kanonarion/internal/adapters/clock"
+	fetchsqlite "code.eitanity.com/kanonarion/internal/adapters/factstore/sqlite"
+	"code.eitanity.com/kanonarion/internal/adapters/sqlitestore"
+	"code.eitanity.com/kanonarion/internal/composition"
+	stdlibsqlite "code.eitanity.com/kanonarion/internal/stdlib/adapters/store/sqlite"
 )
 
 // auditLines returns every audit envelope under storeRoot whose event_type

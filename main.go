@@ -4,7 +4,7 @@
 
 // Command kanonarion is the root entry point for the CLI.
 //
-// It exists so `go install github.com/eitanity/kanonarion@latest` resolves a
+// It exists so `go install code.eitanity.com/kanonarion@latest` resolves a
 // main package at the module root: `go install <module>@latest` only builds a
 // package whose import path equals the module path. The canonical build target
 // remains ./cmd/kanonarion (used by the Makefile, release workflow, and the
@@ -16,7 +16,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/eitanity/kanonarion/internal/cli"
+	"code.eitanity.com/kanonarion/internal/cli"
 )
 
 func main() {

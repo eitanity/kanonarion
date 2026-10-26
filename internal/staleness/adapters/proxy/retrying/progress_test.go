@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/staleness/ports"
+	"code.eitanity.com/kanonarion/internal/staleness/ports"
 )
 
 // recordingProgress captures what a watcher would have been told.

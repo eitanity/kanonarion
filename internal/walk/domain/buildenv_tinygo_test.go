@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"testing"
 
-	domain3 "github.com/eitanity/kanonarion/internal/walk/domain"
+	domain3 "code.eitanity.com/kanonarion/internal/walk/domain"
 )
 
 // standardBuildEnvIdentity is the identity of the record below as the build

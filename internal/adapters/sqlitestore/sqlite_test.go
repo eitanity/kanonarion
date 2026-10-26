@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
+	"code.eitanity.com/kanonarion/internal/adapters/sqlitestore"
 )
 
 func TestOpen(t *testing.T) {

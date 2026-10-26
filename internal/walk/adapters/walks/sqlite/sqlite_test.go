@@ -6,11 +6,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 
-	"github.com/eitanity/kanonarion/internal/walk/adapters/walks/sqlite"
-	"github.com/eitanity/kanonarion/internal/walk/domain"
-	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
+	"code.eitanity.com/kanonarion/internal/walk/adapters/walks/sqlite"
+	"code.eitanity.com/kanonarion/internal/walk/domain"
+	walkports "code.eitanity.com/kanonarion/internal/walk/ports"
 )
 
 func openMemStore(t *testing.T) *sqlite.Store {

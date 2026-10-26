@@ -10,9 +10,9 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
-	"github.com/eitanity/kanonarion/internal/fetch/ports"
+	"code.eitanity.com/kanonarion/internal/coordinate/coordinatetest"
+	fetchdomain "code.eitanity.com/kanonarion/internal/fetch/domain"
+	"code.eitanity.com/kanonarion/internal/fetch/ports"
 )
 
 var testCoord = coordinatetest.MustNew("golang.org/x/text", "v0.37.0")

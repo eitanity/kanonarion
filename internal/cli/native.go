@@ -8,8 +8,8 @@ import (
 	"text/tabwriter"
 	"time"
 
-	nativeapp "github.com/eitanity/kanonarion/internal/native/application"
-	nativedomain "github.com/eitanity/kanonarion/internal/native/domain"
+	nativeapp "code.eitanity.com/kanonarion/internal/native/application"
+	nativedomain "code.eitanity.com/kanonarion/internal/native/domain"
 	"github.com/spf13/cobra"
 )
 

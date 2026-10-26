@@ -10,15 +10,15 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 
-	fetchadapterproxy "github.com/eitanity/kanonarion/internal/adapters/proxy/direct"
+	fetchadapterproxy "code.eitanity.com/kanonarion/internal/adapters/proxy/direct"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	fetchdomain "code.eitanity.com/kanonarion/internal/fetch/domain"
 
-	"github.com/eitanity/kanonarion/internal/walk/application"
-	"github.com/eitanity/kanonarion/internal/walk/domain"
-	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
+	"code.eitanity.com/kanonarion/internal/walk/application"
+	"code.eitanity.com/kanonarion/internal/walk/domain"
+	walkports "code.eitanity.com/kanonarion/internal/walk/ports"
 	"github.com/spf13/cobra"
 )
 

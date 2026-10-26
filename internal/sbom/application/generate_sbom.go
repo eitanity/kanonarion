@@ -8,19 +8,19 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/adapters/interrupt"
-	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/adapters/interrupt"
+	"code.eitanity.com/kanonarion/internal/adapters/recordseal"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 
-	licenseports "github.com/eitanity/kanonarion/internal/license/ports"
-	"github.com/eitanity/kanonarion/internal/sbom/domain"
-	"github.com/eitanity/kanonarion/internal/sbom/ports"
-	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
+	licenseports "code.eitanity.com/kanonarion/internal/license/ports"
+	"code.eitanity.com/kanonarion/internal/sbom/domain"
+	"code.eitanity.com/kanonarion/internal/sbom/ports"
+	walkports "code.eitanity.com/kanonarion/internal/walk/ports"
 
-	licensedomain "github.com/eitanity/kanonarion/internal/license/domain"
-	nativedomain "github.com/eitanity/kanonarion/internal/native/domain"
-	vendordomain "github.com/eitanity/kanonarion/internal/vendortree/domain"
-	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
+	licensedomain "code.eitanity.com/kanonarion/internal/license/domain"
+	nativedomain "code.eitanity.com/kanonarion/internal/native/domain"
+	vendordomain "code.eitanity.com/kanonarion/internal/vendortree/domain"
+	walkdomain "code.eitanity.com/kanonarion/internal/walk/domain"
 )
 
 // GenerateSBOMUseCase orchestrates SBOM generation for a walk.

@@ -6,11 +6,11 @@ import (
 	"strings"
 	"testing"
 
-	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
-	"github.com/eitanity/kanonarion/internal/cli/testfakes"
-	exampleports "github.com/eitanity/kanonarion/internal/example/ports"
-	ifaceports "github.com/eitanity/kanonarion/internal/iface/ports"
-	licenceports "github.com/eitanity/kanonarion/internal/license/ports"
+	cgports "code.eitanity.com/kanonarion/internal/callgraph/ports"
+	"code.eitanity.com/kanonarion/internal/cli/testfakes"
+	exampleports "code.eitanity.com/kanonarion/internal/example/ports"
+	ifaceports "code.eitanity.com/kanonarion/internal/iface/ports"
+	licenceports "code.eitanity.com/kanonarion/internal/license/ports"
 )
 
 // Every record store's disagreement sentinel reaches context as the conflict

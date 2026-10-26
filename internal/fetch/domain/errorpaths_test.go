@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
-	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"code.eitanity.com/kanonarion/internal/coordinate/coordinatetest"
+	domain2 "code.eitanity.com/kanonarion/internal/fetch/domain"
 )
 
 // failingHasher is the fault seam for the hash leg of HashDirAsModuleZip: the

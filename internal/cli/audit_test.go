@@ -8,10 +8,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate/coordinatetest"
 
-	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
+	walkdomain "code.eitanity.com/kanonarion/internal/walk/domain"
 )
 
 // TestAuditDependencyNodes_ExcludesLocalRoot guards the shape audit now derives

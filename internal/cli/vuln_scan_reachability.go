@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"io"
 
-	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
+	vuldomain "code.eitanity.com/kanonarion/internal/vuln/domain"
 )
 
 // This file holds the reachability roll-up a stored scan run's TEXT surface

@@ -3,7 +3,7 @@ package domain_test
 import (
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/license/domain"
+	"code.eitanity.com/kanonarion/internal/license/domain"
 )
 
 // TestCheckPairCompatibility_KnownConflicts verifies that known

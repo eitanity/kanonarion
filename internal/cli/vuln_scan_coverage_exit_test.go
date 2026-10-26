@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
+	vuldomain "code.eitanity.com/kanonarion/internal/vuln/domain"
 )
 
 // TestVulnScanCoverageExit is the regression test for the exit code that said

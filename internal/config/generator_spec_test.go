@@ -9,7 +9,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/eitanity/kanonarion/internal/config"
+	"code.eitanity.com/kanonarion/internal/config"
 )
 
 type commentedDefaults struct {

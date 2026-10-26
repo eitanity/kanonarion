@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/extract/application"
-	"github.com/eitanity/kanonarion/internal/extract/domain"
-	extractports "github.com/eitanity/kanonarion/internal/extract/ports"
+	"code.eitanity.com/kanonarion/internal/extract/application"
+	"code.eitanity.com/kanonarion/internal/extract/domain"
+	extractports "code.eitanity.com/kanonarion/internal/extract/ports"
 )
 
 // queryExtFakeStore is a minimal ExtractionStore for QueryExtractionUseCase tests.

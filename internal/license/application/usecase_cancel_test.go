@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/license/application"
+	"code.eitanity.com/kanonarion/internal/license/application"
 )
 
 // A licence detection the run's cancellation stopped failed nothing: Execute

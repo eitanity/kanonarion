@@ -27,8 +27,8 @@ import (
 	"sync"
 	"time"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
-	"github.com/eitanity/kanonarion/internal/staleness/ports"
+	fetchdomain "code.eitanity.com/kanonarion/internal/fetch/domain"
+	"code.eitanity.com/kanonarion/internal/staleness/ports"
 )
 
 const (

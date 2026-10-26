@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	"github.com/eitanity/kanonarion/internal/fetch/ports"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/fetch/ports"
 )
 
 // IsRefusal reports whether err is a resolution refusal — the environment

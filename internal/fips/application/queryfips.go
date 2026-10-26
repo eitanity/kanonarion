@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/eitanity/kanonarion/internal/fips/domain"
-	"github.com/eitanity/kanonarion/internal/fips/ports"
+	"code.eitanity.com/kanonarion/internal/fips/domain"
+	"code.eitanity.com/kanonarion/internal/fips/ports"
 )
 
 // QueryFIPSUseCase is read-only access to stored FIPS records.

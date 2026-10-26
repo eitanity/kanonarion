@@ -9,7 +9,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/eitanity/kanonarion/internal/audit"
+	"code.eitanity.com/kanonarion/internal/audit"
 )
 
 // configMarkerName caches the last config hash the ledger recorded, so finding

@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/adapters/blobstore/localfs"
-	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
+	"code.eitanity.com/kanonarion/internal/adapters/blobstore/localfs"
+	"code.eitanity.com/kanonarion/internal/adapters/sqlitestore"
 )
 
 // A record whose hash does not parse cannot have its legacy blob re-addressed.

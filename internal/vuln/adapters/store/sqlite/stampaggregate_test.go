@@ -4,9 +4,9 @@ import (
 	"testing"
 	"time"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
-	"github.com/eitanity/kanonarion/internal/vuln/adapters/store/sqlite"
-	"github.com/eitanity/kanonarion/internal/vuln/domain"
+	fetchdomain "code.eitanity.com/kanonarion/internal/fetch/domain"
+	"code.eitanity.com/kanonarion/internal/vuln/adapters/store/sqlite"
+	"code.eitanity.com/kanonarion/internal/vuln/domain"
 )
 
 const (

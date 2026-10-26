@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"testing"
 
-	nativedomain "github.com/eitanity/kanonarion/internal/native/domain"
-	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
+	nativedomain "code.eitanity.com/kanonarion/internal/native/domain"
+	vuldomain "code.eitanity.com/kanonarion/internal/vuln/domain"
 )
 
 // A record's verdict must not move because a surface started stating something

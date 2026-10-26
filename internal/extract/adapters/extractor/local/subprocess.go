@@ -5,8 +5,8 @@ import (
 	"io"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/adapters/childproc"
-	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
+	"code.eitanity.com/kanonarion/internal/adapters/childproc"
+	cgports "code.eitanity.com/kanonarion/internal/callgraph/ports"
 )
 
 // OsSubprocessExecutor runs a subprocess using the OS exec package.

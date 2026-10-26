@@ -3,9 +3,9 @@ package domain_test
 import (
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 
-	"github.com/eitanity/kanonarion/internal/example/domain"
+	"code.eitanity.com/kanonarion/internal/example/domain"
 )
 
 func TestExampleStatusString(t *testing.T) {

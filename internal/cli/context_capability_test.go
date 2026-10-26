@@ -8,12 +8,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/cli/testfakes"
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/cli/testfakes"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 
-	cgapp "github.com/eitanity/kanonarion/internal/callgraph/application"
-	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
-	capapp "github.com/eitanity/kanonarion/internal/capability/application"
+	cgapp "code.eitanity.com/kanonarion/internal/callgraph/application"
+	cgdomain "code.eitanity.com/kanonarion/internal/callgraph/domain"
+	capapp "code.eitanity.com/kanonarion/internal/capability/application"
 )
 
 // sensitiveRecord is a module whose exported function reads the environment and

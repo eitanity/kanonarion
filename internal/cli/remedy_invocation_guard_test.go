@@ -18,9 +18,9 @@ import (
 	"github.com/spf13/pflag"
 	"golang.org/x/tools/go/packages"
 
-	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	"github.com/eitanity/kanonarion/internal/gotoolchain"
+	cgdomain "code.eitanity.com/kanonarion/internal/callgraph/domain"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/gotoolchain"
 )
 
 // The rule this guard holds the whole tree to is in docs/cli/conventions.md:
@@ -49,7 +49,7 @@ const (
 
 // coordinateTypeName is the value object every proven coordinate has, or is
 // derived from.
-const coordinateTypeName = "github.com/eitanity/kanonarion/internal/coordinate.ModuleCoordinate"
+const coordinateTypeName = "code.eitanity.com/kanonarion/internal/coordinate.ModuleCoordinate"
 
 // -- what the guard reads ----------------------------------------------------
 
@@ -1619,7 +1619,7 @@ func TestRemedyGuardReadsTheWholeTree(t *testing.T) {
 func TestRemedyGuardReachesAValueHeldInAStructParameter(t *testing.T) {
 	const src = `package planted
 
-import "github.com/eitanity/kanonarion/internal/coordinate"
+import "code.eitanity.com/kanonarion/internal/coordinate"
 
 type rollup struct {
 	notExamined  int

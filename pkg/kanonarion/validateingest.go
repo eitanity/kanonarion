@@ -1,7 +1,7 @@
 package kanonarion
 
 import (
-	fetchapp "github.com/eitanity/kanonarion/internal/fetch/application"
+	fetchapp "code.eitanity.com/kanonarion/internal/fetch/application"
 )
 
 // Validate-and-ingest / verify-on-read surface (§1,3). The consume side

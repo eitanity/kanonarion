@@ -6,11 +6,11 @@ import (
 	"fmt"
 	"testing"
 
-	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
-	"github.com/eitanity/kanonarion/internal/cli/testfakes"
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
-	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
+	cgdomain "code.eitanity.com/kanonarion/internal/callgraph/domain"
+	"code.eitanity.com/kanonarion/internal/cli/testfakes"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate/coordinatetest"
+	vuldomain "code.eitanity.com/kanonarion/internal/vuln/domain"
 )
 
 // This file pins the second half of the rule reachability_rung_surfaces_test.go

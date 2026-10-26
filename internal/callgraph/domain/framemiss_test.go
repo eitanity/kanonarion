@@ -3,7 +3,7 @@ package domain
 import (
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 )
 
 func TestFrameMissReason(t *testing.T) {

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 )
 
 // AssertRefusesZeroCoordinate asserts that op refuses the zero coordinate with

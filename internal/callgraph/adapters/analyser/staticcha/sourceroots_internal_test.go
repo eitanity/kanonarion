@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/callgraph/domain"
+	"code.eitanity.com/kanonarion/internal/callgraph/domain"
 )
 
 // TestSourceRoots_ModuleFilesStayModuleRelative pins the rendering the record

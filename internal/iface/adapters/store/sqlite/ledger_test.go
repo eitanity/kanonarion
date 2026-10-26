@@ -8,15 +8,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/adapters/blobcodec"
-	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
-	ifacesqlite "github.com/eitanity/kanonarion/internal/iface/adapters/store/sqlite"
-	domain2 "github.com/eitanity/kanonarion/internal/iface/domain"
-	"github.com/eitanity/kanonarion/internal/iface/ports"
+	"code.eitanity.com/kanonarion/internal/adapters/blobcodec"
+	"code.eitanity.com/kanonarion/internal/adapters/sqlitestore"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/fetch/fetchtest"
+	ifacesqlite "code.eitanity.com/kanonarion/internal/iface/adapters/store/sqlite"
+	domain2 "code.eitanity.com/kanonarion/internal/iface/domain"
+	"code.eitanity.com/kanonarion/internal/iface/ports"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	fetchdomain "code.eitanity.com/kanonarion/internal/fetch/domain"
 )
 
 const ledgerPipeline = "0.3.0"

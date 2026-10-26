@@ -3,8 +3,8 @@ package staticcha
 import (
 	"os"
 
-	"github.com/eitanity/kanonarion/internal/adapters/goenv"
-	"github.com/eitanity/kanonarion/internal/callgraph/domain"
+	"code.eitanity.com/kanonarion/internal/adapters/goenv"
+	"code.eitanity.com/kanonarion/internal/callgraph/domain"
 )
 
 // WithTarget declares the platform every child of an analysis resolves for.

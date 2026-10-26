@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
-	"github.com/eitanity/kanonarion/internal/stdlib/application"
+	"code.eitanity.com/kanonarion/internal/adapters/recordseal"
+	"code.eitanity.com/kanonarion/internal/stdlib/application"
 )
 
 // nothingServable is the store's answer when every held measurement was set

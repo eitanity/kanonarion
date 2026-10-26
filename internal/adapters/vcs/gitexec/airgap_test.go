@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/adapters/goenv"
-	"github.com/eitanity/kanonarion/internal/adapters/vcs/gitexec"
-	"github.com/eitanity/kanonarion/internal/fetch/ports"
+	"code.eitanity.com/kanonarion/internal/adapters/goenv"
+	"code.eitanity.com/kanonarion/internal/adapters/vcs/gitexec"
+	"code.eitanity.com/kanonarion/internal/fetch/ports"
 )
 
 // recordingGit puts a fake `git` at the front of $PATH which appends its argv to

@@ -26,11 +26,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/adapters/goenv"
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/adapters/goenv"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 
-	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
-	"github.com/eitanity/kanonarion/internal/fetch/ports"
+	domain2 "code.eitanity.com/kanonarion/internal/fetch/domain"
+	"code.eitanity.com/kanonarion/internal/fetch/ports"
 	"golang.org/x/mod/module"
 	"golang.org/x/mod/semver"
 	"golang.org/x/mod/sumdb/dirhash"

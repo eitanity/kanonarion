@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/callgraph/domain"
-	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
+	"code.eitanity.com/kanonarion/internal/callgraph/domain"
+	"code.eitanity.com/kanonarion/internal/coordinate/coordinatetest"
 )
 
 // TestRefusesZeroCoordinate pins the value-object rule at this store: the zero

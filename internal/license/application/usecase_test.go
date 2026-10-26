@@ -10,14 +10,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 
-	"github.com/eitanity/kanonarion/internal/fetch/domain"
-	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
-	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
-	"github.com/eitanity/kanonarion/internal/license/application"
-	domain2 "github.com/eitanity/kanonarion/internal/license/domain"
-	"github.com/eitanity/kanonarion/internal/license/ports"
+	"code.eitanity.com/kanonarion/internal/fetch/domain"
+	"code.eitanity.com/kanonarion/internal/fetch/fetchtest"
+	fetchports "code.eitanity.com/kanonarion/internal/fetch/ports"
+	"code.eitanity.com/kanonarion/internal/license/application"
+	domain2 "code.eitanity.com/kanonarion/internal/license/domain"
+	"code.eitanity.com/kanonarion/internal/license/ports"
 )
 
 func TestExecute_ModuleNotFetched(t *testing.T) {

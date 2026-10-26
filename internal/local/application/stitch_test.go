@@ -5,12 +5,12 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 
-	callgraphdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
+	callgraphdomain "code.eitanity.com/kanonarion/internal/callgraph/domain"
 
-	"github.com/eitanity/kanonarion/internal/local/application"
-	"github.com/eitanity/kanonarion/internal/local/ports"
+	"code.eitanity.com/kanonarion/internal/local/application"
+	"code.eitanity.com/kanonarion/internal/local/ports"
 )
 
 // fakeDependencyLoader is an in-memory implementation of ports.DependencyLoader.

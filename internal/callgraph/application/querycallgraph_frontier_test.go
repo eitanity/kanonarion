@@ -5,10 +5,10 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/callgraph/application"
-	"github.com/eitanity/kanonarion/internal/callgraph/domain"
-	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/callgraph/application"
+	"code.eitanity.com/kanonarion/internal/callgraph/domain"
+	cgports "code.eitanity.com/kanonarion/internal/callgraph/ports"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 )
 
 // frontierFake answers edge queries from an adjacency map and counts how many

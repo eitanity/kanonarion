@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/eitanity/kanonarion/internal/adapters/childproc"
-	cganalyser "github.com/eitanity/kanonarion/internal/callgraph/adapters/analyser/staticcha"
-	"github.com/eitanity/kanonarion/internal/gotoolchain"
+	"code.eitanity.com/kanonarion/internal/adapters/childproc"
+	cganalyser "code.eitanity.com/kanonarion/internal/callgraph/adapters/analyser/staticcha"
+	"code.eitanity.com/kanonarion/internal/gotoolchain"
 )
 
 // goToolchainVersionProbe asks the go command on PATH to state its own version,

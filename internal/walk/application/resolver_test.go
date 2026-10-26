@@ -13,16 +13,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate/coordinatetest"
 
-	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
-	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
-	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
-	"github.com/eitanity/kanonarion/internal/walk/adapters/gomod/xmod"
-	"github.com/eitanity/kanonarion/internal/walk/application"
-	domain3 "github.com/eitanity/kanonarion/internal/walk/domain"
-	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
+	domain2 "code.eitanity.com/kanonarion/internal/fetch/domain"
+	"code.eitanity.com/kanonarion/internal/fetch/fetchtest"
+	fetchports "code.eitanity.com/kanonarion/internal/fetch/ports"
+	"code.eitanity.com/kanonarion/internal/walk/adapters/gomod/xmod"
+	"code.eitanity.com/kanonarion/internal/walk/application"
+	domain3 "code.eitanity.com/kanonarion/internal/walk/domain"
+	walkports "code.eitanity.com/kanonarion/internal/walk/ports"
 )
 
 // ---- test helpers ----

@@ -15,11 +15,11 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
-	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
-	sbomdomain "github.com/eitanity/kanonarion/internal/sbom/domain"
-	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
-	walksqlite "github.com/eitanity/kanonarion/internal/walk/adapters/walks/sqlite"
-	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
+	"code.eitanity.com/kanonarion/internal/adapters/sqlitestore"
+	sbomdomain "code.eitanity.com/kanonarion/internal/sbom/domain"
+	vuldomain "code.eitanity.com/kanonarion/internal/vuln/domain"
+	walksqlite "code.eitanity.com/kanonarion/internal/walk/adapters/walks/sqlite"
+	walkports "code.eitanity.com/kanonarion/internal/walk/ports"
 )
 
 // absentWalkID is a walk id no fixture store holds.

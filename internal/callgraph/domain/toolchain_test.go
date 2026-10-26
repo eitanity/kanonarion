@@ -3,9 +3,9 @@ package domain_test
 import (
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/callgraph/domain"
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	"github.com/eitanity/kanonarion/internal/gotoolchain"
+	"code.eitanity.com/kanonarion/internal/callgraph/domain"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/gotoolchain"
 )
 
 // TestToolchain_IsHashTransparentForRecordsThatPredateIt is the falsifying test

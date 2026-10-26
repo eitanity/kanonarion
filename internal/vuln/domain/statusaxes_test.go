@@ -6,10 +6,10 @@ import (
 	"testing"
 	"time"
 
-	coordinatetest "github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
-	"github.com/eitanity/kanonarion/internal/vuln/domain"
-	"github.com/eitanity/kanonarion/internal/vuln/vulntest"
+	coordinatetest "code.eitanity.com/kanonarion/internal/coordinate/coordinatetest"
+	fetchdomain "code.eitanity.com/kanonarion/internal/fetch/domain"
+	"code.eitanity.com/kanonarion/internal/vuln/domain"
+	"code.eitanity.com/kanonarion/internal/vuln/vulntest"
 )
 
 // TestDetermineRecordOverallStatus_EveryAxisPair pins the whole collapse table,

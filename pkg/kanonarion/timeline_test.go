@@ -15,15 +15,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
-	vulnsqlite "github.com/eitanity/kanonarion/internal/vuln/adapters/store/sqlite"
-	vulnapp "github.com/eitanity/kanonarion/internal/vuln/application"
-	vulndomain "github.com/eitanity/kanonarion/internal/vuln/domain"
-	"github.com/eitanity/kanonarion/internal/vuln/vulntest"
+	"code.eitanity.com/kanonarion/internal/adapters/sqlitestore"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate/coordinatetest"
+	vulnsqlite "code.eitanity.com/kanonarion/internal/vuln/adapters/store/sqlite"
+	vulnapp "code.eitanity.com/kanonarion/internal/vuln/application"
+	vulndomain "code.eitanity.com/kanonarion/internal/vuln/domain"
+	"code.eitanity.com/kanonarion/internal/vuln/vulntest"
 
-	"github.com/eitanity/kanonarion/pkg/kanonarion"
+	"code.eitanity.com/kanonarion/pkg/kanonarion"
 )
 
 const timelineAdvisory = "GO-2026-0002"

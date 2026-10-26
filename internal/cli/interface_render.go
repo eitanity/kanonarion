@@ -6,7 +6,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/eitanity/kanonarion/internal/iface/domain"
+	"code.eitanity.com/kanonarion/internal/iface/domain"
 )
 
 // The text rendering of an interface record.

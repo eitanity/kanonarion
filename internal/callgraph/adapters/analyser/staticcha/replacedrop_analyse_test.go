@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/callgraph/adapters/analyser/staticcha"
-	"github.com/eitanity/kanonarion/internal/callgraph/domain"
+	"code.eitanity.com/kanonarion/internal/callgraph/adapters/analyser/staticcha"
+	"code.eitanity.com/kanonarion/internal/callgraph/domain"
 )
 
 // TestAnalyse_MonorepoReplaceIsDroppedAndTheModuleLoads is the regression this

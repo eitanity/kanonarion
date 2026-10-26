@@ -7,12 +7,12 @@ import (
 	"io"
 	"math"
 
-	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
-	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
-	stdlibdomain "github.com/eitanity/kanonarion/internal/stdlib/domain"
-	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
+	"code.eitanity.com/kanonarion/internal/adapters/recordseal"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	fetchdomain "code.eitanity.com/kanonarion/internal/fetch/domain"
+	fetchports "code.eitanity.com/kanonarion/internal/fetch/ports"
+	stdlibdomain "code.eitanity.com/kanonarion/internal/stdlib/domain"
+	walkdomain "code.eitanity.com/kanonarion/internal/walk/domain"
 )
 
 // fetchRecordReader is the one read the coverage report needs. It is declared

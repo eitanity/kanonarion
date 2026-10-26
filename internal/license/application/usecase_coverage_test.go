@@ -5,9 +5,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/license/application"
-	domain2 "github.com/eitanity/kanonarion/internal/license/domain"
-	"github.com/eitanity/kanonarion/internal/license/ports"
+	"code.eitanity.com/kanonarion/internal/license/application"
+	domain2 "code.eitanity.com/kanonarion/internal/license/domain"
+	"code.eitanity.com/kanonarion/internal/license/ports"
 )
 
 // contentDetector answers per file rather than per module, keyed on a marker in

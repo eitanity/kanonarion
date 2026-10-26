@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/eitanity/kanonarion/internal/adapters/goenv"
-	"github.com/eitanity/kanonarion/internal/gotoolchain"
+	"code.eitanity.com/kanonarion/internal/adapters/goenv"
+	"code.eitanity.com/kanonarion/internal/gotoolchain"
 )
 
 // builtWithGo reads the Go release a Go binary was compiled by, out of the build

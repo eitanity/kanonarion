@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/vuln/ports"
+	"code.eitanity.com/kanonarion/internal/vuln/ports"
 )
 
 // TestScanProject_ChildResolvesWithTheDevelopersOwnEnvironment asserts the

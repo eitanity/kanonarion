@@ -6,12 +6,12 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
-	"github.com/eitanity/kanonarion/internal/extract/domain"
-	"github.com/eitanity/kanonarion/internal/extract/ports"
-	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
-	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate/coordinatetest"
+	"code.eitanity.com/kanonarion/internal/extract/domain"
+	"code.eitanity.com/kanonarion/internal/extract/ports"
+	fetchports "code.eitanity.com/kanonarion/internal/fetch/ports"
+	walkdomain "code.eitanity.com/kanonarion/internal/walk/domain"
 )
 
 // refusingExtractor refuses the first stage of one module as the blob store

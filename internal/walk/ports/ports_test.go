@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
-	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
-	"github.com/eitanity/kanonarion/internal/walk/ports"
+	"code.eitanity.com/kanonarion/internal/coordinate/coordinatetest"
+	walkdomain "code.eitanity.com/kanonarion/internal/walk/domain"
+	"code.eitanity.com/kanonarion/internal/walk/ports"
 )
 
 func TestWalkSummaryJSONSnakeCase(t *testing.T) {

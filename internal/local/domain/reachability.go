@@ -5,8 +5,8 @@ import (
 	"sort"
 	"time"
 
-	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
-	"github.com/eitanity/kanonarion/internal/versionorder"
+	cgdomain "code.eitanity.com/kanonarion/internal/callgraph/domain"
+	"code.eitanity.com/kanonarion/internal/versionorder"
 )
 
 // BuildModule is one module the local build resolves — every non-main module

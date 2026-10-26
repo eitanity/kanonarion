@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate/coordinatetest"
 )
 
 // The tests in this file pin the refusals and tie-breaks that the fetch domain

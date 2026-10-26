@@ -6,14 +6,14 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 
 	"github.com/spf13/cobra"
 
-	cgapp "github.com/eitanity/kanonarion/internal/callgraph/application"
-	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
-	capapp "github.com/eitanity/kanonarion/internal/capability/application"
-	capdomain "github.com/eitanity/kanonarion/internal/capability/domain"
+	cgapp "code.eitanity.com/kanonarion/internal/callgraph/application"
+	cgdomain "code.eitanity.com/kanonarion/internal/callgraph/domain"
+	capapp "code.eitanity.com/kanonarion/internal/capability/application"
+	capdomain "code.eitanity.com/kanonarion/internal/capability/domain"
 )
 
 // capabilityTestRootFlagName is the opt-in that puts test declarations back in

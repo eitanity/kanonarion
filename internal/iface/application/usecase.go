@@ -7,13 +7,13 @@ import (
 	"io"
 	"log/slog"
 
-	"github.com/eitanity/kanonarion/internal/adapters/interrupt"
-	"github.com/eitanity/kanonarion/internal/adapters/ziparchive"
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
-	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
-	domain3 "github.com/eitanity/kanonarion/internal/iface/domain"
-	"github.com/eitanity/kanonarion/internal/iface/ports"
+	"code.eitanity.com/kanonarion/internal/adapters/interrupt"
+	"code.eitanity.com/kanonarion/internal/adapters/ziparchive"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	domain2 "code.eitanity.com/kanonarion/internal/fetch/domain"
+	fetchports "code.eitanity.com/kanonarion/internal/fetch/ports"
+	domain3 "code.eitanity.com/kanonarion/internal/iface/domain"
+	"code.eitanity.com/kanonarion/internal/iface/ports"
 )
 
 // PipelineVersion identifies this release of the interface extraction pipeline.

@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
+	vuldomain "code.eitanity.com/kanonarion/internal/vuln/domain"
 )
 
 // TestUnscanDisplays_CoversEveryReason is the durable half of the fix: every

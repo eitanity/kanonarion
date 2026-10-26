@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/adapters/goenv"
-	localdomain "github.com/eitanity/kanonarion/internal/local/domain"
+	"code.eitanity.com/kanonarion/internal/adapters/goenv"
+	localdomain "code.eitanity.com/kanonarion/internal/local/domain"
 )
 
 // frameStubs installs a go and a tinygo that log every invocation with the

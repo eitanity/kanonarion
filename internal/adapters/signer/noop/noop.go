@@ -9,7 +9,7 @@ package noop
 import (
 	"context"
 
-	"github.com/eitanity/kanonarion/internal/fetch/ports"
+	"code.eitanity.com/kanonarion/internal/fetch/ports"
 )
 
 // Signer is the no-op ports.Signer. It signs nothing and reports no attestation.

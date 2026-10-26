@@ -12,13 +12,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/adapters/blobcodec"
-	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
-	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	"github.com/eitanity/kanonarion/internal/recordstamp"
-	"github.com/eitanity/kanonarion/internal/walk/domain"
-	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
+	"code.eitanity.com/kanonarion/internal/adapters/blobcodec"
+	"code.eitanity.com/kanonarion/internal/adapters/recordseal"
+	"code.eitanity.com/kanonarion/internal/adapters/sqlitestore"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/recordstamp"
+	"code.eitanity.com/kanonarion/internal/walk/domain"
+	walkports "code.eitanity.com/kanonarion/internal/walk/ports"
 )
 
 // Store is the SQLite-backed walk store.

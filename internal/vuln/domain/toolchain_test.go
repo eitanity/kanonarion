@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/vuln/domain"
-	"github.com/eitanity/kanonarion/internal/vuln/vulntest"
+	"code.eitanity.com/kanonarion/internal/vuln/domain"
+	"code.eitanity.com/kanonarion/internal/vuln/vulntest"
 )
 
 // checksumBypass is the motivating advisory: a malicious module proxy bypassing

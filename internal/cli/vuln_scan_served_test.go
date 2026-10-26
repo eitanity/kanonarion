@@ -5,10 +5,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/cli/testfakes"
-	vulnapp "github.com/eitanity/kanonarion/internal/vuln/application"
-	vulndomain "github.com/eitanity/kanonarion/internal/vuln/domain"
-	"github.com/eitanity/kanonarion/internal/vuln/vulntest"
+	"code.eitanity.com/kanonarion/internal/cli/testfakes"
+	vulnapp "code.eitanity.com/kanonarion/internal/vuln/application"
+	vulndomain "code.eitanity.com/kanonarion/internal/vuln/domain"
+	"code.eitanity.com/kanonarion/internal/vuln/vulntest"
 )
 
 // servedRunFixture is the smallest container that can serve a stored run: the

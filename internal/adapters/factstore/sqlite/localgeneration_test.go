@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
-	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
-	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
+	"code.eitanity.com/kanonarion/internal/coordinate/coordinatetest"
+	domain2 "code.eitanity.com/kanonarion/internal/fetch/domain"
+	"code.eitanity.com/kanonarion/internal/fetch/fetchtest"
 )
 
 // A store holding a row read from a local directory under a published

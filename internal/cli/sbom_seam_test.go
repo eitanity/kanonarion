@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/cli/testfakes"
-	sbomdomain "github.com/eitanity/kanonarion/internal/sbom/domain"
+	"code.eitanity.com/kanonarion/internal/cli/testfakes"
+	sbomdomain "code.eitanity.com/kanonarion/internal/sbom/domain"
 )
 
 // With no --output, the SBOM bytes are written straight to stdout.

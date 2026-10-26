@@ -3,7 +3,7 @@ package local_test
 import (
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/extract/adapters/stages/local"
+	"code.eitanity.com/kanonarion/internal/extract/adapters/stages/local"
 )
 
 func TestRegistry_Stages(t *testing.T) {

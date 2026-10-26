@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
+	vuldomain "code.eitanity.com/kanonarion/internal/vuln/domain"
 )
 
 // searchedNegativeRecord is a negative that govulncheck stamped from its own

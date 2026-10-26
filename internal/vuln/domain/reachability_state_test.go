@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/vuln/domain"
+	"code.eitanity.com/kanonarion/internal/vuln/domain"
 )
 
 // answered builds a finding whose analysis produced the given bit at High

@@ -10,8 +10,8 @@ import (
 	"testing/fstest"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/stdlib/application"
-	"github.com/eitanity/kanonarion/internal/stdlib/domain"
+	"code.eitanity.com/kanonarion/internal/stdlib/application"
+	"code.eitanity.com/kanonarion/internal/stdlib/domain"
 )
 
 // --- offline fakes ---

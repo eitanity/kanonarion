@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
-	"github.com/eitanity/kanonarion/internal/cli/testfakes"
-	configdomain "github.com/eitanity/kanonarion/internal/config/domain"
+	cgports "code.eitanity.com/kanonarion/internal/callgraph/ports"
+	"code.eitanity.com/kanonarion/internal/cli/testfakes"
+	configdomain "code.eitanity.com/kanonarion/internal/config/domain"
 	"github.com/spf13/cobra"
 )
 

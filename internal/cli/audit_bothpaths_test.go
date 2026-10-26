@@ -9,13 +9,13 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/composition"
-	"github.com/eitanity/kanonarion/internal/config/domain"
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	"github.com/eitanity/kanonarion/internal/driver"
-	extractapp "github.com/eitanity/kanonarion/internal/extract/application"
-	walkapp "github.com/eitanity/kanonarion/internal/walk/application"
-	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
+	"code.eitanity.com/kanonarion/internal/composition"
+	"code.eitanity.com/kanonarion/internal/config/domain"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/driver"
+	extractapp "code.eitanity.com/kanonarion/internal/extract/application"
+	walkapp "code.eitanity.com/kanonarion/internal/walk/application"
+	walkdomain "code.eitanity.com/kanonarion/internal/walk/domain"
 )
 
 // bothPathsGoMod is the project's go.mod, held as a constant so the walk request

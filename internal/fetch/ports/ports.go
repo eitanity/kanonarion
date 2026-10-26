@@ -7,10 +7,10 @@ import (
 	"io"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
-	"github.com/eitanity/kanonarion/internal/audit"
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"code.eitanity.com/kanonarion/internal/adapters/recordseal"
+	"code.eitanity.com/kanonarion/internal/audit"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	domain2 "code.eitanity.com/kanonarion/internal/fetch/domain"
 )
 
 // AuditSink appends an audit event to the append-only assurance log. The shared

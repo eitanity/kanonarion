@@ -4,9 +4,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
-	"github.com/eitanity/kanonarion/internal/vuln/domain"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	fetchdomain "code.eitanity.com/kanonarion/internal/fetch/domain"
+	"code.eitanity.com/kanonarion/internal/vuln/domain"
 )
 
 // The census is the only read that can see across a pipeline bump. Every other

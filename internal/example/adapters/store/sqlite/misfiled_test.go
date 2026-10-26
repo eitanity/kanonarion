@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
-	examplesqlite "github.com/eitanity/kanonarion/internal/example/adapters/store/sqlite"
-	domain2 "github.com/eitanity/kanonarion/internal/example/domain"
-	"github.com/eitanity/kanonarion/internal/example/ports"
+	"code.eitanity.com/kanonarion/internal/adapters/recordseal"
+	examplesqlite "code.eitanity.com/kanonarion/internal/example/adapters/store/sqlite"
+	domain2 "code.eitanity.com/kanonarion/internal/example/domain"
+	"code.eitanity.com/kanonarion/internal/example/ports"
 )
 
 // A genuine sealed record filed under a key or a selection value its seal does

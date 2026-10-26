@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 )
 
 // determinismShuffles is how many independent input orders this guard puts

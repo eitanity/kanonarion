@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
-	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"code.eitanity.com/kanonarion/internal/coordinate/coordinatetest"
+	domain2 "code.eitanity.com/kanonarion/internal/fetch/domain"
 )
 
 func sampleAttestation(path, version, pv string, kind domain2.SubjectKind, digest string) domain2.AttestationRecord {

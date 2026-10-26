@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	"github.com/eitanity/kanonarion/internal/recordstamp"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/recordstamp"
 )
 
 // ErrVulnConflict is the sentinel every vulnerability-record disagreement

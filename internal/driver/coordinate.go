@@ -5,13 +5,13 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	extractapp "github.com/eitanity/kanonarion/internal/extract/application"
-	extractdomain "github.com/eitanity/kanonarion/internal/extract/domain"
-	vulnapp "github.com/eitanity/kanonarion/internal/vuln/application"
-	vulndomain "github.com/eitanity/kanonarion/internal/vuln/domain"
-	walkapp "github.com/eitanity/kanonarion/internal/walk/application"
-	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	extractapp "code.eitanity.com/kanonarion/internal/extract/application"
+	extractdomain "code.eitanity.com/kanonarion/internal/extract/domain"
+	vulnapp "code.eitanity.com/kanonarion/internal/vuln/application"
+	vulndomain "code.eitanity.com/kanonarion/internal/vuln/domain"
+	walkapp "code.eitanity.com/kanonarion/internal/walk/application"
+	walkdomain "code.eitanity.com/kanonarion/internal/walk/domain"
 )
 
 // CoordinateAnalysisUseCase runs, for one published module version, what

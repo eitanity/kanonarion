@@ -11,15 +11,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/adapters/ziparchive"
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
-	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
-	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
-	godocextractor "github.com/eitanity/kanonarion/internal/iface/adapters/extractor/godoc"
-	"github.com/eitanity/kanonarion/internal/iface/application"
-	domain3 "github.com/eitanity/kanonarion/internal/iface/domain"
-	"github.com/eitanity/kanonarion/internal/iface/ports"
+	"code.eitanity.com/kanonarion/internal/adapters/ziparchive"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	domain2 "code.eitanity.com/kanonarion/internal/fetch/domain"
+	"code.eitanity.com/kanonarion/internal/fetch/fetchtest"
+	fetchports "code.eitanity.com/kanonarion/internal/fetch/ports"
+	godocextractor "code.eitanity.com/kanonarion/internal/iface/adapters/extractor/godoc"
+	"code.eitanity.com/kanonarion/internal/iface/application"
+	domain3 "code.eitanity.com/kanonarion/internal/iface/domain"
+	"code.eitanity.com/kanonarion/internal/iface/ports"
 )
 
 func TestExecute_ModuleNotFetched(t *testing.T) {

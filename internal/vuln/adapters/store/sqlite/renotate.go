@@ -11,7 +11,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
+	"code.eitanity.com/kanonarion/internal/adapters/recordseal"
 )
 
 // contentHashPrefix is the label every record domain now writes in front of the

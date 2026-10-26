@@ -8,10 +8,10 @@ import (
 	"context"
 	"fmt"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
-	stdlibapp "github.com/eitanity/kanonarion/internal/stdlib/application"
-	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
-	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
+	fetchdomain "code.eitanity.com/kanonarion/internal/fetch/domain"
+	stdlibapp "code.eitanity.com/kanonarion/internal/stdlib/application"
+	walkdomain "code.eitanity.com/kanonarion/internal/walk/domain"
+	walkports "code.eitanity.com/kanonarion/internal/walk/ports"
 )
 
 // Bridge wraps a stdlib Acquisition (the online go.dev/dl Acquirer or the offline

@@ -7,8 +7,8 @@ import (
 	"log/slog"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/callgraph/application"
-	"github.com/eitanity/kanonarion/internal/callgraph/domain"
+	"code.eitanity.com/kanonarion/internal/callgraph/application"
+	"code.eitanity.com/kanonarion/internal/callgraph/domain"
 )
 
 func buildLocalUseCase(store *fakeCallGraphStore, analyser *fakeAnalyser) *application.ExtractLocalCallGraphUseCase {

@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/adapters/vcs/gitexec"
-	"github.com/eitanity/kanonarion/internal/fetch/ports"
+	"code.eitanity.com/kanonarion/internal/adapters/vcs/gitexec"
+	"code.eitanity.com/kanonarion/internal/fetch/ports"
 )
 
 func requireGit(t *testing.T) {

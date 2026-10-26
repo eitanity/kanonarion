@@ -5,7 +5,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/callgraph/domain"
+	"code.eitanity.com/kanonarion/internal/callgraph/domain"
 )
 
 // TestPrefixAttributedPackages_IsHashTransparentWhenEmpty pins the terms this

@@ -7,9 +7,9 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/eitanity/kanonarion/internal/adapters/goenv"
-	"github.com/eitanity/kanonarion/internal/walk/adapters/buildlist/gotoolchain"
-	"github.com/eitanity/kanonarion/internal/walk/adapters/buildlist/tinygo"
+	"code.eitanity.com/kanonarion/internal/adapters/goenv"
+	"code.eitanity.com/kanonarion/internal/walk/adapters/buildlist/gotoolchain"
+	"code.eitanity.com/kanonarion/internal/walk/adapters/buildlist/tinygo"
 	"github.com/spf13/cobra"
 )
 

@@ -4,10 +4,10 @@ import (
 	"context"
 	"fmt"
 
-	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
-	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
+	cgports "code.eitanity.com/kanonarion/internal/callgraph/ports"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	fetchdomain "code.eitanity.com/kanonarion/internal/fetch/domain"
+	walkports "code.eitanity.com/kanonarion/internal/walk/ports"
 )
 
 // supersededReader names the artefacts of a published coordinate that the

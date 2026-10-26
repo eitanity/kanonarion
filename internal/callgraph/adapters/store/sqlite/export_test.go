@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/adapters/blobcodec"
-	domain2 "github.com/eitanity/kanonarion/internal/callgraph/domain"
+	"code.eitanity.com/kanonarion/internal/adapters/blobcodec"
+	domain2 "code.eitanity.com/kanonarion/internal/callgraph/domain"
 )
 
 // BackfillCompletenessForTest runs migration 9's Go step against an already-open

@@ -8,22 +8,22 @@
 # `bash scripts/restricted-imports.sh --print`. A new entry is reviewed with
 # `kanonarion capability` (CONTRIBUTING.md, "Changing dependencies").
 
-github.com/eitanity/kanonarion/internal/adapters/childproc os/exec
-github.com/eitanity/kanonarion/internal/adapters/childproc syscall
-github.com/eitanity/kanonarion/internal/adapters/factstore/sqlite os/exec
-github.com/eitanity/kanonarion/internal/adapters/interrupt os/exec
-github.com/eitanity/kanonarion/internal/adapters/vcs/gitexec os/exec
-github.com/eitanity/kanonarion/internal/cli os/exec
-github.com/eitanity/kanonarion/internal/cli syscall
-github.com/eitanity/kanonarion/internal/local/adapters/importer/golist os/exec
-github.com/eitanity/kanonarion/internal/local/adapters/probe/builder os/exec
-github.com/eitanity/kanonarion/internal/local/localtest os/exec
-github.com/eitanity/kanonarion/internal/staleness/adapters/golist os/exec
-github.com/eitanity/kanonarion/internal/stdlib/adapters/gitlsremote os/exec
-github.com/eitanity/kanonarion/internal/stdlib/adapters/toolchainenv os/exec
-github.com/eitanity/kanonarion/internal/vuln/adapters/vuln/govulncheck os/exec
-github.com/eitanity/kanonarion/internal/walk/adapters/buildlist/gotoolchain os/exec
-github.com/eitanity/kanonarion/internal/walk/adapters/buildlist/tinygo os/exec
+code.eitanity.com/kanonarion/internal/adapters/childproc os/exec
+code.eitanity.com/kanonarion/internal/adapters/childproc syscall
+code.eitanity.com/kanonarion/internal/adapters/factstore/sqlite os/exec
+code.eitanity.com/kanonarion/internal/adapters/interrupt os/exec
+code.eitanity.com/kanonarion/internal/adapters/vcs/gitexec os/exec
+code.eitanity.com/kanonarion/internal/cli os/exec
+code.eitanity.com/kanonarion/internal/cli syscall
+code.eitanity.com/kanonarion/internal/local/adapters/importer/golist os/exec
+code.eitanity.com/kanonarion/internal/local/adapters/probe/builder os/exec
+code.eitanity.com/kanonarion/internal/local/localtest os/exec
+code.eitanity.com/kanonarion/internal/staleness/adapters/golist os/exec
+code.eitanity.com/kanonarion/internal/stdlib/adapters/gitlsremote os/exec
+code.eitanity.com/kanonarion/internal/stdlib/adapters/toolchainenv os/exec
+code.eitanity.com/kanonarion/internal/vuln/adapters/vuln/govulncheck os/exec
+code.eitanity.com/kanonarion/internal/walk/adapters/buildlist/gotoolchain os/exec
+code.eitanity.com/kanonarion/internal/walk/adapters/buildlist/tinygo os/exec
 github.com/inconshreveable/mousetrap syscall
 github.com/inconshreveable/mousetrap unsafe
 github.com/klauspost/compress/internal/le unsafe

@@ -9,10 +9,10 @@ import (
 	"sort"
 	"strings"
 
-	cgapp "github.com/eitanity/kanonarion/internal/callgraph/application"
-	"github.com/eitanity/kanonarion/internal/callgraph/domain"
-	"github.com/eitanity/kanonarion/internal/callgraph/ports"
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	cgapp "code.eitanity.com/kanonarion/internal/callgraph/application"
+	"code.eitanity.com/kanonarion/internal/callgraph/domain"
+	"code.eitanity.com/kanonarion/internal/callgraph/ports"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 	"github.com/spf13/cobra"
 )
 
@@ -43,9 +43,9 @@ Two forms are accepted:
 
 The method form lists the concrete method each implementer supplies, as node IDs
 the callers and callees queries also accept.`,
-		Example: `  kanonarion implementers 'github.com/eitanity/kanonarion/internal/vuln/ports.VulnerabilityStore'
-  kanonarion implementers 'github.com/eitanity/kanonarion/internal/vuln/ports.(VulnerabilityStore).PutVulnerabilityRecord'
-  kanonarion implementers 'github.com/eitanity/kanonarion/internal/license/ports.LicenseStore' --exclude-tests`,
+		Example: `  kanonarion implementers 'code.eitanity.com/kanonarion/internal/vuln/ports.VulnerabilityStore'
+  kanonarion implementers 'code.eitanity.com/kanonarion/internal/vuln/ports.(VulnerabilityStore).PutVulnerabilityRecord'
+  kanonarion implementers 'code.eitanity.com/kanonarion/internal/license/ports.LicenseStore' --exclude-tests`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) != 1 {
 				return usageErr(cmd)

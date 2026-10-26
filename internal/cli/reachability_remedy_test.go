@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	localdomain "github.com/eitanity/kanonarion/internal/local/domain"
-	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	localdomain "code.eitanity.com/kanonarion/internal/local/domain"
+	vuldomain "code.eitanity.com/kanonarion/internal/vuln/domain"
 )
 
 // parseInvocation pushes one printed command line through the CLI's own

@@ -6,8 +6,8 @@ package ports
 import (
 	"context"
 
-	"github.com/eitanity/kanonarion/internal/audit"
-	"github.com/eitanity/kanonarion/internal/fips/domain"
+	"code.eitanity.com/kanonarion/internal/audit"
+	"code.eitanity.com/kanonarion/internal/fips/domain"
 )
 
 // FIPSScanner scans a project's source tree (and any vendored dependency

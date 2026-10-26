@@ -5,10 +5,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	"github.com/eitanity/kanonarion/internal/gotoolchain"
-	"github.com/eitanity/kanonarion/internal/iface/application"
-	domain3 "github.com/eitanity/kanonarion/internal/iface/domain"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/gotoolchain"
+	"code.eitanity.com/kanonarion/internal/iface/application"
+	domain3 "code.eitanity.com/kanonarion/internal/iface/domain"
 )
 
 // A record as a go1.26.6 build wrote it for the probe module, before the limit

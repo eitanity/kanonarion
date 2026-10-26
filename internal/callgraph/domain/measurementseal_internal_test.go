@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 )
 
 // sealTestRecord is a record the append-side reuse check would actually compare:

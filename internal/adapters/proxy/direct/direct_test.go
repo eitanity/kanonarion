@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
-	proxyadapter "github.com/eitanity/kanonarion/internal/adapters/proxy/direct"
-	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
+	proxyadapter "code.eitanity.com/kanonarion/internal/adapters/proxy/direct"
+	"code.eitanity.com/kanonarion/internal/coordinate/coordinatetest"
 )
 
 func fakeInfoJSON(t *testing.T, version string, origin *struct {

@@ -3,7 +3,7 @@ package application
 import (
 	"testing"
 
-	domain2 "github.com/eitanity/kanonarion/internal/walk/domain"
+	domain2 "code.eitanity.com/kanonarion/internal/walk/domain"
 )
 
 // TestWalker_PartialGraphDegradesUnlessExempt is the fail-safe direction stated

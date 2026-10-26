@@ -20,8 +20,8 @@ import (
 	"errors"
 	"fmt"
 
-	vendorports "github.com/eitanity/kanonarion/internal/vendortree/ports"
-	"github.com/eitanity/kanonarion/internal/vuln/ports"
+	vendorports "code.eitanity.com/kanonarion/internal/vendortree/ports"
+	"code.eitanity.com/kanonarion/internal/vuln/ports"
 )
 
 // Reader implements ports.VendoredClosureReader over a vendor-context scanner.

@@ -5,7 +5,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
+	cgdomain "code.eitanity.com/kanonarion/internal/callgraph/domain"
 )
 
 // symbols is a set of symbol names.

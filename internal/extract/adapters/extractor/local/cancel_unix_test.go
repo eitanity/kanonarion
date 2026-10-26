@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	"github.com/eitanity/kanonarion/internal/extract/domain"
+	cgdomain "code.eitanity.com/kanonarion/internal/callgraph/domain"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/extract/domain"
 )
 
 // A call-graph child the run's cancellation killed is reported as cancelled. The

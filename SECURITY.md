@@ -5,14 +5,14 @@ project - and your trust in its output - seriously.
 
 ## Supported Versions
 
-Kanonarion is pre-`v1.0`. Only the current release line, **`v0.14`**, receives
+Kanonarion is pre-`v1.0`. Only the current release line, **`v0.16`**, receives
 security fixes; every earlier or pre-release version is unsupported. Pin a
-`v0.14.x` tag and upgrade promptly.
+`v0.16.x` tag and upgrade promptly.
 
-| Version | Supported |
-|-----------------------|-----------|
-| `v0.14.x` | ✅ |
-| anything older than `v0.14` | ❌ |
+| Version | Module path | Supported |
+|---------|-------------|-----------|
+| `v0.16.x` | `code.eitanity.com/kanonarion` | ✅ |
+| `v0.15.x` and older | `github.com/eitanity/kanonarion` | ❌ |
 
 Release binaries are built with the Go version in `go.mod` (go1.27.3), so the Go
 toolchain advisories that apply to a binary, and the newest Go source it can

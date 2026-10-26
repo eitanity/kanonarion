@@ -12,11 +12,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/cli/testfakes"
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	coordinatetest "github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
-	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
+	"code.eitanity.com/kanonarion/internal/cli/testfakes"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	coordinatetest "code.eitanity.com/kanonarion/internal/coordinate/coordinatetest"
+	fetchdomain "code.eitanity.com/kanonarion/internal/fetch/domain"
+	walkdomain "code.eitanity.com/kanonarion/internal/walk/domain"
 )
 
 // This file pins the rule the build disclosure exists for: every command that

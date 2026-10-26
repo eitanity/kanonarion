@@ -7,12 +7,12 @@ import (
 	"sort"
 	"strings"
 
-	cgapp "github.com/eitanity/kanonarion/internal/callgraph/application"
-	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
-	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	"github.com/eitanity/kanonarion/internal/gotoolchain"
-	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
+	cgapp "code.eitanity.com/kanonarion/internal/callgraph/application"
+	cgdomain "code.eitanity.com/kanonarion/internal/callgraph/domain"
+	cgports "code.eitanity.com/kanonarion/internal/callgraph/ports"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/gotoolchain"
+	walkdomain "code.eitanity.com/kanonarion/internal/walk/domain"
 )
 
 // usedByCoverageNote states the limit of the call-graph join. A symbol reported

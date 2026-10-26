@@ -5,10 +5,10 @@ import (
 	"errors"
 	"log/slog"
 
-	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
+	"code.eitanity.com/kanonarion/internal/adapters/recordseal"
 
-	"github.com/eitanity/kanonarion/internal/vuln/domain"
-	"github.com/eitanity/kanonarion/internal/vuln/ports"
+	"code.eitanity.com/kanonarion/internal/vuln/domain"
+	"code.eitanity.com/kanonarion/internal/vuln/ports"
 )
 
 // SetAsideReporter states the stored generations a scan's writes and reuse

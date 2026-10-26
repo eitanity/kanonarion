@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/adapters/ziparchive"
+	"code.eitanity.com/kanonarion/internal/adapters/ziparchive"
 )
 
 func buildZip(t *testing.T, files map[string]string) []byte {

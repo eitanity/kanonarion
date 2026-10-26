@@ -8,11 +8,11 @@ import (
 	"path/filepath"
 	"strings"
 
-	localimporter "github.com/eitanity/kanonarion/internal/local/adapters/importer/golist"
-	localsnapshot "github.com/eitanity/kanonarion/internal/local/adapters/snapshot/walkdir"
-	localsymbols "github.com/eitanity/kanonarion/internal/local/adapters/symbols/gopackages"
-	localapp "github.com/eitanity/kanonarion/internal/local/application"
-	localdomain "github.com/eitanity/kanonarion/internal/local/domain"
+	localimporter "code.eitanity.com/kanonarion/internal/local/adapters/importer/golist"
+	localsnapshot "code.eitanity.com/kanonarion/internal/local/adapters/snapshot/walkdir"
+	localsymbols "code.eitanity.com/kanonarion/internal/local/adapters/symbols/gopackages"
+	localapp "code.eitanity.com/kanonarion/internal/local/application"
+	localdomain "code.eitanity.com/kanonarion/internal/local/domain"
 )
 
 // -- local workspace context output types --

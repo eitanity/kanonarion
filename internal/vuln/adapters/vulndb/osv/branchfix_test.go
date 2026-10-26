@@ -3,7 +3,7 @@ package osv_test
 import (
 	"testing"
 
-	coordinatetest "github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
+	coordinatetest "code.eitanity.com/kanonarion/internal/coordinate/coordinatetest"
 )
 
 // threeBranchAdvisory is the shape a backported advisory has: one

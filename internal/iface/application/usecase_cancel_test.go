@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/iface/application"
+	"code.eitanity.com/kanonarion/internal/iface/application"
 )
 
 // A cancelled extraction failed nothing: it returns the cancellation and records

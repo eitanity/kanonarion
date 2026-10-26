@@ -9,15 +9,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/cli/testfakes"
-	configdomain "github.com/eitanity/kanonarion/internal/config/domain"
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
-	licdomain "github.com/eitanity/kanonarion/internal/license/domain"
-	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
-	"github.com/eitanity/kanonarion/internal/vuln/vulntest"
-	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
+	"code.eitanity.com/kanonarion/internal/cli/testfakes"
+	configdomain "code.eitanity.com/kanonarion/internal/config/domain"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate/coordinatetest"
+	fetchdomain "code.eitanity.com/kanonarion/internal/fetch/domain"
+	licdomain "code.eitanity.com/kanonarion/internal/license/domain"
+	vuldomain "code.eitanity.com/kanonarion/internal/vuln/domain"
+	"code.eitanity.com/kanonarion/internal/vuln/vulntest"
+	walkdomain "code.eitanity.com/kanonarion/internal/walk/domain"
 )
 
 // The fixture here is the multi-project store, which is a different defect from

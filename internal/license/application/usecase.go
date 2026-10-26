@@ -12,15 +12,15 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/eitanity/kanonarion/internal/adapters/interrupt"
-	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
-	"github.com/eitanity/kanonarion/internal/adapters/ziparchive"
-	"github.com/eitanity/kanonarion/internal/audit"
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	"github.com/eitanity/kanonarion/internal/fetch/domain"
-	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
-	domain2 "github.com/eitanity/kanonarion/internal/license/domain"
-	"github.com/eitanity/kanonarion/internal/license/ports"
+	"code.eitanity.com/kanonarion/internal/adapters/interrupt"
+	"code.eitanity.com/kanonarion/internal/adapters/recordseal"
+	"code.eitanity.com/kanonarion/internal/adapters/ziparchive"
+	"code.eitanity.com/kanonarion/internal/audit"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/fetch/domain"
+	fetchports "code.eitanity.com/kanonarion/internal/fetch/ports"
+	domain2 "code.eitanity.com/kanonarion/internal/license/domain"
+	"code.eitanity.com/kanonarion/internal/license/ports"
 )
 
 // PipelineVersion identifies this release of the license extraction pipeline.

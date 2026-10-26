@@ -18,9 +18,9 @@ import (
 
 	"golang.org/x/mod/modfile"
 
-	"github.com/eitanity/kanonarion/internal/audit"
-	"github.com/eitanity/kanonarion/internal/cli"
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/audit"
+	"code.eitanity.com/kanonarion/internal/cli"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 )
 
 // architectureDoc is the design specification these guards hold to the code.

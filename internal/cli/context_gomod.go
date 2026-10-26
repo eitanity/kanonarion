@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"io"
 
-	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
+	walkports "code.eitanity.com/kanonarion/internal/walk/ports"
 )
 
 // runContextGoMod resolves the dependency scope's module set (default code, or

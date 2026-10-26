@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"slices"
 
-	"github.com/eitanity/kanonarion/internal/adapters/interrupt"
-	"github.com/eitanity/kanonarion/internal/vuln/domain"
+	"code.eitanity.com/kanonarion/internal/adapters/interrupt"
+	"code.eitanity.com/kanonarion/internal/vuln/domain"
 )
 
 // RefreshOutcome names what a refresh of the advisory database established.

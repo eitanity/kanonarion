@@ -3,7 +3,7 @@ package cli
 import (
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
+	"code.eitanity.com/kanonarion/internal/fetch/fetchtest"
 )
 
 // The fake stands in for a real fact store, so it owes the same refusal: a fake

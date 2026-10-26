@@ -14,10 +14,10 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/eitanity/kanonarion/internal/adapters/interrupt"
-	"github.com/eitanity/kanonarion/internal/callgraph/adapters/analyser/staticcha/tinycgo"
-	"github.com/eitanity/kanonarion/internal/callgraph/domain"
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/adapters/interrupt"
+	"code.eitanity.com/kanonarion/internal/callgraph/adapters/analyser/staticcha/tinycgo"
+	"code.eitanity.com/kanonarion/internal/callgraph/domain"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 
 	"golang.org/x/tools/go/packages"
 	"golang.org/x/tools/go/ssa"

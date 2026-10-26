@@ -182,5 +182,5 @@ func (e *AnalyserLimitError) Error() string { return e.Limit.Statement() + " " +
 // Remedy names what lifts the gap: a binary built with a new enough Go.
 func (l AnalyserLimit) Remedy() string {
 	return "Use a kanonarion built with " + l.Required + " or newer: a newer release, or " +
-		"`go install github.com/eitanity/kanonarion@latest` run with " + l.Required + " or newer."
+		"`go install code.eitanity.com/kanonarion@latest` run with " + l.Required + " or newer."
 }

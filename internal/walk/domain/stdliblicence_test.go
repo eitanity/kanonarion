@@ -3,7 +3,7 @@ package domain_test
 import (
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/walk/domain"
+	"code.eitanity.com/kanonarion/internal/walk/domain"
 )
 
 // TestStdlibLicense pins the single stdlib licence resolution rule every

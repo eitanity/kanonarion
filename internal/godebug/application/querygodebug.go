@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/eitanity/kanonarion/internal/godebug/domain"
-	"github.com/eitanity/kanonarion/internal/godebug/ports"
+	"code.eitanity.com/kanonarion/internal/godebug/domain"
+	"code.eitanity.com/kanonarion/internal/godebug/ports"
 )
 
 // QueryGoDebugUseCase is read-only access to stored godebug records, used by

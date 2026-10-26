@@ -6,10 +6,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	licensedomain "github.com/eitanity/kanonarion/internal/license/domain"
-	"github.com/eitanity/kanonarion/internal/sbom/adapters/generator/cyclonedx"
-	vendordomain "github.com/eitanity/kanonarion/internal/vendortree/domain"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	licensedomain "code.eitanity.com/kanonarion/internal/license/domain"
+	"code.eitanity.com/kanonarion/internal/sbom/adapters/generator/cyclonedx"
+	vendordomain "code.eitanity.com/kanonarion/internal/vendortree/domain"
 )
 
 // licensedEverything gives every supplied coordinate, and the walk target these

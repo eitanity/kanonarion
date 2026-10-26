@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	ifaceports "github.com/eitanity/kanonarion/internal/iface/ports"
+	ifaceports "code.eitanity.com/kanonarion/internal/iface/ports"
 )
 
 // TestSymbolRef_SnakeCaseJSON guards symbol-find serialises

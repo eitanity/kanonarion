@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
-	"github.com/eitanity/kanonarion/internal/extract/domain"
-	"github.com/eitanity/kanonarion/internal/extract/ports"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"code.eitanity.com/kanonarion/internal/adapters/recordseal"
+	"code.eitanity.com/kanonarion/internal/extract/domain"
+	"code.eitanity.com/kanonarion/internal/extract/ports"
+	fetchdomain "code.eitanity.com/kanonarion/internal/fetch/domain"
 )
 
 func sealedRun(t *testing.T, id string) domain.ExtractionRun {

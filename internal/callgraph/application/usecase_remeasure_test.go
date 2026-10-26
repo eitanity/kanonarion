@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/callgraph/application"
-	domain2 "github.com/eitanity/kanonarion/internal/callgraph/domain"
+	"code.eitanity.com/kanonarion/internal/callgraph/application"
+	domain2 "code.eitanity.com/kanonarion/internal/callgraph/domain"
 )
 
 // advancingClock hands out a later time on every reading, which is what a real

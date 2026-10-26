@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/license/domain"
+	"code.eitanity.com/kanonarion/internal/license/domain"
 )
 
 func TestLookupObligations_KnownPermissive(t *testing.T) {

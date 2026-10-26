@@ -5,10 +5,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/adapters/recordseal"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 
-	licdomain "github.com/eitanity/kanonarion/internal/license/domain"
+	licdomain "code.eitanity.com/kanonarion/internal/license/domain"
 )
 
 // The pre-modules caveat is evidence, not decoration: it says the named

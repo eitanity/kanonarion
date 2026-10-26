@@ -4,8 +4,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/directive/adapters/parser/xmod"
-	"github.com/eitanity/kanonarion/internal/directive/domain"
+	"code.eitanity.com/kanonarion/internal/directive/adapters/parser/xmod"
+	"code.eitanity.com/kanonarion/internal/directive/domain"
 )
 
 const corpus = "../../../../../test/fixtures/supplychain/directives"

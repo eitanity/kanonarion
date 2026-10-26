@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	vulndomain "github.com/eitanity/kanonarion/internal/vuln/domain"
+	vulndomain "code.eitanity.com/kanonarion/internal/vuln/domain"
 )
 
 // TestBuildVulnerabilityContext_CarriesTheRetractionOntoTheFinding covers the

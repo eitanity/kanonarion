@@ -13,8 +13,8 @@ import (
 	"errors"
 	"fmt"
 
-	vendordomain "github.com/eitanity/kanonarion/internal/vendortree/domain"
-	vendorports "github.com/eitanity/kanonarion/internal/vendortree/ports"
+	vendordomain "code.eitanity.com/kanonarion/internal/vendortree/domain"
+	vendorports "code.eitanity.com/kanonarion/internal/vendortree/ports"
 )
 
 // Reader reads a project's vendored module entries through the vendor scanner.

@@ -10,14 +10,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/cli/testfakes"
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
-	dirxmod "github.com/eitanity/kanonarion/internal/directive/adapters/parser/xmod"
-	licapp "github.com/eitanity/kanonarion/internal/license/application"
-	licdomain "github.com/eitanity/kanonarion/internal/license/domain"
-	sbomdomain "github.com/eitanity/kanonarion/internal/sbom/domain"
-	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
+	"code.eitanity.com/kanonarion/internal/cli/testfakes"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate/coordinatetest"
+	dirxmod "code.eitanity.com/kanonarion/internal/directive/adapters/parser/xmod"
+	licapp "code.eitanity.com/kanonarion/internal/license/application"
+	licdomain "code.eitanity.com/kanonarion/internal/license/domain"
+	sbomdomain "code.eitanity.com/kanonarion/internal/sbom/domain"
+	walkdomain "code.eitanity.com/kanonarion/internal/walk/domain"
 )
 
 // These are the three fixes a missing licence record can have. They are spelled

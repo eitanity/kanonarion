@@ -11,19 +11,19 @@ import (
 	"strings"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	"github.com/eitanity/kanonarion/internal/gotoolchain"
-	"github.com/eitanity/kanonarion/internal/recordstamp"
-	"github.com/eitanity/kanonarion/internal/versionorder"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/gotoolchain"
+	"code.eitanity.com/kanonarion/internal/recordstamp"
+	"code.eitanity.com/kanonarion/internal/versionorder"
 
-	"github.com/eitanity/kanonarion/internal/adapters/blobcodec"
-	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
-	domain2 "github.com/eitanity/kanonarion/internal/callgraph/domain"
-	"github.com/eitanity/kanonarion/internal/callgraph/ports"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
-	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
+	"code.eitanity.com/kanonarion/internal/adapters/blobcodec"
+	"code.eitanity.com/kanonarion/internal/adapters/recordseal"
+	domain2 "code.eitanity.com/kanonarion/internal/callgraph/domain"
+	"code.eitanity.com/kanonarion/internal/callgraph/ports"
+	fetchdomain "code.eitanity.com/kanonarion/internal/fetch/domain"
+	fetchports "code.eitanity.com/kanonarion/internal/fetch/ports"
 
-	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
+	"code.eitanity.com/kanonarion/internal/adapters/sqlitestore"
 )
 
 // syntheticLocalVersion is the module version `kanonarion local` used to write

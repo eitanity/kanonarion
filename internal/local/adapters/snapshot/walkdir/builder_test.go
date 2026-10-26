@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/local/adapters/snapshot/walkdir"
+	"code.eitanity.com/kanonarion/internal/local/adapters/snapshot/walkdir"
 )
 
 func TestBuilder_CapturesGoFiles(t *testing.T) {

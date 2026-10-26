@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/composition/storage"
-	sqlitestorage "github.com/eitanity/kanonarion/internal/composition/storage/sqlite"
-	"github.com/eitanity/kanonarion/pkg/kanonarion"
+	"code.eitanity.com/kanonarion/internal/composition/storage"
+	sqlitestorage "code.eitanity.com/kanonarion/internal/composition/storage/sqlite"
+	"code.eitanity.com/kanonarion/pkg/kanonarion"
 )
 
 // TestMain isolates the entire package-cli test binary from the

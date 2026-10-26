@@ -5,10 +5,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
-	domain2 "github.com/eitanity/kanonarion/internal/iface/domain"
+	fetchdomain "code.eitanity.com/kanonarion/internal/fetch/domain"
+	domain2 "code.eitanity.com/kanonarion/internal/iface/domain"
 )
 
 // determinismShuffles is how many independent input orders every determinism

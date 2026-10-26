@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
-	"github.com/eitanity/kanonarion/internal/vuln/domain"
+	"code.eitanity.com/kanonarion/internal/coordinate/coordinatetest"
+	"code.eitanity.com/kanonarion/internal/vuln/domain"
 )
 
 // The defect this pins: a probe of a working tree read the store-wide composed

@@ -7,11 +7,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/fips/adapters/scanner/gosrc"
-	fipsvendortree "github.com/eitanity/kanonarion/internal/fips/adapters/vendortree"
-	"github.com/eitanity/kanonarion/internal/fips/domain"
-	venlocalfs "github.com/eitanity/kanonarion/internal/vendortree/adapters/scanner/localfs"
-	vendordomain "github.com/eitanity/kanonarion/internal/vendortree/domain"
+	"code.eitanity.com/kanonarion/internal/fips/adapters/scanner/gosrc"
+	fipsvendortree "code.eitanity.com/kanonarion/internal/fips/adapters/vendortree"
+	"code.eitanity.com/kanonarion/internal/fips/domain"
+	venlocalfs "code.eitanity.com/kanonarion/internal/vendortree/adapters/scanner/localfs"
+	vendordomain "code.eitanity.com/kanonarion/internal/vendortree/domain"
 )
 
 // scanner is the scanner as the composition root builds it: the vendor

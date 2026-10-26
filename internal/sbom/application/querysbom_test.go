@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/sbom/application"
-	"github.com/eitanity/kanonarion/internal/sbom/domain"
-	sbomports "github.com/eitanity/kanonarion/internal/sbom/ports"
+	"code.eitanity.com/kanonarion/internal/sbom/application"
+	"code.eitanity.com/kanonarion/internal/sbom/domain"
+	sbomports "code.eitanity.com/kanonarion/internal/sbom/ports"
 )
 
 // querySBOMFakeStore is a minimal SBOMStore for QuerySBOMUseCase tests.

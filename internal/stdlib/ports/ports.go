@@ -8,8 +8,8 @@ import (
 	"errors"
 	"io/fs"
 
-	"github.com/eitanity/kanonarion/internal/audit"
-	"github.com/eitanity/kanonarion/internal/stdlib/domain"
+	"code.eitanity.com/kanonarion/internal/audit"
+	"code.eitanity.com/kanonarion/internal/stdlib/domain"
 )
 
 // AuditSink appends an audit event to the assurance log. The shared JSONL

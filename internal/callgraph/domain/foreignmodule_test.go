@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/callgraph/domain"
+	"code.eitanity.com/kanonarion/internal/callgraph/domain"
 )
 
 func sonicLoader() domain.ForeignModule {

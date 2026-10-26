@@ -3,7 +3,7 @@ package domain_test
 import (
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/local/domain"
+	"code.eitanity.com/kanonarion/internal/local/domain"
 )
 
 // assertOrders checks that less decides a pair differing in exactly one field,

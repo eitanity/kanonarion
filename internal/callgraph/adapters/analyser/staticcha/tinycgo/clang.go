@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/eitanity/kanonarion/internal/adapters/childproc"
+	"code.eitanity.com/kanonarion/internal/adapters/childproc"
 )
 
 // ErrNoCompiler is the refusal for a cgo file that references a C name on a

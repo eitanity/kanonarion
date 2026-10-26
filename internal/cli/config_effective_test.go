@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/config/domain"
+	"code.eitanity.com/kanonarion/internal/config/domain"
 )
 
 // findSetting returns the rendered line for key from `config show` text output.

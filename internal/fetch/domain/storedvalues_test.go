@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/fetch/domain"
-	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
+	"code.eitanity.com/kanonarion/internal/fetch/domain"
+	"code.eitanity.com/kanonarion/internal/fetch/fetchtest"
 )
 
 // The stored-values check answers whether a row's values, fetched_at spelled as

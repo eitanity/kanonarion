@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/walk/adapters/buildlist/tinygo"
-	"github.com/eitanity/kanonarion/internal/walk/adapters/buildlist/tinygotest"
+	"code.eitanity.com/kanonarion/internal/walk/adapters/buildlist/tinygo"
+	"code.eitanity.com/kanonarion/internal/walk/adapters/buildlist/tinygotest"
 )
 
 func TestProbe_ReadsTheFourOutputs(t *testing.T) {

@@ -7,16 +7,16 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate/coordinatetest"
 
-	"github.com/eitanity/kanonarion/internal/composition"
-	"github.com/eitanity/kanonarion/internal/driver"
+	"code.eitanity.com/kanonarion/internal/composition"
+	"code.eitanity.com/kanonarion/internal/driver"
 
-	ifaceapp "github.com/eitanity/kanonarion/internal/iface/application"
-	licapp "github.com/eitanity/kanonarion/internal/license/application"
-	licdomain "github.com/eitanity/kanonarion/internal/license/domain"
-	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
+	ifaceapp "code.eitanity.com/kanonarion/internal/iface/application"
+	licapp "code.eitanity.com/kanonarion/internal/license/application"
+	licdomain "code.eitanity.com/kanonarion/internal/license/domain"
+	walkdomain "code.eitanity.com/kanonarion/internal/walk/domain"
 )
 
 const mitLicenceText = `MIT License

@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
+	cgdomain "code.eitanity.com/kanonarion/internal/callgraph/domain"
 )
 
 // The analyser records one attribute about reflection on every call edge, and

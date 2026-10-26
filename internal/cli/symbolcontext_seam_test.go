@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/cli/testfakes"
-	exports "github.com/eitanity/kanonarion/internal/example/ports"
-	ifaceports "github.com/eitanity/kanonarion/internal/iface/ports"
+	"code.eitanity.com/kanonarion/internal/cli/testfakes"
+	exports "code.eitanity.com/kanonarion/internal/example/ports"
+	ifaceports "code.eitanity.com/kanonarion/internal/iface/ports"
 )
 
 // buildSymbolContextEntries groups refs by module, sorts deterministically,

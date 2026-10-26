@@ -7,9 +7,9 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/eitanity/kanonarion/internal/callgraph/adapters/analyser/staticcha/tinycgo"
-	"github.com/eitanity/kanonarion/internal/callgraph/adapters/analyser/staticcha/tinylower"
-	"github.com/eitanity/kanonarion/internal/callgraph/domain"
+	"code.eitanity.com/kanonarion/internal/callgraph/adapters/analyser/staticcha/tinycgo"
+	"code.eitanity.com/kanonarion/internal/callgraph/adapters/analyser/staticcha/tinylower"
+	"code.eitanity.com/kanonarion/internal/callgraph/domain"
 
 	"golang.org/x/tools/go/ssa"
 )

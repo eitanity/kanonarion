@@ -5,10 +5,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate/coordinatetest"
 
-	licdomain "github.com/eitanity/kanonarion/internal/license/domain"
+	licdomain "code.eitanity.com/kanonarion/internal/license/domain"
 )
 
 // renderNoticeEntry renders one module entry and returns the document.

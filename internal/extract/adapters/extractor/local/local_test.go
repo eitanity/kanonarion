@@ -10,22 +10,22 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate/coordinatetest"
 
-	"github.com/eitanity/kanonarion/internal/extract/domain"
+	"code.eitanity.com/kanonarion/internal/extract/domain"
 
-	"github.com/eitanity/kanonarion/internal/adapters/childproc"
-	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
-	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
-	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
-	exapp "github.com/eitanity/kanonarion/internal/example/application"
-	exdomain "github.com/eitanity/kanonarion/internal/example/domain"
-	"github.com/eitanity/kanonarion/internal/failurecause"
-	ifaceapp "github.com/eitanity/kanonarion/internal/iface/application"
-	ifacedomain "github.com/eitanity/kanonarion/internal/iface/domain"
-	licapp "github.com/eitanity/kanonarion/internal/license/application"
-	licdomain "github.com/eitanity/kanonarion/internal/license/domain"
+	"code.eitanity.com/kanonarion/internal/adapters/childproc"
+	"code.eitanity.com/kanonarion/internal/adapters/sqlitestore"
+	cgdomain "code.eitanity.com/kanonarion/internal/callgraph/domain"
+	cgports "code.eitanity.com/kanonarion/internal/callgraph/ports"
+	exapp "code.eitanity.com/kanonarion/internal/example/application"
+	exdomain "code.eitanity.com/kanonarion/internal/example/domain"
+	"code.eitanity.com/kanonarion/internal/failurecause"
+	ifaceapp "code.eitanity.com/kanonarion/internal/iface/application"
+	ifacedomain "code.eitanity.com/kanonarion/internal/iface/domain"
+	licapp "code.eitanity.com/kanonarion/internal/license/application"
+	licdomain "code.eitanity.com/kanonarion/internal/license/domain"
 )
 
 type mockLicenseUseCase struct {

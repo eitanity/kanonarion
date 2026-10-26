@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
-	staledomain "github.com/eitanity/kanonarion/internal/staleness/domain"
-	staleports "github.com/eitanity/kanonarion/internal/staleness/ports"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate/coordinatetest"
+	staledomain "code.eitanity.com/kanonarion/internal/staleness/domain"
+	staleports "code.eitanity.com/kanonarion/internal/staleness/ports"
 )
 
 // The scenario's module set: three pins, each behind its published latest. The

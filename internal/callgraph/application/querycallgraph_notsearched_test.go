@@ -6,9 +6,9 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/callgraph/application"
-	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/callgraph/application"
+	cgports "code.eitanity.com/kanonarion/internal/callgraph/ports"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 )
 
 // unservedFake is frontierBatchFake that also names superseded holders: holds

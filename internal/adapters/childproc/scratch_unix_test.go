@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/adapters/modcache"
+	"code.eitanity.com/kanonarion/internal/adapters/modcache"
 )
 
 // A child killed mid-run cannot remove what it wrote, so the parent does: the

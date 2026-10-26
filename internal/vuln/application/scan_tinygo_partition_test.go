@@ -6,12 +6,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate/coordinatetest"
 
-	application "github.com/eitanity/kanonarion/internal/vuln/application"
-	"github.com/eitanity/kanonarion/internal/vuln/domain"
-	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
+	application "code.eitanity.com/kanonarion/internal/vuln/application"
+	"code.eitanity.com/kanonarion/internal/vuln/domain"
+	walkdomain "code.eitanity.com/kanonarion/internal/walk/domain"
 )
 
 // tinyGoWasiWalk is a wasip1 walk: TinyGo supplies os and runtime, Go supplies

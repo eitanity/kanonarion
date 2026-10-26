@@ -6,10 +6,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
-	domain2 "github.com/eitanity/kanonarion/internal/license/domain"
-	"github.com/eitanity/kanonarion/internal/license/ports"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/fetch/fetchtest"
+	domain2 "code.eitanity.com/kanonarion/internal/license/domain"
+	"code.eitanity.com/kanonarion/internal/license/ports"
 )
 
 // recordOf is buildRecord with its own artefact and extraction time.

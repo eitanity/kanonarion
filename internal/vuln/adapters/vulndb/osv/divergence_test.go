@@ -8,9 +8,9 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
-	"github.com/eitanity/kanonarion/internal/vuln/adapters/vulndb/osv"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate/coordinatetest"
+	"code.eitanity.com/kanonarion/internal/vuln/adapters/vulndb/osv"
 )
 
 // divergenceWindow builds the situation this whole change exists for: a stored

@@ -6,11 +6,11 @@ import (
 	"strings"
 	"testing"
 
-	cgapp "github.com/eitanity/kanonarion/internal/callgraph/application"
-	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
-	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
-	"github.com/eitanity/kanonarion/internal/cli/testfakes"
-	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
+	cgapp "code.eitanity.com/kanonarion/internal/callgraph/application"
+	cgdomain "code.eitanity.com/kanonarion/internal/callgraph/domain"
+	cgports "code.eitanity.com/kanonarion/internal/callgraph/ports"
+	"code.eitanity.com/kanonarion/internal/cli/testfakes"
+	"code.eitanity.com/kanonarion/internal/coordinate/coordinatetest"
 )
 
 // edgeQuerySurface is one command that resolves a symbol to its module before

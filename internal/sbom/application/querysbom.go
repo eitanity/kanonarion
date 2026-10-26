@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/eitanity/kanonarion/internal/sbom/domain"
-	sbomports "github.com/eitanity/kanonarion/internal/sbom/ports"
+	"code.eitanity.com/kanonarion/internal/sbom/domain"
+	sbomports "code.eitanity.com/kanonarion/internal/sbom/ports"
 )
 
 // QuerySBOMUseCase provides read-only access to stored SBOM records.

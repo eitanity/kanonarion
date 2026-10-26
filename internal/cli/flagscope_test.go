@@ -9,9 +9,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/cli/testfakes"
-	walkapp "github.com/eitanity/kanonarion/internal/walk/application"
-	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
+	"code.eitanity.com/kanonarion/internal/cli/testfakes"
+	walkapp "code.eitanity.com/kanonarion/internal/walk/application"
+	walkdomain "code.eitanity.com/kanonarion/internal/walk/domain"
 )
 
 // The pairs below were each measured emitting byte-identical output with and

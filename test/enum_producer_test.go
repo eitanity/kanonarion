@@ -10,7 +10,7 @@ import (
 
 	"golang.org/x/tools/go/packages"
 
-	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
+	cgdomain "code.eitanity.com/kanonarion/internal/callgraph/domain"
 )
 
 // producerGuarded names the enum constants that must be WRITTEN somewhere in

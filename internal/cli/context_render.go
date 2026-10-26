@@ -6,8 +6,8 @@ import (
 	"io"
 	"strings"
 
-	licdomain "github.com/eitanity/kanonarion/internal/license/domain"
-	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
+	licdomain "code.eitanity.com/kanonarion/internal/license/domain"
+	vuldomain "code.eitanity.com/kanonarion/internal/vuln/domain"
 )
 
 // licenseSummaryLine renders the one-line licence summary for the context /

@@ -11,15 +11,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	"github.com/eitanity/kanonarion/internal/driver"
-	"github.com/eitanity/kanonarion/internal/recordstamp"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/driver"
+	"code.eitanity.com/kanonarion/internal/recordstamp"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
-	application2 "github.com/eitanity/kanonarion/internal/vuln/application"
-	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
-	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
-	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
+	fetchdomain "code.eitanity.com/kanonarion/internal/fetch/domain"
+	application2 "code.eitanity.com/kanonarion/internal/vuln/application"
+	vuldomain "code.eitanity.com/kanonarion/internal/vuln/domain"
+	walkdomain "code.eitanity.com/kanonarion/internal/walk/domain"
+	walkports "code.eitanity.com/kanonarion/internal/walk/ports"
 	"github.com/spf13/cobra"
 )
 

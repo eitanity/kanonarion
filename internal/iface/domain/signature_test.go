@@ -3,7 +3,7 @@ package domain_test
 import (
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/iface/domain"
+	"code.eitanity.com/kanonarion/internal/iface/domain"
 )
 
 func TestNormalizeSignature(t *testing.T) {

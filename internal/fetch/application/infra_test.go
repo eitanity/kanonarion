@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
-	"github.com/eitanity/kanonarion/internal/fetch/application"
+	"code.eitanity.com/kanonarion/internal/coordinate/coordinatetest"
+	"code.eitanity.com/kanonarion/internal/fetch/application"
 )
 
 // Tests for inferRepoURL and splitPath via the use case execution paths.

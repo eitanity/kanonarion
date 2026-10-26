@@ -1,6 +1,6 @@
 package cli
 
-import "github.com/eitanity/kanonarion/internal/adapters/goenv"
+import "code.eitanity.com/kanonarion/internal/adapters/goenv"
 
 // refusePrivateCoordinate refuses a private module named on its own: with no
 // project go.sum there is nothing to verify the module-cache bytes against,

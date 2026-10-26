@@ -9,16 +9,16 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 
 	"github.com/spf13/cobra"
 
-	exapp "github.com/eitanity/kanonarion/internal/example/application"
-	exampleports "github.com/eitanity/kanonarion/internal/example/ports"
+	exapp "code.eitanity.com/kanonarion/internal/example/application"
+	exampleports "code.eitanity.com/kanonarion/internal/example/ports"
 
-	ifaceapp "github.com/eitanity/kanonarion/internal/iface/application"
-	ifacedomain "github.com/eitanity/kanonarion/internal/iface/domain"
-	ifaceports "github.com/eitanity/kanonarion/internal/iface/ports"
+	ifaceapp "code.eitanity.com/kanonarion/internal/iface/application"
+	ifacedomain "code.eitanity.com/kanonarion/internal/iface/domain"
+	ifaceports "code.eitanity.com/kanonarion/internal/iface/ports"
 )
 
 // -- output types --

@@ -3,7 +3,7 @@ package domain_test
 import (
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/godebug/domain"
+	"code.eitanity.com/kanonarion/internal/godebug/domain"
 )
 
 // TestSortDeterministicAndHashStable asserts Sort yields a total order and

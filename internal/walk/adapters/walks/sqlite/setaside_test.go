@@ -8,11 +8,11 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/adapters/blobcodec"
-	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
-	"github.com/eitanity/kanonarion/internal/walk/adapters/walks/sqlite"
-	"github.com/eitanity/kanonarion/internal/walk/domain"
-	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
+	"code.eitanity.com/kanonarion/internal/adapters/blobcodec"
+	"code.eitanity.com/kanonarion/internal/adapters/recordseal"
+	"code.eitanity.com/kanonarion/internal/walk/adapters/walks/sqlite"
+	"code.eitanity.com/kanonarion/internal/walk/domain"
+	walkports "code.eitanity.com/kanonarion/internal/walk/ports"
 )
 
 // installWidenedWalk rewrites rec's stored row as a build with one more

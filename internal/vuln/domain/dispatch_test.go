@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/vuln/domain"
+	"code.eitanity.com/kanonarion/internal/vuln/domain"
 )
 
 // TestDispatchKindOfEdge_ReadsTheEdgeAndNeverGuesses pins the one mapping from

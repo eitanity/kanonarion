@@ -9,16 +9,16 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/eitanity/kanonarion/internal/config/domain"
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/config/domain"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 
 	"github.com/oklog/ulid/v2"
 	"github.com/spf13/cobra"
 
-	"github.com/eitanity/kanonarion/internal/license/adapters/snippetscan"
-	licapp "github.com/eitanity/kanonarion/internal/license/application"
-	licensedomain "github.com/eitanity/kanonarion/internal/license/domain"
-	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
+	"code.eitanity.com/kanonarion/internal/license/adapters/snippetscan"
+	licapp "code.eitanity.com/kanonarion/internal/license/application"
+	licensedomain "code.eitanity.com/kanonarion/internal/license/domain"
+	walkdomain "code.eitanity.com/kanonarion/internal/walk/domain"
 )
 
 // newNoticeCmd returns the 'notice' command that generates a deterministic

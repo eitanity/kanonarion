@@ -1,4 +1,4 @@
-module github.com/eitanity/kanonarion
+module code.eitanity.com/kanonarion
 
 go 1.27.3
 

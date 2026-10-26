@@ -11,13 +11,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/audit"
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
-	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
-	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
-	"github.com/eitanity/kanonarion/internal/native/domain"
-	"github.com/eitanity/kanonarion/internal/native/ports"
+	"code.eitanity.com/kanonarion/internal/audit"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	fetchdomain "code.eitanity.com/kanonarion/internal/fetch/domain"
+	"code.eitanity.com/kanonarion/internal/fetch/fetchtest"
+	fetchports "code.eitanity.com/kanonarion/internal/fetch/ports"
+	"code.eitanity.com/kanonarion/internal/native/domain"
+	"code.eitanity.com/kanonarion/internal/native/ports"
 )
 
 var errBlobNotFound = errors.New("blob not found")

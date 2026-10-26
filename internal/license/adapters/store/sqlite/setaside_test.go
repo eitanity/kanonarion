@@ -9,13 +9,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/adapters/blobcodec"
-	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
-	licensesqlite "github.com/eitanity/kanonarion/internal/license/adapters/store/sqlite"
-	domain2 "github.com/eitanity/kanonarion/internal/license/domain"
-	"github.com/eitanity/kanonarion/internal/license/ports"
+	"code.eitanity.com/kanonarion/internal/adapters/blobcodec"
+	"code.eitanity.com/kanonarion/internal/adapters/recordseal"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/fetch/fetchtest"
+	licensesqlite "code.eitanity.com/kanonarion/internal/license/adapters/store/sqlite"
+	domain2 "code.eitanity.com/kanonarion/internal/license/domain"
+	"code.eitanity.com/kanonarion/internal/license/ports"
 )
 
 // A licence generation written in a canonical shape this build cannot reproduce

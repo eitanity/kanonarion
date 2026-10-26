@@ -11,10 +11,10 @@ import (
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
-	"github.com/eitanity/kanonarion/internal/composition"
-	"github.com/eitanity/kanonarion/internal/config"
-	configstore "github.com/eitanity/kanonarion/internal/config/adapters/store/yaml"
-	"github.com/eitanity/kanonarion/internal/config/domain"
+	"code.eitanity.com/kanonarion/internal/composition"
+	"code.eitanity.com/kanonarion/internal/config"
+	configstore "code.eitanity.com/kanonarion/internal/config/adapters/store/yaml"
+	"code.eitanity.com/kanonarion/internal/config/domain"
 )
 
 func newConfigCmd(stdout, stderr io.Writer) *cobra.Command {

@@ -8,12 +8,12 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/eitanity/kanonarion/internal/adapters/yamlkeys"
-	"github.com/eitanity/kanonarion/internal/composition"
-	"github.com/eitanity/kanonarion/internal/config"
-	configyaml "github.com/eitanity/kanonarion/internal/config/adapters/store/yaml"
-	walkadapterpolicy "github.com/eitanity/kanonarion/internal/walk/adapters/policy/localfile"
-	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
+	"code.eitanity.com/kanonarion/internal/adapters/yamlkeys"
+	"code.eitanity.com/kanonarion/internal/composition"
+	"code.eitanity.com/kanonarion/internal/config"
+	configyaml "code.eitanity.com/kanonarion/internal/config/adapters/store/yaml"
+	walkadapterpolicy "code.eitanity.com/kanonarion/internal/walk/adapters/policy/localfile"
+	walkdomain "code.eitanity.com/kanonarion/internal/walk/domain"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 )

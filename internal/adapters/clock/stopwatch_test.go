@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/adapters/clock"
+	"code.eitanity.com/kanonarion/internal/adapters/clock"
 )
 
 func TestFakeStopwatch_Start_Elapsed(t *testing.T) {

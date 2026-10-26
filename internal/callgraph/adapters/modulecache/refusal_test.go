@@ -5,9 +5,9 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/callgraph/adapters/modulecache"
-	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
-	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
+	"code.eitanity.com/kanonarion/internal/callgraph/adapters/modulecache"
+	"code.eitanity.com/kanonarion/internal/fetch/fetchtest"
+	fetchports "code.eitanity.com/kanonarion/internal/fetch/ports"
 )
 
 // A stored artefact refused as altered is not a hole to analyse around: every

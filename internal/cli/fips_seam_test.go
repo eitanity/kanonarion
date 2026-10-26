@@ -5,8 +5,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/cli/testfakes"
-	fipsdomain "github.com/eitanity/kanonarion/internal/fips/domain"
+	"code.eitanity.com/kanonarion/internal/cli/testfakes"
+	fipsdomain "code.eitanity.com/kanonarion/internal/fips/domain"
 )
 
 // A clean assessment (no findings) renders and exits 0.

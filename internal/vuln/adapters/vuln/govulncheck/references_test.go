@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/vuln/domain"
+	"code.eitanity.com/kanonarion/internal/vuln/domain"
 )
 
 // referencesStream is a govulncheck -json stream carrying one advisory with its

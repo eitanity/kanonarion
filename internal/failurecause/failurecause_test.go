@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/failurecause"
+	"code.eitanity.com/kanonarion/internal/failurecause"
 )
 
 // TestIsEnvironmentLimit pins the one question every reader of this axis asks:

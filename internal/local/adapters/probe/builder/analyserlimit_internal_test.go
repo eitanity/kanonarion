@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/gotoolchain"
+	"code.eitanity.com/kanonarion/internal/gotoolchain"
 )
 
 // Under a go directive newer than this binary's Go, export data this binary's

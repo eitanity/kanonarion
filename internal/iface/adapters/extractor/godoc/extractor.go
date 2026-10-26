@@ -18,11 +18,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
-	"github.com/eitanity/kanonarion/internal/gotoolchain"
-	"github.com/eitanity/kanonarion/internal/iface/domain"
+	fetchdomain "code.eitanity.com/kanonarion/internal/fetch/domain"
+	"code.eitanity.com/kanonarion/internal/gotoolchain"
+	"code.eitanity.com/kanonarion/internal/iface/domain"
 )
 
 // Extractor implements ports.InterfaceExtractor using go/parser and go/doc.

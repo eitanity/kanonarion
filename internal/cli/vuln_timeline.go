@@ -7,9 +7,9 @@ import (
 	"io"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 
-	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
+	vuldomain "code.eitanity.com/kanonarion/internal/vuln/domain"
 )
 
 // timelineJSON is the --timeline --json document.

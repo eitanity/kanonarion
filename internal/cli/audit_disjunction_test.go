@@ -6,13 +6,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/cli/testfakes"
-	configdomain "github.com/eitanity/kanonarion/internal/config/domain"
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
-	licapp "github.com/eitanity/kanonarion/internal/license/application"
-	licdomain "github.com/eitanity/kanonarion/internal/license/domain"
-	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
+	"code.eitanity.com/kanonarion/internal/cli/testfakes"
+	configdomain "code.eitanity.com/kanonarion/internal/config/domain"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	fetchdomain "code.eitanity.com/kanonarion/internal/fetch/domain"
+	licapp "code.eitanity.com/kanonarion/internal/license/application"
+	licdomain "code.eitanity.com/kanonarion/internal/license/domain"
+	walkdomain "code.eitanity.com/kanonarion/internal/walk/domain"
 )
 
 // unfetchedQueryFetch reports every module as never fetched: these cases turn

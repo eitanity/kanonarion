@@ -8,12 +8,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/adapters/recordseal"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 
-	"github.com/eitanity/kanonarion/internal/audit"
+	"code.eitanity.com/kanonarion/internal/audit"
 
-	"github.com/eitanity/kanonarion/internal/vuln/domain"
+	"code.eitanity.com/kanonarion/internal/vuln/domain"
 )
 
 // AuditSink appends an audit event to the assurance log. The shared JSONL

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
+	"code.eitanity.com/kanonarion/internal/adapters/recordseal"
 )
 
 func TestCheckFiled_AgreeingValuesPass(t *testing.T) {

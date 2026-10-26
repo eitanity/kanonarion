@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	domain2 "github.com/eitanity/kanonarion/internal/example/domain"
-	"github.com/eitanity/kanonarion/internal/gotoolchain"
+	domain2 "code.eitanity.com/kanonarion/internal/example/domain"
+	"code.eitanity.com/kanonarion/internal/gotoolchain"
 )
 
 var probeLimit = gotoolchain.NewUnreadSource(

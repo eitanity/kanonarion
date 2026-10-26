@@ -10,17 +10,17 @@ import (
 	"strings"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/adapters/goenv"
-	"github.com/eitanity/kanonarion/internal/adapters/interrupt"
-	proxyadapter "github.com/eitanity/kanonarion/internal/adapters/proxy/direct"
-	"github.com/eitanity/kanonarion/internal/composition"
-	"github.com/eitanity/kanonarion/internal/composition/storage"
-	stalegolist "github.com/eitanity/kanonarion/internal/staleness/adapters/golist"
-	staleproxy "github.com/eitanity/kanonarion/internal/staleness/adapters/proxy"
-	staleretry "github.com/eitanity/kanonarion/internal/staleness/adapters/proxy/retrying"
-	staleapp "github.com/eitanity/kanonarion/internal/staleness/application"
-	staledomain "github.com/eitanity/kanonarion/internal/staleness/domain"
-	staleports "github.com/eitanity/kanonarion/internal/staleness/ports"
+	"code.eitanity.com/kanonarion/internal/adapters/goenv"
+	"code.eitanity.com/kanonarion/internal/adapters/interrupt"
+	proxyadapter "code.eitanity.com/kanonarion/internal/adapters/proxy/direct"
+	"code.eitanity.com/kanonarion/internal/composition"
+	"code.eitanity.com/kanonarion/internal/composition/storage"
+	stalegolist "code.eitanity.com/kanonarion/internal/staleness/adapters/golist"
+	staleproxy "code.eitanity.com/kanonarion/internal/staleness/adapters/proxy"
+	staleretry "code.eitanity.com/kanonarion/internal/staleness/adapters/proxy/retrying"
+	staleapp "code.eitanity.com/kanonarion/internal/staleness/application"
+	staledomain "code.eitanity.com/kanonarion/internal/staleness/domain"
+	staleports "code.eitanity.com/kanonarion/internal/staleness/ports"
 )
 
 // newStalenessResolver wires the staleness resolver over an already-open ledger.

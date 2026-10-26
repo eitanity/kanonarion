@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	proxyadapter "github.com/eitanity/kanonarion/internal/adapters/proxy/direct"
-	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
+	proxyadapter "code.eitanity.com/kanonarion/internal/adapters/proxy/direct"
+	"code.eitanity.com/kanonarion/internal/coordinate/coordinatetest"
 )
 
 func TestProxy_HTTPError(t *testing.T) {

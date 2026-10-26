@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
-	"github.com/eitanity/kanonarion/internal/fetch/application"
-	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"code.eitanity.com/kanonarion/internal/coordinate/coordinatetest"
+	"code.eitanity.com/kanonarion/internal/fetch/application"
+	domain2 "code.eitanity.com/kanonarion/internal/fetch/domain"
 )
 
 func TestExecute_GithubTwoPartPath(t *testing.T) {

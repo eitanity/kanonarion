@@ -5,9 +5,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
-	localdomain "github.com/eitanity/kanonarion/internal/local/domain"
-	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
+	"code.eitanity.com/kanonarion/internal/coordinate/coordinatetest"
+	localdomain "code.eitanity.com/kanonarion/internal/local/domain"
+	vuldomain "code.eitanity.com/kanonarion/internal/vuln/domain"
 )
 
 // TestReachabilityResultToOutput: the pure projection function maps every

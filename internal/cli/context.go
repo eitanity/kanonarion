@@ -9,9 +9,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
-	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
-	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
+	fetchdomain "code.eitanity.com/kanonarion/internal/fetch/domain"
+	vuldomain "code.eitanity.com/kanonarion/internal/vuln/domain"
+	walkports "code.eitanity.com/kanonarion/internal/walk/ports"
 )
 
 type contextFlags struct {

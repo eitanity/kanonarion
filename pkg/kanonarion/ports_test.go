@@ -8,19 +8,19 @@ import (
 	"strings"
 	"testing"
 
-	callgraphports "github.com/eitanity/kanonarion/internal/callgraph/ports"
-	configports "github.com/eitanity/kanonarion/internal/config/ports"
-	exampleports "github.com/eitanity/kanonarion/internal/example/ports"
-	extractports "github.com/eitanity/kanonarion/internal/extract/ports"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
-	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
-	ifaceports "github.com/eitanity/kanonarion/internal/iface/ports"
-	licenseports "github.com/eitanity/kanonarion/internal/license/ports"
-	sbomports "github.com/eitanity/kanonarion/internal/sbom/ports"
-	vulnports "github.com/eitanity/kanonarion/internal/vuln/ports"
-	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
+	callgraphports "code.eitanity.com/kanonarion/internal/callgraph/ports"
+	configports "code.eitanity.com/kanonarion/internal/config/ports"
+	exampleports "code.eitanity.com/kanonarion/internal/example/ports"
+	extractports "code.eitanity.com/kanonarion/internal/extract/ports"
+	fetchdomain "code.eitanity.com/kanonarion/internal/fetch/domain"
+	fetchports "code.eitanity.com/kanonarion/internal/fetch/ports"
+	ifaceports "code.eitanity.com/kanonarion/internal/iface/ports"
+	licenseports "code.eitanity.com/kanonarion/internal/license/ports"
+	sbomports "code.eitanity.com/kanonarion/internal/sbom/ports"
+	vulnports "code.eitanity.com/kanonarion/internal/vuln/ports"
+	walkports "code.eitanity.com/kanonarion/internal/walk/ports"
 
-	"github.com/eitanity/kanonarion/pkg/kanonarion"
+	"code.eitanity.com/kanonarion/pkg/kanonarion"
 )
 
 // The compile-time assignments below pin every published substitution port to

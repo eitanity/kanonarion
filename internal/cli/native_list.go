@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	nativedomain "github.com/eitanity/kanonarion/internal/native/domain"
-	nativeports "github.com/eitanity/kanonarion/internal/native/ports"
+	nativedomain "code.eitanity.com/kanonarion/internal/native/domain"
+	nativeports "code.eitanity.com/kanonarion/internal/native/ports"
 	"github.com/spf13/cobra"
 )
 

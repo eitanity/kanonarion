@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	"github.com/eitanity/kanonarion/internal/failurecause"
-	"github.com/eitanity/kanonarion/internal/gotoolchain"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/failurecause"
+	"code.eitanity.com/kanonarion/internal/gotoolchain"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	fetchdomain "code.eitanity.com/kanonarion/internal/fetch/domain"
 )
 
 // ScanMode controls how govulncheck analyses a module.

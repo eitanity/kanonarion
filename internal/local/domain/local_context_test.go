@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/local/domain"
+	"code.eitanity.com/kanonarion/internal/local/domain"
 )
 
 // -- SortModules --
@@ -127,7 +127,7 @@ func TestSnapshotModulePath_PrefersRootGoModOverNested(t *testing.T) {
 	// kanonarion repo's own test/fixtures/) must resolve to the workspace
 	// root's go.mod, not a deeper one picked by map-iteration order.
 	snap := domain.NewSnapshot(map[string][]byte{
-		"/ws/go.mod": []byte("module github.com/eitanity/kanonarion\n"),
+		"/ws/go.mod": []byte("module code.eitanity.com/kanonarion\n"),
 		"/ws/test/fixtures/supplychain/fips/dep/go.mod":     []byte("module example.com/supplychain/fips/md5-in-dep\n"),
 		"/ws/test/fixtures/supplychain/license/dep/go.mod":  []byte("module example.com/supplychain/license/conflict\n"),
 		"/ws/test/fixtures/supplychain/vendored/app/go.mod": []byte("module example.com/supplychain/vendored\n"),
@@ -139,8 +139,8 @@ func TestSnapshotModulePath_PrefersRootGoModOverNested(t *testing.T) {
 		if err != nil {
 			t.Fatalf("iter %d: SnapshotModulePath: %v", i, err)
 		}
-		if got != "github.com/eitanity/kanonarion" {
-			t.Fatalf("iter %d: module path = %q, want github.com/eitanity/kanonarion (root go.mod)", i, got)
+		if got != "code.eitanity.com/kanonarion" {
+			t.Fatalf("iter %d: module path = %q, want code.eitanity.com/kanonarion (root go.mod)", i, got)
 		}
 	}
 }
@@ -162,7 +162,7 @@ func TestSnapshotModulePath_PrefersShortestPathTieBrokenLexicographically(t *tes
 }
 
 func TestSnapshotModulePath_ModulePathPreservedExactly(t *testing.T) {
-	path := "github.com/eitanity/kanonarion"
+	path := "code.eitanity.com/kanonarion"
 	snap := domain.NewSnapshot(map[string][]byte{
 		"/ws/go.mod": []byte("module " + path + "\n"),
 	})

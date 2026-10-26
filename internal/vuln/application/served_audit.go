@@ -3,9 +3,9 @@ package application
 import (
 	"fmt"
 
-	"github.com/eitanity/kanonarion/internal/audit"
+	"code.eitanity.com/kanonarion/internal/audit"
 
-	"github.com/eitanity/kanonarion/internal/vuln/domain"
+	"code.eitanity.com/kanonarion/internal/vuln/domain"
 )
 
 // Surfaces published in the assurance log beside a served scan run. They name

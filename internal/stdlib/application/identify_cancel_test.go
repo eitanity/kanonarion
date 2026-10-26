@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/stdlib/application"
-	"github.com/eitanity/kanonarion/internal/stdlib/domain"
+	"code.eitanity.com/kanonarion/internal/stdlib/application"
+	"code.eitanity.com/kanonarion/internal/stdlib/domain"
 )
 
 // A licence classification the run's cancellation stopped is not a classifier

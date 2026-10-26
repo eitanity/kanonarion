@@ -7,7 +7,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 )
 
 // ErrNoRecordsToCompose is returned by Compose when handed no records. It is a

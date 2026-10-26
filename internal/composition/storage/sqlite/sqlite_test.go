@@ -11,12 +11,12 @@ import (
 	"testing"
 	"time"
 
-	fetchsqlite "github.com/eitanity/kanonarion/internal/adapters/factstore/sqlite"
-	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
-	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
-	"github.com/eitanity/kanonarion/internal/audit"
-	"github.com/eitanity/kanonarion/internal/composition/storage"
-	sqlitestorage "github.com/eitanity/kanonarion/internal/composition/storage/sqlite"
+	fetchsqlite "code.eitanity.com/kanonarion/internal/adapters/factstore/sqlite"
+	"code.eitanity.com/kanonarion/internal/adapters/recordseal"
+	"code.eitanity.com/kanonarion/internal/adapters/sqlitestore"
+	"code.eitanity.com/kanonarion/internal/audit"
+	"code.eitanity.com/kanonarion/internal/composition/storage"
+	sqlitestorage "code.eitanity.com/kanonarion/internal/composition/storage/sqlite"
 )
 
 func open(t *testing.T, req storage.Request) *storage.Storage {

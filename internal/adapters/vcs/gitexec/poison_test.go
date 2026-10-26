@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/adapters/vcs/gitexec"
+	"code.eitanity.com/kanonarion/internal/adapters/vcs/gitexec"
 )
 
 // The tests in this file drive the adapter with a hostile git configuration in

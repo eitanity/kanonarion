@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/config/domain"
+	"code.eitanity.com/kanonarion/internal/config/domain"
 )
 
 func TestRunStoreConfigShow_JSON(t *testing.T) {

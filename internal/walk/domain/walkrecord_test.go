@@ -7,11 +7,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 
-	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
-	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
-	domain3 "github.com/eitanity/kanonarion/internal/walk/domain"
+	domain2 "code.eitanity.com/kanonarion/internal/fetch/domain"
+	"code.eitanity.com/kanonarion/internal/fetch/fetchtest"
+	domain3 "code.eitanity.com/kanonarion/internal/walk/domain"
 )
 
 // fixtures for reuse across tests.

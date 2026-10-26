@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/eitanity/kanonarion/internal/gotoolchain"
+	"code.eitanity.com/kanonarion/internal/gotoolchain"
 )
 
 func (s *Scanner) extractZip(ctx context.Context, r io.Reader, dest string) error {

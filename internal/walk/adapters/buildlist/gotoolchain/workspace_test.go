@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/walk/adapters/buildlist/gotoolchain"
+	"code.eitanity.com/kanonarion/internal/walk/adapters/buildlist/gotoolchain"
 )
 
 // writeFiles writes path -> content under root.

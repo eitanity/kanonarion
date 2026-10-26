@@ -3,7 +3,7 @@ package domain_test
 import (
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/callgraph/domain"
+	"code.eitanity.com/kanonarion/internal/callgraph/domain"
 )
 
 // TestAnalysisSources_CoversTheDimension: consumers that must cover the source

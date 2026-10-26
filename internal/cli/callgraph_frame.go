@@ -6,11 +6,11 @@ import (
 	"io"
 	"strings"
 
-	"github.com/eitanity/kanonarion/internal/adapters/goenv"
-	cgapp "github.com/eitanity/kanonarion/internal/callgraph/application"
-	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
+	"code.eitanity.com/kanonarion/internal/adapters/goenv"
+	cgapp "code.eitanity.com/kanonarion/internal/callgraph/application"
+	cgdomain "code.eitanity.com/kanonarion/internal/callgraph/domain"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	walkdomain "code.eitanity.com/kanonarion/internal/walk/domain"
 )
 
 // frameDescription is a record's build frame as text output names it: the

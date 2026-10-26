@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
-	fipssqlite "github.com/eitanity/kanonarion/internal/fips/adapters/store/sqlite"
-	"github.com/eitanity/kanonarion/internal/fips/domain"
+	"code.eitanity.com/kanonarion/internal/adapters/sqlitestore"
+	fipssqlite "code.eitanity.com/kanonarion/internal/fips/adapters/store/sqlite"
+	"code.eitanity.com/kanonarion/internal/fips/domain"
 )
 
 func openTestStore(t *testing.T) *fipssqlite.Store {

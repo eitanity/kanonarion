@@ -7,10 +7,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/callgraph/adapters/analyser/staticcha"
-	"github.com/eitanity/kanonarion/internal/callgraph/adapters/analyser/staticcha/tinycgo/tinycgotest"
-	"github.com/eitanity/kanonarion/internal/callgraph/domain"
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/callgraph/adapters/analyser/staticcha"
+	"code.eitanity.com/kanonarion/internal/callgraph/adapters/analyser/staticcha/tinycgo/tinycgotest"
+	"code.eitanity.com/kanonarion/internal/callgraph/domain"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 )
 
 // Under a TinyGo frame TinyGo's own packages are analysed with bodies: their

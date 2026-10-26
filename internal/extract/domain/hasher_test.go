@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate/coordinatetest"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	fetchdomain "code.eitanity.com/kanonarion/internal/fetch/domain"
 )
 
 func TestExtractionRunHasher(t *testing.T) {

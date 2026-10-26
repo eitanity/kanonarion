@@ -22,10 +22,10 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/eitanity/kanonarion/internal/godebug/domain"
-	"github.com/eitanity/kanonarion/internal/godebug/ports"
-	"github.com/eitanity/kanonarion/internal/gotoolchain"
-	vendordomain "github.com/eitanity/kanonarion/internal/vendortree/domain"
+	"code.eitanity.com/kanonarion/internal/godebug/domain"
+	"code.eitanity.com/kanonarion/internal/godebug/ports"
+	"code.eitanity.com/kanonarion/internal/gotoolchain"
+	vendordomain "code.eitanity.com/kanonarion/internal/vendortree/domain"
 	"golang.org/x/mod/modfile"
 )
 

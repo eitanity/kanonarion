@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	staleapp "github.com/eitanity/kanonarion/internal/staleness/application"
-	staledomain "github.com/eitanity/kanonarion/internal/staleness/domain"
+	staleapp "code.eitanity.com/kanonarion/internal/staleness/application"
+	staledomain "code.eitanity.com/kanonarion/internal/staleness/domain"
 )
 
 // A module's own deprecation notice is a fact its author published in

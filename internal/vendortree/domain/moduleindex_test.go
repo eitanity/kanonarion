@@ -3,7 +3,7 @@ package domain_test
 import (
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/vendortree/domain"
+	"code.eitanity.com/kanonarion/internal/vendortree/domain"
 )
 
 // listed is the shape vendor/modules.txt takes on a real tree: module paths of

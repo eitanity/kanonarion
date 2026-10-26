@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	fetchdomain "code.eitanity.com/kanonarion/internal/fetch/domain"
 )
 
 // newTestProxy builds a Proxy against srv with a metadata timeout short enough

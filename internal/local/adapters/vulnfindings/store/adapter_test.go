@@ -8,12 +8,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 
-	"github.com/eitanity/kanonarion/internal/local/adapters/vulnfindings/store"
-	"github.com/eitanity/kanonarion/internal/local/ports"
-	vulndomain "github.com/eitanity/kanonarion/internal/vuln/domain"
-	vulnports "github.com/eitanity/kanonarion/internal/vuln/ports"
+	"code.eitanity.com/kanonarion/internal/local/adapters/vulnfindings/store"
+	"code.eitanity.com/kanonarion/internal/local/ports"
+	vulndomain "code.eitanity.com/kanonarion/internal/vuln/domain"
+	vulnports "code.eitanity.com/kanonarion/internal/vuln/ports"
 )
 
 // probedTree is the module path of the working tree under probe in these tests.

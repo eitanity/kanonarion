@@ -8,10 +8,10 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	application2 "github.com/eitanity/kanonarion/internal/walk/application"
-	domain3 "github.com/eitanity/kanonarion/internal/walk/domain"
-	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	application2 "code.eitanity.com/kanonarion/internal/walk/application"
+	domain3 "code.eitanity.com/kanonarion/internal/walk/domain"
+	walkports "code.eitanity.com/kanonarion/internal/walk/ports"
 )
 
 // replaceRecordingFetcher records the pre-replace identity each fetch was given,

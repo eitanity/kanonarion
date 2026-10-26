@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/fips/domain"
+	"code.eitanity.com/kanonarion/internal/fips/domain"
 )
 
 // fipsRec builds a deterministic record for projection tests. Findings are

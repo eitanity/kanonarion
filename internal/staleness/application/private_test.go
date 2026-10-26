@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/staleness/application"
-	"github.com/eitanity/kanonarion/internal/staleness/domain"
-	"github.com/eitanity/kanonarion/internal/staleness/ports"
+	"code.eitanity.com/kanonarion/internal/staleness/application"
+	"code.eitanity.com/kanonarion/internal/staleness/domain"
+	"code.eitanity.com/kanonarion/internal/staleness/ports"
 )
 
 func corpPrivate(path string) bool { return strings.HasPrefix(path, "corp.example.com") }

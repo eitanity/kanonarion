@@ -7,11 +7,11 @@ import (
 	"strings"
 	"testing"
 
-	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
-	capapp "github.com/eitanity/kanonarion/internal/capability/application"
-	capdomain "github.com/eitanity/kanonarion/internal/capability/domain"
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
+	cgdomain "code.eitanity.com/kanonarion/internal/callgraph/domain"
+	capapp "code.eitanity.com/kanonarion/internal/capability/application"
+	capdomain "code.eitanity.com/kanonarion/internal/capability/domain"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate/coordinatetest"
 )
 
 func renderNode(id, pkg, recv, sym string, external, exported bool) cgdomain.CallNode {

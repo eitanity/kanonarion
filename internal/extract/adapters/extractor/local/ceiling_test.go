@@ -5,11 +5,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/adapters/childproc"
-	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	"github.com/eitanity/kanonarion/internal/extract/domain"
-	"github.com/eitanity/kanonarion/internal/failurecause"
+	"code.eitanity.com/kanonarion/internal/adapters/childproc"
+	cgdomain "code.eitanity.com/kanonarion/internal/callgraph/domain"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/extract/domain"
+	"code.eitanity.com/kanonarion/internal/failurecause"
 )
 
 // TestCallgraphCeiling_AReachedCeilingIsRecordedAsSuchAndNotAsAKill is the

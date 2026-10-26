@@ -9,11 +9,11 @@ import (
 
 	"github.com/spf13/cobra"
 
-	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
-	configdomain "github.com/eitanity/kanonarion/internal/config/domain"
-	extractports "github.com/eitanity/kanonarion/internal/extract/ports"
-	staleports "github.com/eitanity/kanonarion/internal/staleness/ports"
-	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
+	cgports "code.eitanity.com/kanonarion/internal/callgraph/ports"
+	configdomain "code.eitanity.com/kanonarion/internal/config/domain"
+	extractports "code.eitanity.com/kanonarion/internal/extract/ports"
+	staleports "code.eitanity.com/kanonarion/internal/staleness/ports"
+	walkports "code.eitanity.com/kanonarion/internal/walk/ports"
 )
 
 // noProgressUsage is the one help string every --no-progress registration

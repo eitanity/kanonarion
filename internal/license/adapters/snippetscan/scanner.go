@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	licensedomain "github.com/eitanity/kanonarion/internal/license/domain"
+	licensedomain "code.eitanity.com/kanonarion/internal/license/domain"
 )
 
 // generatedMarker is the Go convention for machine-generated files. Generated

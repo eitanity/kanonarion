@@ -3,8 +3,8 @@ package cli
 import (
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	walkdomain "code.eitanity.com/kanonarion/internal/walk/domain"
 )
 
 // Each section context reports not run names the invocation that produces its

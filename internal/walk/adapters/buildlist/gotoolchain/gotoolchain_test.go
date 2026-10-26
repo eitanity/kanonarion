@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
+	walkports "code.eitanity.com/kanonarion/internal/walk/ports"
 )
 
 func TestParseModules(t *testing.T) {

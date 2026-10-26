@@ -9,10 +9,10 @@ import (
 	"strings"
 	"testing"
 
-	cganalyser "github.com/eitanity/kanonarion/internal/callgraph/adapters/analyser/staticcha"
-	"github.com/eitanity/kanonarion/internal/callgraph/domain"
-	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	cganalyser "code.eitanity.com/kanonarion/internal/callgraph/adapters/analyser/staticcha"
+	"code.eitanity.com/kanonarion/internal/callgraph/domain"
+	cgports "code.eitanity.com/kanonarion/internal/callgraph/ports"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 )
 
 // liveToolchain names the toolchain this test can read a standard library from,

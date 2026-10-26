@@ -5,9 +5,9 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	vulnapp "github.com/eitanity/kanonarion/internal/vuln/application"
-	vulndomain "github.com/eitanity/kanonarion/internal/vuln/domain"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	vulnapp "code.eitanity.com/kanonarion/internal/vuln/application"
+	vulndomain "code.eitanity.com/kanonarion/internal/vuln/domain"
 )
 
 func TestScanWalk_HooksSeeEachDecision(t *testing.T) {

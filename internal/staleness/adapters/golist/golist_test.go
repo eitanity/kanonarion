@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/adapters/goenv"
-	"github.com/eitanity/kanonarion/internal/staleness/adapters/golist"
+	"code.eitanity.com/kanonarion/internal/adapters/goenv"
+	"code.eitanity.com/kanonarion/internal/staleness/adapters/golist"
 )
 
 // TestBatchRefusesWhenTheNetworkIsForbidden is the guard on the one way this

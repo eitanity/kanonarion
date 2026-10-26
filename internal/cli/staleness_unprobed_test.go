@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	proxyadapter "github.com/eitanity/kanonarion/internal/adapters/proxy/direct"
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	staledomain "github.com/eitanity/kanonarion/internal/staleness/domain"
+	proxyadapter "code.eitanity.com/kanonarion/internal/adapters/proxy/direct"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	staledomain "code.eitanity.com/kanonarion/internal/staleness/domain"
 )
 
 // A major probe that was never answered used to render as nothing at all —

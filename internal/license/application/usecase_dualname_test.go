@@ -5,10 +5,10 @@ import (
 	"strings"
 	"testing"
 
-	licensecheck "github.com/eitanity/kanonarion/internal/license/adapters/detector/licensecheck"
-	"github.com/eitanity/kanonarion/internal/license/application"
-	domain2 "github.com/eitanity/kanonarion/internal/license/domain"
-	"github.com/eitanity/kanonarion/internal/license/ports"
+	licensecheck "code.eitanity.com/kanonarion/internal/license/adapters/detector/licensecheck"
+	"code.eitanity.com/kanonarion/internal/license/application"
+	domain2 "code.eitanity.com/kanonarion/internal/license/domain"
+	"code.eitanity.com/kanonarion/internal/license/ports"
 )
 
 // contentKeyedDetector returns the match whose key is a substring of the

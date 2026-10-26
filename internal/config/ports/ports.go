@@ -4,7 +4,7 @@ package ports
 import (
 	"context"
 
-	"github.com/eitanity/kanonarion/internal/config/domain"
+	"code.eitanity.com/kanonarion/internal/config/domain"
 )
 
 // ConfigStore loads a Config from a versioned source.

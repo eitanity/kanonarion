@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	domain "github.com/eitanity/kanonarion/internal/license/domain"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	domain "code.eitanity.com/kanonarion/internal/license/domain"
 )
 
 // chromaRecord is github.com/alecthomas/chroma/v2 as the ledger holds it: one

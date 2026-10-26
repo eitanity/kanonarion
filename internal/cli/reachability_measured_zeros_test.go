@@ -5,11 +5,11 @@ import (
 	"encoding/json"
 	"testing"
 
-	cgapp "github.com/eitanity/kanonarion/internal/callgraph/application"
-	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
-	"github.com/eitanity/kanonarion/internal/cli/testfakes"
-	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
-	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
+	cgapp "code.eitanity.com/kanonarion/internal/callgraph/application"
+	cgdomain "code.eitanity.com/kanonarion/internal/callgraph/domain"
+	"code.eitanity.com/kanonarion/internal/cli/testfakes"
+	"code.eitanity.com/kanonarion/internal/coordinate/coordinatetest"
+	vuldomain "code.eitanity.com/kanonarion/internal/vuln/domain"
 )
 
 // appGraphWith builds the application call graph the route below is classified

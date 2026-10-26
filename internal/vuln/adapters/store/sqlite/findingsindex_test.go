@@ -8,12 +8,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
-	"github.com/eitanity/kanonarion/internal/vuln/adapters/store/sqlite"
-	"github.com/eitanity/kanonarion/internal/vuln/domain"
-	"github.com/eitanity/kanonarion/internal/vuln/ports"
-	"github.com/eitanity/kanonarion/internal/vuln/vulntest"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	fetchdomain "code.eitanity.com/kanonarion/internal/fetch/domain"
+	"code.eitanity.com/kanonarion/internal/vuln/adapters/store/sqlite"
+	"code.eitanity.com/kanonarion/internal/vuln/domain"
+	"code.eitanity.com/kanonarion/internal/vuln/ports"
+	"code.eitanity.com/kanonarion/internal/vuln/vulntest"
 )
 
 // indexTestSnapshot is the one snapshot every test here re-scans against, so

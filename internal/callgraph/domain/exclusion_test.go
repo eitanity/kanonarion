@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
+	"code.eitanity.com/kanonarion/internal/coordinate/coordinatetest"
 )
 
 func TestNormaliseExclusions(t *testing.T) {

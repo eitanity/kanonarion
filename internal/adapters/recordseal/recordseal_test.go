@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
+	"code.eitanity.com/kanonarion/internal/adapters/recordseal"
 )
 
 // seal returns a canonical blob and its seal, built the way every record domain

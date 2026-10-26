@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/composition/storage"
-	"github.com/eitanity/kanonarion/internal/config/domain"
+	"code.eitanity.com/kanonarion/internal/composition/storage"
+	"code.eitanity.com/kanonarion/internal/config/domain"
 )
 
 func backend(name, section string) storage.Backend {

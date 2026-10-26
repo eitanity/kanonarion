@@ -3,7 +3,7 @@ package domain
 import (
 	"strings"
 
-	"github.com/eitanity/kanonarion/internal/gotoolchain"
+	"code.eitanity.com/kanonarion/internal/gotoolchain"
 )
 
 // ToolchainIdentity is what a record says about the toolchain that built it,

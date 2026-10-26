@@ -4,10 +4,10 @@ import (
 	"errors"
 	"fmt"
 
-	proxyadapter "github.com/eitanity/kanonarion/internal/adapters/proxy/direct"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
-	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
-	vulnports "github.com/eitanity/kanonarion/internal/vuln/ports"
+	proxyadapter "code.eitanity.com/kanonarion/internal/adapters/proxy/direct"
+	fetchdomain "code.eitanity.com/kanonarion/internal/fetch/domain"
+	fetchports "code.eitanity.com/kanonarion/internal/fetch/ports"
+	vulnports "code.eitanity.com/kanonarion/internal/vuln/ports"
 )
 
 // flagRemedies are the ways through an adapter's refusal that are a flag. The

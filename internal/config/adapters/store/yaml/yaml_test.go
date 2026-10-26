@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/config/adapters/store/yaml"
-	"github.com/eitanity/kanonarion/internal/config/domain"
+	"code.eitanity.com/kanonarion/internal/config/adapters/store/yaml"
+	"code.eitanity.com/kanonarion/internal/config/domain"
 )
 
 func TestParse_FullConfig(t *testing.T) {

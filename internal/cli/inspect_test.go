@@ -10,11 +10,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/cli/testfakes"
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
-	extractdomain "github.com/eitanity/kanonarion/internal/extract/domain"
-	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
+	"code.eitanity.com/kanonarion/internal/cli/testfakes"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate/coordinatetest"
+	extractdomain "code.eitanity.com/kanonarion/internal/extract/domain"
+	vuldomain "code.eitanity.com/kanonarion/internal/vuln/domain"
 )
 
 // A summary over a dependency set where any stage failed must never report

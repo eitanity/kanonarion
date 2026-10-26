@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/adapters/vulndbdir"
+	"code.eitanity.com/kanonarion/internal/adapters/vulndbdir"
 )
 
 // write creates path with trivial content, making its parents as needed.

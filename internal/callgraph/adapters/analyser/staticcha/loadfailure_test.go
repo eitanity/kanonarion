@@ -11,8 +11,8 @@ import (
 
 	"golang.org/x/mod/modfile"
 
-	"github.com/eitanity/kanonarion/internal/callgraph/adapters/analyser/staticcha"
-	"github.com/eitanity/kanonarion/internal/callgraph/domain"
+	"code.eitanity.com/kanonarion/internal/callgraph/adapters/analyser/staticcha"
+	"code.eitanity.com/kanonarion/internal/callgraph/domain"
 )
 
 // republishedForkFiles is a module republished under a path it never updated its
@@ -142,7 +142,7 @@ func findRepoGoMod(t *testing.T) (string, []byte) {
 }
 
 // repoModulePath is this repository's own module path.
-const repoModulePath = "github.com/eitanity/kanonarion"
+const repoModulePath = "code.eitanity.com/kanonarion"
 
 // incompleteGoSumFiles is a module that ships a go.mod naming a dependency and
 // no go.sum line covering it, which is what gopkg.in/yaml.v2 and

@@ -4,7 +4,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 )
 
 // NativeSchemaVersion is the version of the Record JSON schema. Bump it on a

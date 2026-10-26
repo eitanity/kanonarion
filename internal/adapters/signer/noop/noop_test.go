@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/adapters/signer/noop"
-	"github.com/eitanity/kanonarion/internal/fetch/ports"
+	"code.eitanity.com/kanonarion/internal/adapters/signer/noop"
+	"code.eitanity.com/kanonarion/internal/fetch/ports"
 )
 
 func TestSigner_YieldsNoAttestation(t *testing.T) {

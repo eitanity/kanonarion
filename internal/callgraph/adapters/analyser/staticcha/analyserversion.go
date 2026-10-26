@@ -4,7 +4,7 @@ import (
 	"runtime/debug"
 	"sync"
 
-	"github.com/eitanity/kanonarion/internal/callgraph/domain"
+	"code.eitanity.com/kanonarion/internal/callgraph/domain"
 )
 
 // analyserModule is the library this package is built against: it type-checks

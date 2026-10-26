@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	configdomain "github.com/eitanity/kanonarion/internal/config/domain"
+	configdomain "code.eitanity.com/kanonarion/internal/config/domain"
 )
 
 // A preference a config file can set has to be provable to change something a

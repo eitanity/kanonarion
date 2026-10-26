@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/audit"
+	"code.eitanity.com/kanonarion/internal/audit"
 )
 
 // ledgerFixture writes a store root holding the given ledger lines verbatim and

@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/callgraph/domain"
-	"github.com/eitanity/kanonarion/internal/callgraph/ports"
+	"code.eitanity.com/kanonarion/internal/callgraph/domain"
+	"code.eitanity.com/kanonarion/internal/callgraph/ports"
 )
 
 func TestCallEdgeRefLess_StableOrderingWithModulePathTiebreak(t *testing.T) {

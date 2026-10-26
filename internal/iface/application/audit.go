@@ -3,10 +3,10 @@ package application
 import (
 	"fmt"
 
-	"github.com/eitanity/kanonarion/internal/audit"
+	"code.eitanity.com/kanonarion/internal/audit"
 
-	domain3 "github.com/eitanity/kanonarion/internal/iface/domain"
-	"github.com/eitanity/kanonarion/internal/iface/ports"
+	domain3 "code.eitanity.com/kanonarion/internal/iface/domain"
+	"code.eitanity.com/kanonarion/internal/iface/ports"
 )
 
 // emitInterfaceExtracted appends one interface_extracted event for a generation

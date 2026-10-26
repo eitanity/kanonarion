@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 
-	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
-	capdomain "github.com/eitanity/kanonarion/internal/capability/domain"
+	cgdomain "code.eitanity.com/kanonarion/internal/callgraph/domain"
+	capdomain "code.eitanity.com/kanonarion/internal/capability/domain"
 )
 
 func encodeJSON(stdout io.Writer, v any) error {

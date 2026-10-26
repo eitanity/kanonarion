@@ -5,10 +5,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
-	sbomstore "github.com/eitanity/kanonarion/internal/sbom/adapters/store/sqlite"
-	"github.com/eitanity/kanonarion/internal/sbom/domain"
-	"github.com/eitanity/kanonarion/internal/sbom/ports"
+	"code.eitanity.com/kanonarion/internal/adapters/sqlitestore"
+	sbomstore "code.eitanity.com/kanonarion/internal/sbom/adapters/store/sqlite"
+	"code.eitanity.com/kanonarion/internal/sbom/domain"
+	"code.eitanity.com/kanonarion/internal/sbom/ports"
 )
 
 func openTestStore(t *testing.T) *sbomstore.Store {

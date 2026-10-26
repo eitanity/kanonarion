@@ -5,9 +5,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	"github.com/eitanity/kanonarion/internal/license/application"
-	"github.com/eitanity/kanonarion/internal/license/domain"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/license/application"
+	"code.eitanity.com/kanonarion/internal/license/domain"
 )
 
 // supersededLicences holds generations no read composes: the composed read

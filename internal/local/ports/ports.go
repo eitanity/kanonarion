@@ -5,11 +5,11 @@ import (
 
 	"context"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 
-	callgraphdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
+	callgraphdomain "code.eitanity.com/kanonarion/internal/callgraph/domain"
 
-	"github.com/eitanity/kanonarion/internal/local/domain"
+	"code.eitanity.com/kanonarion/internal/local/domain"
 )
 
 // VulnFinding is the minimal CVE finding representation the local context

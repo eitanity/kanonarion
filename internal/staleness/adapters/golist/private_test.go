@@ -9,9 +9,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/adapters/goenv"
-	"github.com/eitanity/kanonarion/internal/staleness/adapters/golist"
-	"github.com/eitanity/kanonarion/internal/staleness/ports"
+	"code.eitanity.com/kanonarion/internal/adapters/goenv"
+	"code.eitanity.com/kanonarion/internal/staleness/adapters/golist"
+	"code.eitanity.com/kanonarion/internal/staleness/ports"
 )
 
 // fakeGo puts a `go` on PATH that logs its argv and runs body.

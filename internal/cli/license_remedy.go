@@ -6,10 +6,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	dirdomain "github.com/eitanity/kanonarion/internal/directive/domain"
-	dirports "github.com/eitanity/kanonarion/internal/directive/ports"
-	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	dirdomain "code.eitanity.com/kanonarion/internal/directive/domain"
+	dirports "code.eitanity.com/kanonarion/internal/directive/ports"
+	walkdomain "code.eitanity.com/kanonarion/internal/walk/domain"
 )
 
 // licenceRemedyBuild is the build a missing-licence diagnostic is written

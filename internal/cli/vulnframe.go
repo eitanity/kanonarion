@@ -7,9 +7,9 @@ import (
 	"io"
 	"sort"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
-	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	vuldomain "code.eitanity.com/kanonarion/internal/vuln/domain"
+	walkports "code.eitanity.com/kanonarion/internal/walk/ports"
 )
 
 // vulnFrameAnchor is the build a stored vulnerability read answers in: a walk,

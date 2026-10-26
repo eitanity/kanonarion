@@ -9,7 +9,7 @@ import (
 	"runtime/debug"
 	"sort"
 
-	"github.com/eitanity/kanonarion/internal/license/ports"
+	"code.eitanity.com/kanonarion/internal/license/ports"
 	"github.com/google/licensecheck"
 )
 

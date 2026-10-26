@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/staleness/ports"
+	"code.eitanity.com/kanonarion/internal/staleness/ports"
 )
 
 // askRound asks every path once, as a prefetch round does.

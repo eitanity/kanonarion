@@ -9,10 +9,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	ifaceapp "github.com/eitanity/kanonarion/internal/iface/application"
-	"github.com/eitanity/kanonarion/internal/iface/domain"
-	"github.com/eitanity/kanonarion/internal/iface/ports"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	ifaceapp "code.eitanity.com/kanonarion/internal/iface/application"
+	"code.eitanity.com/kanonarion/internal/iface/domain"
+	"code.eitanity.com/kanonarion/internal/iface/ports"
 	"github.com/spf13/cobra"
 )
 

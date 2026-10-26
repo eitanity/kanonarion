@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/recordstamp"
+	"code.eitanity.com/kanonarion/internal/recordstamp"
 )
 
 // The fraction is FIXED WIDTH. time.RFC3339Nano strips trailing zeros, so it

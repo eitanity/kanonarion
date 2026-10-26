@@ -10,11 +10,11 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
-	licapp "github.com/eitanity/kanonarion/internal/license/application"
-	licdomain "github.com/eitanity/kanonarion/internal/license/domain"
-	licports "github.com/eitanity/kanonarion/internal/license/ports"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	fetchdomain "code.eitanity.com/kanonarion/internal/fetch/domain"
+	licapp "code.eitanity.com/kanonarion/internal/license/application"
+	licdomain "code.eitanity.com/kanonarion/internal/license/domain"
+	licports "code.eitanity.com/kanonarion/internal/license/ports"
 )
 
 // provenanceRepublicationIndicator is one copyright-tier inference in the JSON

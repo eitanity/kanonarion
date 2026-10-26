@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
-	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
+	"code.eitanity.com/kanonarion/internal/coordinate/coordinatetest"
+	vuldomain "code.eitanity.com/kanonarion/internal/vuln/domain"
 )
 
 // rootedRecord is a reachable finding with one route, the shape both presenters

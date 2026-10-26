@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/walk/adapters/buildlist/gotoolchain"
+	"code.eitanity.com/kanonarion/internal/walk/adapters/buildlist/gotoolchain"
 )
 
 // probeGo stands in for the go command: the module list and graph answer at once,

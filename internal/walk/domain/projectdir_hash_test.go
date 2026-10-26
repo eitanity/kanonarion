@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"testing"
 
-	domain3 "github.com/eitanity/kanonarion/internal/walk/domain"
+	domain3 "code.eitanity.com/kanonarion/internal/walk/domain"
 )
 
 // TestWalkRecord_ProjectDirIsNotIdentity pins the decision behind the field: the

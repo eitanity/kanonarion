@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/adapters/factstore/sqlite"
-	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
-	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
-	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
+	"code.eitanity.com/kanonarion/internal/adapters/factstore/sqlite"
+	"code.eitanity.com/kanonarion/internal/coordinate/coordinatetest"
+	domain2 "code.eitanity.com/kanonarion/internal/fetch/domain"
+	"code.eitanity.com/kanonarion/internal/fetch/fetchtest"
 )
 
 func openMemStore(t *testing.T) *sqlite.Store {

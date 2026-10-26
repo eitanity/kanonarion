@@ -7,12 +7,12 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 
-	fetchapplication "github.com/eitanity/kanonarion/internal/fetch/application"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	fetchapplication "code.eitanity.com/kanonarion/internal/fetch/application"
+	fetchdomain "code.eitanity.com/kanonarion/internal/fetch/domain"
 
-	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
+	walkports "code.eitanity.com/kanonarion/internal/walk/ports"
 )
 
 // Fetcher adapts FetchModuleUseCase to walkports.ModuleFetcher.

@@ -10,14 +10,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 
-	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
-	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
+	walkdomain "code.eitanity.com/kanonarion/internal/walk/domain"
+	walkports "code.eitanity.com/kanonarion/internal/walk/ports"
 
-	vulnapp "github.com/eitanity/kanonarion/internal/vuln/application"
-	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
-	vulnports "github.com/eitanity/kanonarion/internal/vuln/ports"
+	vulnapp "code.eitanity.com/kanonarion/internal/vuln/application"
+	vuldomain "code.eitanity.com/kanonarion/internal/vuln/domain"
+	vulnports "code.eitanity.com/kanonarion/internal/vuln/ports"
 	"github.com/spf13/cobra"
 )
 

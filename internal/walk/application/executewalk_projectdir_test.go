@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 
-	application2 "github.com/eitanity/kanonarion/internal/walk/application"
+	application2 "code.eitanity.com/kanonarion/internal/walk/application"
 )
 
 // TestExecuteWalkUseCase_ProjectWalkRecordsItsDirectory asserts a walk rooted at

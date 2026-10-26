@@ -5,9 +5,9 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 
-	domain3 "github.com/eitanity/kanonarion/internal/walk/domain"
+	domain3 "code.eitanity.com/kanonarion/internal/walk/domain"
 )
 
 // hostStdlibIdentity is the identity of hostStdlibOutcome as the build before

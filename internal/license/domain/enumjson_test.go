@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/license/domain"
+	"code.eitanity.com/kanonarion/internal/license/domain"
 )
 
 // The four licence enums a CLI surface publishes. Every constant is listed with

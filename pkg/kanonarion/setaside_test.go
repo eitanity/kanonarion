@@ -10,15 +10,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/adapters/blobcodec"
-	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
-	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
-	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
-	vulnports "github.com/eitanity/kanonarion/internal/vuln/ports"
-	walksqlite "github.com/eitanity/kanonarion/internal/walk/adapters/walks/sqlite"
-	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
+	"code.eitanity.com/kanonarion/internal/adapters/blobcodec"
+	"code.eitanity.com/kanonarion/internal/adapters/recordseal"
+	"code.eitanity.com/kanonarion/internal/adapters/sqlitestore"
+	"code.eitanity.com/kanonarion/internal/coordinate/coordinatetest"
+	vulnports "code.eitanity.com/kanonarion/internal/vuln/ports"
+	walksqlite "code.eitanity.com/kanonarion/internal/walk/adapters/walks/sqlite"
+	walkdomain "code.eitanity.com/kanonarion/internal/walk/domain"
 
-	"github.com/eitanity/kanonarion/pkg/kanonarion"
+	"code.eitanity.com/kanonarion/pkg/kanonarion"
 )
 
 // The set-aside and unreadable-row types are the internal ones, so a consumer

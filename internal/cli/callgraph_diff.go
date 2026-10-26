@@ -6,9 +6,9 @@ import (
 	"io"
 	"strings"
 
-	cgapp "github.com/eitanity/kanonarion/internal/callgraph/application"
-	"github.com/eitanity/kanonarion/internal/callgraph/domain"
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	cgapp "code.eitanity.com/kanonarion/internal/callgraph/application"
+	"code.eitanity.com/kanonarion/internal/callgraph/domain"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 )
 
 // runCallGraphDiff compares the distinct graphs the ledger holds for one

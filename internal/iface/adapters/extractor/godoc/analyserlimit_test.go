@@ -6,8 +6,8 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/eitanity/kanonarion/internal/gotoolchain"
-	domain2 "github.com/eitanity/kanonarion/internal/iface/domain"
+	"code.eitanity.com/kanonarion/internal/gotoolchain"
+	domain2 "code.eitanity.com/kanonarion/internal/iface/domain"
 )
 
 // unreadable stands in for a generic method, which a go1.26 parser refuses: the

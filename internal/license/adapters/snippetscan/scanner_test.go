@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	licensedomain "github.com/eitanity/kanonarion/internal/license/domain"
+	licensedomain "code.eitanity.com/kanonarion/internal/license/domain"
 )
 
 const block = `package p

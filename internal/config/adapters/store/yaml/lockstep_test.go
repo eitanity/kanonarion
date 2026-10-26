@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/config"
+	"code.eitanity.com/kanonarion/internal/config"
 	"gopkg.in/yaml.v3"
 )
 

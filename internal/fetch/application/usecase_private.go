@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 
-	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
-	"github.com/eitanity/kanonarion/internal/fetch/ports"
+	domain2 "code.eitanity.com/kanonarion/internal/fetch/domain"
+	"code.eitanity.com/kanonarion/internal/fetch/ports"
 )
 
 // ErrPrivateModuleUnanchored refuses a private module when no project go.sum

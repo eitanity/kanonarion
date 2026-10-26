@@ -14,9 +14,9 @@ import (
 	"testing"
 	"time"
 
-	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
-	"github.com/eitanity/kanonarion/internal/stdlib/application"
-	"github.com/eitanity/kanonarion/internal/stdlib/domain"
+	fetchports "code.eitanity.com/kanonarion/internal/fetch/ports"
+	"code.eitanity.com/kanonarion/internal/stdlib/application"
+	"code.eitanity.com/kanonarion/internal/stdlib/domain"
 )
 
 // --- fakes ---

@@ -1,8 +1,8 @@
 package domain
 
 import (
-	"github.com/eitanity/kanonarion/internal/failurecause"
-	"github.com/eitanity/kanonarion/internal/gotoolchain"
+	"code.eitanity.com/kanonarion/internal/failurecause"
+	"code.eitanity.com/kanonarion/internal/gotoolchain"
 )
 
 // FailureCause is the call-graph ledger's name for the shared axis: whether a

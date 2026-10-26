@@ -4,7 +4,7 @@ import (
 	"path"
 	"strings"
 
-	"github.com/eitanity/kanonarion/internal/gotoolchain"
+	"code.eitanity.com/kanonarion/internal/gotoolchain"
 )
 
 // CgoImportPath is the pseudo-package a Go file imports to declare that its

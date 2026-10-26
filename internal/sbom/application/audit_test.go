@@ -6,11 +6,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/audit"
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	"github.com/eitanity/kanonarion/internal/sbom/application"
-	"github.com/eitanity/kanonarion/internal/sbom/domain"
-	"github.com/eitanity/kanonarion/internal/sbom/ports"
+	"code.eitanity.com/kanonarion/internal/audit"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/sbom/application"
+	"code.eitanity.com/kanonarion/internal/sbom/domain"
+	"code.eitanity.com/kanonarion/internal/sbom/ports"
 )
 
 // recordingSink captures the events a generation or a serving appends.

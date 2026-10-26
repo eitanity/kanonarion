@@ -3,12 +3,12 @@ package cli
 import (
 	"bytes"
 	"context"
-	cgapp "github.com/eitanity/kanonarion/internal/callgraph/application"
 	"strings"
 	"testing"
 
-	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
-	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
+	cgapp "code.eitanity.com/kanonarion/internal/callgraph/application"
+	cgdomain "code.eitanity.com/kanonarion/internal/callgraph/domain"
+	cgports "code.eitanity.com/kanonarion/internal/callgraph/ports"
 )
 
 const (

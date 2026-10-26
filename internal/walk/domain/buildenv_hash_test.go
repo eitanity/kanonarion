@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"testing"
 
-	domain3 "github.com/eitanity/kanonarion/internal/walk/domain"
+	domain3 "code.eitanity.com/kanonarion/internal/walk/domain"
 )
 
 // TestWalkRecordHasher_BuildEnvRoundTrip verifies the resolved build environment

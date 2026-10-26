@@ -10,15 +10,15 @@ import (
 	"testing"
 	"time"
 
-	fetchsqlite "github.com/eitanity/kanonarion/internal/adapters/factstore/sqlite"
-	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
-	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
-	"github.com/eitanity/kanonarion/internal/cli/testfakes"
-	fetchapp "github.com/eitanity/kanonarion/internal/fetch/application"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
-	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
-	licdomain "github.com/eitanity/kanonarion/internal/license/domain"
-	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
+	fetchsqlite "code.eitanity.com/kanonarion/internal/adapters/factstore/sqlite"
+	"code.eitanity.com/kanonarion/internal/adapters/recordseal"
+	"code.eitanity.com/kanonarion/internal/adapters/sqlitestore"
+	"code.eitanity.com/kanonarion/internal/cli/testfakes"
+	fetchapp "code.eitanity.com/kanonarion/internal/fetch/application"
+	fetchdomain "code.eitanity.com/kanonarion/internal/fetch/domain"
+	"code.eitanity.com/kanonarion/internal/fetch/fetchtest"
+	licdomain "code.eitanity.com/kanonarion/internal/license/domain"
+	walkdomain "code.eitanity.com/kanonarion/internal/walk/domain"
 )
 
 // A fetch record written in a canonical shape this build cannot reproduce,

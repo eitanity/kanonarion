@@ -8,8 +8,8 @@ import (
 	"io"
 	"text/tabwriter"
 
-	vendomain "github.com/eitanity/kanonarion/internal/vendortree/domain"
-	vendports "github.com/eitanity/kanonarion/internal/vendortree/ports"
+	vendomain "code.eitanity.com/kanonarion/internal/vendortree/domain"
+	vendports "code.eitanity.com/kanonarion/internal/vendortree/ports"
 	"github.com/spf13/cobra"
 )
 

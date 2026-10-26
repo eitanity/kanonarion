@@ -5,11 +5,11 @@ import (
 	"log/slog"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
-	"github.com/eitanity/kanonarion/internal/callgraph/adapters/store/sqlite"
-	"github.com/eitanity/kanonarion/internal/callgraph/application"
-	domain2 "github.com/eitanity/kanonarion/internal/callgraph/domain"
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/adapters/recordseal"
+	"code.eitanity.com/kanonarion/internal/callgraph/adapters/store/sqlite"
+	"code.eitanity.com/kanonarion/internal/callgraph/application"
+	domain2 "code.eitanity.com/kanonarion/internal/callgraph/domain"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 )
 
 // nothingServableStore answers every composed read as a coordinate whose every

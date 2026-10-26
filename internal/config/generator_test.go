@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/config"
-	configyaml "github.com/eitanity/kanonarion/internal/config/adapters/store/yaml"
-	"github.com/eitanity/kanonarion/internal/config/domain"
+	"code.eitanity.com/kanonarion/internal/config"
+	configyaml "code.eitanity.com/kanonarion/internal/config/adapters/store/yaml"
+	"code.eitanity.com/kanonarion/internal/config/domain"
 	"gopkg.in/yaml.v3"
 )
 

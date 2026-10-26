@@ -5,9 +5,9 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/local/application"
-	"github.com/eitanity/kanonarion/internal/local/domain"
-	"github.com/eitanity/kanonarion/internal/local/ports"
+	"code.eitanity.com/kanonarion/internal/local/application"
+	"code.eitanity.com/kanonarion/internal/local/domain"
+	"code.eitanity.com/kanonarion/internal/local/ports"
 )
 
 // fakeSymbolAnalyser implements ports.SymbolAnalyser for tests.

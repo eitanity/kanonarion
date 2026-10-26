@@ -5,9 +5,9 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/audit"
-	"github.com/eitanity/kanonarion/internal/native/application"
-	"github.com/eitanity/kanonarion/internal/native/domain"
+	"code.eitanity.com/kanonarion/internal/audit"
+	"code.eitanity.com/kanonarion/internal/native/application"
+	"code.eitanity.com/kanonarion/internal/native/domain"
 )
 
 // The defect this file pins: `native` wrote a record and appended nothing to the

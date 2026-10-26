@@ -8,8 +8,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	walkdomain "code.eitanity.com/kanonarion/internal/walk/domain"
 )
 
 // preModulesLimitation is what every answer under a +incompatible coordinate is

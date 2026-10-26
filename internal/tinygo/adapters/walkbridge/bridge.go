@@ -5,9 +5,9 @@ package walkbridge
 import (
 	"context"
 
-	"github.com/eitanity/kanonarion/internal/tinygo/application"
-	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
-	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
+	"code.eitanity.com/kanonarion/internal/tinygo/application"
+	walkdomain "code.eitanity.com/kanonarion/internal/walk/domain"
+	walkports "code.eitanity.com/kanonarion/internal/walk/ports"
 )
 
 // Bridge serves the walk from an Acquirer.

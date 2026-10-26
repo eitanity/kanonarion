@@ -9,11 +9,11 @@ import (
 	"strings"
 	"time"
 
-	extractapp "github.com/eitanity/kanonarion/internal/extract/application"
-	domain "github.com/eitanity/kanonarion/internal/extract/domain"
-	"github.com/eitanity/kanonarion/internal/extract/ports"
-	"github.com/eitanity/kanonarion/internal/failurecause"
-	"github.com/eitanity/kanonarion/internal/gotoolchain"
+	extractapp "code.eitanity.com/kanonarion/internal/extract/application"
+	domain "code.eitanity.com/kanonarion/internal/extract/domain"
+	"code.eitanity.com/kanonarion/internal/extract/ports"
+	"code.eitanity.com/kanonarion/internal/failurecause"
+	"code.eitanity.com/kanonarion/internal/gotoolchain"
 	"github.com/spf13/cobra"
 )
 

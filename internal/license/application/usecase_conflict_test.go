@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
-	"github.com/eitanity/kanonarion/internal/license/application"
-	"github.com/eitanity/kanonarion/internal/license/ports"
+	"code.eitanity.com/kanonarion/internal/adapters/recordseal"
+	"code.eitanity.com/kanonarion/internal/license/application"
+	"code.eitanity.com/kanonarion/internal/license/ports"
 )
 
 // TestExecute_AConflictingLedgerIsACacheMissNotAFailure.

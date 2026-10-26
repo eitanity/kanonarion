@@ -5,11 +5,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate/coordinatetest"
 
-	ifacedomain "github.com/eitanity/kanonarion/internal/iface/domain"
-	ifaceports "github.com/eitanity/kanonarion/internal/iface/ports"
+	ifacedomain "code.eitanity.com/kanonarion/internal/iface/domain"
+	ifaceports "code.eitanity.com/kanonarion/internal/iface/ports"
 )
 
 func makeIfaceCoord(t *testing.T) coordinate.ModuleCoordinate {

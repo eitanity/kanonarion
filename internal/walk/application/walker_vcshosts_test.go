@@ -7,12 +7,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 
-	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
-	application2 "github.com/eitanity/kanonarion/internal/walk/application"
-	"github.com/eitanity/kanonarion/internal/walk/domain"
-	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
+	domain2 "code.eitanity.com/kanonarion/internal/fetch/domain"
+	application2 "code.eitanity.com/kanonarion/internal/walk/application"
+	"code.eitanity.com/kanonarion/internal/walk/domain"
+	walkports "code.eitanity.com/kanonarion/internal/walk/ports"
 )
 
 // vcsHostProductionFetcher extends productionCacheFetcher with the WithVCSHosts

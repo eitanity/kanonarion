@@ -5,10 +5,10 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	"github.com/eitanity/kanonarion/internal/native/application"
-	"github.com/eitanity/kanonarion/internal/native/domain"
-	"github.com/eitanity/kanonarion/internal/native/ports"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/native/application"
+	"code.eitanity.com/kanonarion/internal/native/domain"
+	"code.eitanity.com/kanonarion/internal/native/ports"
 )
 
 // listingNativeStore is a store that can survey itself.

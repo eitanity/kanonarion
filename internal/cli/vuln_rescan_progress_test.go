@@ -6,11 +6,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
-	vulnapp "github.com/eitanity/kanonarion/internal/vuln/application"
-	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
-	"github.com/eitanity/kanonarion/internal/vuln/vulntest"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate/coordinatetest"
+	vulnapp "code.eitanity.com/kanonarion/internal/vuln/application"
+	vuldomain "code.eitanity.com/kanonarion/internal/vuln/domain"
+	"code.eitanity.com/kanonarion/internal/vuln/vulntest"
 )
 
 // narratingRescan stands in for the re-scan use case and drives the caller's

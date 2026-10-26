@@ -34,7 +34,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/cli"
+	"code.eitanity.com/kanonarion/internal/cli"
 )
 
 // goldenDir holds one file per recorded case, beside the record golden this

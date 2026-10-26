@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/gotoolchain"
+	"code.eitanity.com/kanonarion/internal/gotoolchain"
 )
 
 // The two sentences a go1.26-built binary printed over a go 1.27 module, as
@@ -83,7 +83,7 @@ func TestAnalyserLimit_StatementAndRemedy(t *testing.T) {
 	if !strings.Contains(l.Statement(), "built with go1.26") || !strings.Contains(l.Statement(), "requires go1.27") {
 		t.Errorf("statement does not name both versions: %s", l.Statement())
 	}
-	if !strings.Contains(l.Remedy(), "go install github.com/eitanity/kanonarion@latest") || !strings.Contains(l.Remedy(), "go1.27 or newer") {
+	if !strings.Contains(l.Remedy(), "go install code.eitanity.com/kanonarion@latest") || !strings.Contains(l.Remedy(), "go1.27 or newer") {
 		t.Errorf("remedy does not name a build with a new enough Go: %s", l.Remedy())
 	}
 }

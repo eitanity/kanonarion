@@ -15,7 +15,7 @@ import (
 	"errors"
 	"fmt"
 
-	vendorports "github.com/eitanity/kanonarion/internal/vendortree/ports"
+	vendorports "code.eitanity.com/kanonarion/internal/vendortree/ports"
 )
 
 // Reader lists a project's vendored module paths through the vendor scanner.

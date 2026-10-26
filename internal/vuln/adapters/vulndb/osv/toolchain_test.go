@@ -3,9 +3,9 @@ package osv_test
 import (
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/vuln/adapters/vulndb/osv"
-	"github.com/eitanity/kanonarion/internal/vuln/domain"
-	"github.com/eitanity/kanonarion/internal/vuln/vulntest"
+	"code.eitanity.com/kanonarion/internal/vuln/adapters/vulndb/osv"
+	"code.eitanity.com/kanonarion/internal/vuln/domain"
+	"code.eitanity.com/kanonarion/internal/vuln/vulntest"
 )
 
 // toolchainSnapshotZip is a stored snapshot shaped like the published one: an

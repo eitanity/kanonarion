@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
+	cgdomain "code.eitanity.com/kanonarion/internal/callgraph/domain"
 )
 
 // analysisInputsForWalk reads the resolved build list of a named walk so a

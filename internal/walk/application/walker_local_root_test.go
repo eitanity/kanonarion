@@ -5,11 +5,11 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate/coordinatetest"
 
-	application2 "github.com/eitanity/kanonarion/internal/walk/application"
-	"github.com/eitanity/kanonarion/internal/walk/domain"
+	application2 "code.eitanity.com/kanonarion/internal/walk/application"
+	"code.eitanity.com/kanonarion/internal/walk/domain"
 )
 
 // A project walk with local-root analysis enabled ingests the working tree as

@@ -10,13 +10,13 @@ import (
 	"strings"
 	"testing"
 
-	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
-	extractdomain "github.com/eitanity/kanonarion/internal/extract/domain"
-	licdomain "github.com/eitanity/kanonarion/internal/license/domain"
-	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
-	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
+	cgdomain "code.eitanity.com/kanonarion/internal/callgraph/domain"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate/coordinatetest"
+	extractdomain "code.eitanity.com/kanonarion/internal/extract/domain"
+	licdomain "code.eitanity.com/kanonarion/internal/license/domain"
+	vuldomain "code.eitanity.com/kanonarion/internal/vuln/domain"
+	walkdomain "code.eitanity.com/kanonarion/internal/walk/domain"
 )
 
 // The class these tables close: a command returning a code that does not

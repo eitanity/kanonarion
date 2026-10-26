@@ -8,14 +8,14 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
-	"github.com/eitanity/kanonarion/internal/adapters/ziparchive"
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
-	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
-	licensedomain "github.com/eitanity/kanonarion/internal/license/domain"
-	licenseports "github.com/eitanity/kanonarion/internal/license/ports"
-	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
+	"code.eitanity.com/kanonarion/internal/adapters/recordseal"
+	"code.eitanity.com/kanonarion/internal/adapters/ziparchive"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	fetchdomain "code.eitanity.com/kanonarion/internal/fetch/domain"
+	fetchports "code.eitanity.com/kanonarion/internal/fetch/ports"
+	licensedomain "code.eitanity.com/kanonarion/internal/license/domain"
+	licenseports "code.eitanity.com/kanonarion/internal/license/ports"
+	walkdomain "code.eitanity.com/kanonarion/internal/walk/domain"
 )
 
 // GenerateNoticeUseCase assembles a THIRD-PARTY-LICENSES attribution document

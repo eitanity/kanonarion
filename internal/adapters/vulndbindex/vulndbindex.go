@@ -13,7 +13,7 @@ import (
 	"io"
 	"sort"
 
-	"github.com/eitanity/kanonarion/internal/vuln/ports"
+	"code.eitanity.com/kanonarion/internal/vuln/ports"
 )
 
 // Entry is the index's path inside an advisory database zip.

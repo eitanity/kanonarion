@@ -527,7 +527,7 @@ fetchable, so it is analysed by re-walking the project:
 
 ```
 sbom generated with undetermined licences: 1 component(s) with no licence
-identity: github.com/eitanity/kanonarion@local (the document's subject) — run
+identity: code.eitanity.com/kanonarion@local (the document's subject) — run
 'kanonarion walk --gomod ./go.mod --analyse-root' then
 'kanonarion extract <walk-id>' to analyse the project's own licence
 ```

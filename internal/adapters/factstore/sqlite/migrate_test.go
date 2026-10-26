@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/adapters/factstore/sqlite"
-	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
+	"code.eitanity.com/kanonarion/internal/adapters/factstore/sqlite"
+	"code.eitanity.com/kanonarion/internal/coordinate/coordinatetest"
 )
 
 func TestOpen_FileDB(t *testing.T) {

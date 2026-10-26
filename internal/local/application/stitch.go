@@ -4,10 +4,10 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 
-	"github.com/eitanity/kanonarion/internal/local/domain"
-	"github.com/eitanity/kanonarion/internal/local/ports"
+	"code.eitanity.com/kanonarion/internal/local/domain"
+	"code.eitanity.com/kanonarion/internal/local/ports"
 )
 
 // LoadDependenciesUseCase loads callgraph records for a set of module

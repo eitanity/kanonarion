@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/failurecause"
-	"github.com/eitanity/kanonarion/internal/vuln/domain"
+	"code.eitanity.com/kanonarion/internal/failurecause"
+	"code.eitanity.com/kanonarion/internal/vuln/domain"
 )
 
 // theRealRefusal is the message this host produced, verbatim, when a

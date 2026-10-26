@@ -3,8 +3,8 @@ package yaml_test
 import (
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/config/adapters/store/yaml"
-	"github.com/eitanity/kanonarion/internal/config/domain"
+	"code.eitanity.com/kanonarion/internal/config/adapters/store/yaml"
+	"code.eitanity.com/kanonarion/internal/config/domain"
 )
 
 // A v2 file has no storage section and keeps loading, on the SQLite backend.

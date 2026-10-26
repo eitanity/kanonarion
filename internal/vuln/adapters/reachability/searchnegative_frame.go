@@ -7,11 +7,11 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 
-	callgraphdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
+	callgraphdomain "code.eitanity.com/kanonarion/internal/callgraph/domain"
 
-	"github.com/eitanity/kanonarion/internal/vuln/ports"
+	"code.eitanity.com/kanonarion/internal/vuln/ports"
 )
 
 // testOnly is the package a dependency's test node is placed in for a join: no

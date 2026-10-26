@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	fetchdomain "code.eitanity.com/kanonarion/internal/fetch/domain"
 )
 
 const validPolicyYAML = `version: "1"

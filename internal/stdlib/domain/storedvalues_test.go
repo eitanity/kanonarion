@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/stdlib/domain"
+	"code.eitanity.com/kanonarion/internal/stdlib/domain"
 )
 
 // The stored-values check answers whether a row's values, acquired_at spelled

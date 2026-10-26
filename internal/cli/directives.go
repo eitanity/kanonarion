@@ -7,7 +7,7 @@ import (
 	"io"
 	"text/tabwriter"
 
-	dirdomain "github.com/eitanity/kanonarion/internal/directive/domain"
+	dirdomain "code.eitanity.com/kanonarion/internal/directive/domain"
 	"github.com/spf13/cobra"
 )
 

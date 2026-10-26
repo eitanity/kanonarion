@@ -6,11 +6,11 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/eitanity/kanonarion/internal/adapters/interrupt"
-	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
-	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
-	"github.com/eitanity/kanonarion/internal/stdlib/domain"
-	"github.com/eitanity/kanonarion/internal/stdlib/ports"
+	"code.eitanity.com/kanonarion/internal/adapters/interrupt"
+	"code.eitanity.com/kanonarion/internal/adapters/recordseal"
+	fetchports "code.eitanity.com/kanonarion/internal/fetch/ports"
+	"code.eitanity.com/kanonarion/internal/stdlib/domain"
+	"code.eitanity.com/kanonarion/internal/stdlib/ports"
 )
 
 // Acquisition is the chain-of-custody entry point shared by the online

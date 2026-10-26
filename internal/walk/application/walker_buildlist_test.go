@@ -6,11 +6,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	domain "github.com/eitanity/kanonarion/internal/walk/domain"
-	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	domain "code.eitanity.com/kanonarion/internal/walk/domain"
+	walkports "code.eitanity.com/kanonarion/internal/walk/ports"
 
-	application2 "github.com/eitanity/kanonarion/internal/walk/application"
+	application2 "code.eitanity.com/kanonarion/internal/walk/application"
 )
 
 // walkBuildListProject runs one project walk whose build list resolves the way

@@ -12,22 +12,22 @@ import (
 	"strings"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 
 	"github.com/spf13/cobra"
 
-	"github.com/eitanity/kanonarion/internal/adapters/clock"
-	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
-	localimporter "github.com/eitanity/kanonarion/internal/local/adapters/importer/golist"
-	localprober "github.com/eitanity/kanonarion/internal/local/adapters/probe/builder"
-	localsnapshot "github.com/eitanity/kanonarion/internal/local/adapters/snapshot/walkdir"
-	localvulnstore "github.com/eitanity/kanonarion/internal/local/adapters/vulnfindings/store"
-	localapp "github.com/eitanity/kanonarion/internal/local/application"
-	localdomain "github.com/eitanity/kanonarion/internal/local/domain"
-	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
-	vulnports "github.com/eitanity/kanonarion/internal/vuln/ports"
-	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
-	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
+	"code.eitanity.com/kanonarion/internal/adapters/clock"
+	"code.eitanity.com/kanonarion/internal/adapters/recordseal"
+	localimporter "code.eitanity.com/kanonarion/internal/local/adapters/importer/golist"
+	localprober "code.eitanity.com/kanonarion/internal/local/adapters/probe/builder"
+	localsnapshot "code.eitanity.com/kanonarion/internal/local/adapters/snapshot/walkdir"
+	localvulnstore "code.eitanity.com/kanonarion/internal/local/adapters/vulnfindings/store"
+	localapp "code.eitanity.com/kanonarion/internal/local/application"
+	localdomain "code.eitanity.com/kanonarion/internal/local/domain"
+	vuldomain "code.eitanity.com/kanonarion/internal/vuln/domain"
+	vulnports "code.eitanity.com/kanonarion/internal/vuln/ports"
+	walkdomain "code.eitanity.com/kanonarion/internal/walk/domain"
+	walkports "code.eitanity.com/kanonarion/internal/walk/ports"
 )
 
 const localVulnPipelineVersion = vulnPipelineVersion

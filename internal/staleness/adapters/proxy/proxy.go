@@ -12,9 +12,9 @@ import (
 	"fmt"
 	"net/http"
 
-	directproxy "github.com/eitanity/kanonarion/internal/adapters/proxy/direct"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
-	"github.com/eitanity/kanonarion/internal/staleness/ports"
+	directproxy "code.eitanity.com/kanonarion/internal/adapters/proxy/direct"
+	fetchdomain "code.eitanity.com/kanonarion/internal/fetch/domain"
+	"code.eitanity.com/kanonarion/internal/staleness/ports"
 )
 
 // Bridge adapts *direct.Proxy to ports.LatestResolver.

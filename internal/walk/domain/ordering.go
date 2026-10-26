@@ -3,7 +3,7 @@ package domain
 import (
 	"sort"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 )
 
 // This file holds the one canonical ordering per collection in a WalkRecord.

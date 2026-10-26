@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
-	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"code.eitanity.com/kanonarion/internal/coordinate/coordinatetest"
+	domain2 "code.eitanity.com/kanonarion/internal/fetch/domain"
 )
 
 // A 0.6.0 record written before version_time existed, as that build sealed it.

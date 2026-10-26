@@ -11,11 +11,11 @@ import (
 
 	"github.com/oklog/ulid/v2"
 
-	"github.com/eitanity/kanonarion/internal/audit"
-	configdomain "github.com/eitanity/kanonarion/internal/config/domain"
-	"github.com/eitanity/kanonarion/internal/directive/domain"
-	"github.com/eitanity/kanonarion/internal/directive/ports"
-	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
+	"code.eitanity.com/kanonarion/internal/audit"
+	configdomain "code.eitanity.com/kanonarion/internal/config/domain"
+	"code.eitanity.com/kanonarion/internal/directive/domain"
+	"code.eitanity.com/kanonarion/internal/directive/ports"
+	fetchports "code.eitanity.com/kanonarion/internal/fetch/ports"
 )
 
 // Config wires the ExtractDirectivesUseCase dependencies.

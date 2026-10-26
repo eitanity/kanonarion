@@ -8,10 +8,10 @@ import (
 	"sort"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 
-	"github.com/eitanity/kanonarion/internal/failurecause"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"code.eitanity.com/kanonarion/internal/failurecause"
+	fetchdomain "code.eitanity.com/kanonarion/internal/fetch/domain"
 )
 
 // ExtractionRunHasher computes and embeds a content hash into an ExtractionRun.

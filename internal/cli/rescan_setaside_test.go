@@ -5,15 +5,15 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
-	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
-	vulnsqlite "github.com/eitanity/kanonarion/internal/vuln/adapters/store/sqlite"
-	vulndomain "github.com/eitanity/kanonarion/internal/vuln/domain"
-	walkadapters "github.com/eitanity/kanonarion/internal/walk/adapters/walks/sqlite"
-	walkapp "github.com/eitanity/kanonarion/internal/walk/application"
-	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
+	"code.eitanity.com/kanonarion/internal/adapters/recordseal"
+	"code.eitanity.com/kanonarion/internal/adapters/sqlitestore"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate/coordinatetest"
+	vulnsqlite "code.eitanity.com/kanonarion/internal/vuln/adapters/store/sqlite"
+	vulndomain "code.eitanity.com/kanonarion/internal/vuln/domain"
+	walkadapters "code.eitanity.com/kanonarion/internal/walk/adapters/walks/sqlite"
+	walkapp "code.eitanity.com/kanonarion/internal/walk/application"
+	walkdomain "code.eitanity.com/kanonarion/internal/walk/domain"
 )
 
 const (

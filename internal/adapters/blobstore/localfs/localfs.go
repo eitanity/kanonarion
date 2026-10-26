@@ -33,8 +33,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/audit"
-	"github.com/eitanity/kanonarion/internal/fetch/ports"
+	"code.eitanity.com/kanonarion/internal/audit"
+	"code.eitanity.com/kanonarion/internal/fetch/ports"
 	"golang.org/x/mod/sumdb/dirhash"
 )
 

@@ -5,12 +5,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 
-	"github.com/eitanity/kanonarion/internal/sbom/adapters/generator/cyclonedx"
-	"github.com/eitanity/kanonarion/internal/sbom/ports"
+	"code.eitanity.com/kanonarion/internal/sbom/adapters/generator/cyclonedx"
+	"code.eitanity.com/kanonarion/internal/sbom/ports"
 
-	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
+	walkdomain "code.eitanity.com/kanonarion/internal/walk/domain"
 )
 
 // bomComponents unmarshals the document and returns metadata.component plus the

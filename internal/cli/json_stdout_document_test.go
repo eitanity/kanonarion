@@ -14,7 +14,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	govulncheck "github.com/eitanity/kanonarion/internal/vuln/adapters/vuln/govulncheck"
+	govulncheck "code.eitanity.com/kanonarion/internal/vuln/adapters/vuln/govulncheck"
 )
 
 // assertSingleJSONDocument checks that b is exactly one JSON document and

@@ -3,7 +3,7 @@ package cli
 import (
 	"testing"
 
-	licdomain "github.com/eitanity/kanonarion/internal/license/domain"
+	licdomain "code.eitanity.com/kanonarion/internal/license/domain"
 )
 
 // TestAuditRow_ConjunctionIsEvaluatedArmByArm pins the fix for the module this

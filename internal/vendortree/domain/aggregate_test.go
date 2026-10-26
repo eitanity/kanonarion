@@ -3,7 +3,7 @@ package domain_test
 import (
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/vendortree/domain"
+	"code.eitanity.com/kanonarion/internal/vendortree/domain"
 )
 
 func base() domain.ParseResult {

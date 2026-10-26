@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
-	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
+	domain2 "code.eitanity.com/kanonarion/internal/fetch/domain"
+	"code.eitanity.com/kanonarion/internal/fetch/fetchtest"
 )
 
 // canonicalFixture returns the reference FactRecord for the gorilla/mux fixture.

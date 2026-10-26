@@ -8,11 +8,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/cli/testfakes"
-	configdomain "github.com/eitanity/kanonarion/internal/config/domain"
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	vulndomain "github.com/eitanity/kanonarion/internal/vuln/domain"
-	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
+	"code.eitanity.com/kanonarion/internal/cli/testfakes"
+	configdomain "code.eitanity.com/kanonarion/internal/config/domain"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	vulndomain "code.eitanity.com/kanonarion/internal/vuln/domain"
+	walkdomain "code.eitanity.com/kanonarion/internal/walk/domain"
 )
 
 // auditRowKeys marshals a row and returns the object it produced, so an

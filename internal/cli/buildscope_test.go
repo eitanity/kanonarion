@@ -6,14 +6,14 @@ import (
 	"strings"
 	"testing"
 
-	cgapp "github.com/eitanity/kanonarion/internal/callgraph/application"
+	cgapp "code.eitanity.com/kanonarion/internal/callgraph/application"
 
-	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
-	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
-	"github.com/eitanity/kanonarion/internal/cli/testfakes"
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
-	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
+	cgdomain "code.eitanity.com/kanonarion/internal/callgraph/domain"
+	cgports "code.eitanity.com/kanonarion/internal/callgraph/ports"
+	"code.eitanity.com/kanonarion/internal/cli/testfakes"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate/coordinatetest"
+	walkdomain "code.eitanity.com/kanonarion/internal/walk/domain"
 )
 
 // walkWith builds a walk record rooted at target with the given dependency

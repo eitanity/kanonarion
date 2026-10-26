@@ -3,7 +3,7 @@ package domain
 import (
 	"sort"
 
-	"github.com/eitanity/kanonarion/internal/versionorder"
+	"code.eitanity.com/kanonarion/internal/versionorder"
 )
 
 // Reasons a module in the vendored tree is outside what a document describes.

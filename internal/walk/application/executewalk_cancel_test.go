@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	application2 "github.com/eitanity/kanonarion/internal/walk/application"
-	"github.com/eitanity/kanonarion/internal/walk/domain"
+	application2 "code.eitanity.com/kanonarion/internal/walk/application"
+	"code.eitanity.com/kanonarion/internal/walk/domain"
 )
 
 // stoppingGetStore cancels the run when a walk is read back, and fails the read

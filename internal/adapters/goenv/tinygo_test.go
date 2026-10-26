@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/adapters/goenv"
+	"code.eitanity.com/kanonarion/internal/adapters/goenv"
 )
 
 // tinyGoRoot is a GOROOT with the src directory NewTinyGo requires.

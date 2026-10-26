@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	application "github.com/eitanity/kanonarion/internal/vuln/application"
-	"github.com/eitanity/kanonarion/internal/vuln/domain"
+	application "code.eitanity.com/kanonarion/internal/vuln/application"
+	"code.eitanity.com/kanonarion/internal/vuln/domain"
 )
 
 // An advisory match the run's cancellation stopped records nothing: it is not an

@@ -8,10 +8,10 @@ import (
 	"io"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	"github.com/eitanity/kanonarion/internal/example/application"
-	"github.com/eitanity/kanonarion/internal/example/domain"
-	"github.com/eitanity/kanonarion/internal/example/ports"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/example/application"
+	"code.eitanity.com/kanonarion/internal/example/domain"
+	"code.eitanity.com/kanonarion/internal/example/ports"
 	"github.com/spf13/cobra"
 )
 

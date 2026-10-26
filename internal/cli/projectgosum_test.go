@@ -6,12 +6,12 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate/coordinatetest"
 
-	fetchapp "github.com/eitanity/kanonarion/internal/fetch/application"
+	fetchapp "code.eitanity.com/kanonarion/internal/fetch/application"
 
-	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
+	walkdomain "code.eitanity.com/kanonarion/internal/walk/domain"
 )
 
 func TestResolveProjectGoSum_PresentGoSumSetsPath(t *testing.T) {

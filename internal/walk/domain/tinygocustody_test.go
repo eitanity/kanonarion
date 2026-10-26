@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	domain3 "github.com/eitanity/kanonarion/internal/walk/domain"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	domain3 "code.eitanity.com/kanonarion/internal/walk/domain"
 )
 
 const (

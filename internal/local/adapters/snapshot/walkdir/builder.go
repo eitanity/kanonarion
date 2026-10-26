@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/eitanity/kanonarion/internal/local/domain"
+	"code.eitanity.com/kanonarion/internal/local/domain"
 )
 
 // Builder implements ports.SnapshotBuilder using fs.WalkDir on os.DirFS.

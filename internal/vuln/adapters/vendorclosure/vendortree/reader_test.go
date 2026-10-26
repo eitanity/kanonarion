@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	venlocalfs "github.com/eitanity/kanonarion/internal/vendortree/adapters/scanner/localfs"
-	vulnvendorclosure "github.com/eitanity/kanonarion/internal/vuln/adapters/vendorclosure/vendortree"
+	venlocalfs "code.eitanity.com/kanonarion/internal/vendortree/adapters/scanner/localfs"
+	vulnvendorclosure "code.eitanity.com/kanonarion/internal/vuln/adapters/vendorclosure/vendortree"
 )
 
 // TestVendoredClosure_ReadsListedAndPresent asserts the reader answers the one

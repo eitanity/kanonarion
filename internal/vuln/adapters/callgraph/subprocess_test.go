@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
+	"code.eitanity.com/kanonarion/internal/coordinate/coordinatetest"
 )
 
 // The child opens the store from its own argv, so the store the parent scans

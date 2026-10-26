@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/native/adapters/gosource"
-	"github.com/eitanity/kanonarion/internal/native/domain"
+	"code.eitanity.com/kanonarion/internal/native/adapters/gosource"
+	"code.eitanity.com/kanonarion/internal/native/domain"
 )
 
 func TestReader_ReadsTheImportBlock(t *testing.T) {

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/adapters/goenv"
+	"code.eitanity.com/kanonarion/internal/adapters/goenv"
 )
 
 // fakeSDK writes a directory that looks to this package exactly like an unpacked

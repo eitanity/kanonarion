@@ -10,13 +10,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	"github.com/eitanity/kanonarion/internal/failurecause"
+	"code.eitanity.com/kanonarion/internal/adapters/recordseal"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/failurecause"
 
-	vulnapp "github.com/eitanity/kanonarion/internal/vuln/application"
-	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
-	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
+	vulnapp "code.eitanity.com/kanonarion/internal/vuln/application"
+	vuldomain "code.eitanity.com/kanonarion/internal/vuln/domain"
+	walkdomain "code.eitanity.com/kanonarion/internal/walk/domain"
 	"github.com/spf13/cobra"
 )
 

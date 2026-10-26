@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 
-	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
+	walkdomain "code.eitanity.com/kanonarion/internal/walk/domain"
 	"golang.org/x/mod/modfile"
 	"golang.org/x/mod/semver"
 )

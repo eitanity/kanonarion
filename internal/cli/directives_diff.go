@@ -9,8 +9,8 @@ import (
 	"text/tabwriter"
 	"time"
 
-	dirapp "github.com/eitanity/kanonarion/internal/directive/application"
-	dirdomain "github.com/eitanity/kanonarion/internal/directive/domain"
+	dirapp "code.eitanity.com/kanonarion/internal/directive/application"
+	dirdomain "code.eitanity.com/kanonarion/internal/directive/domain"
 	"github.com/spf13/cobra"
 )
 

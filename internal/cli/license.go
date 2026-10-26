@@ -10,13 +10,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 
-	licapp "github.com/eitanity/kanonarion/internal/license/application"
-	"github.com/eitanity/kanonarion/internal/license/domain"
-	"github.com/eitanity/kanonarion/internal/license/ports"
-	stdlibdomain "github.com/eitanity/kanonarion/internal/stdlib/domain"
-	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
+	licapp "code.eitanity.com/kanonarion/internal/license/application"
+	"code.eitanity.com/kanonarion/internal/license/domain"
+	"code.eitanity.com/kanonarion/internal/license/ports"
+	stdlibdomain "code.eitanity.com/kanonarion/internal/stdlib/domain"
+	walkports "code.eitanity.com/kanonarion/internal/walk/ports"
 	"github.com/spf13/cobra"
 )
 

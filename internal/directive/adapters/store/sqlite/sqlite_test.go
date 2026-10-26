@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/adapters/blobcodec"
-	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
-	directivesqlite "github.com/eitanity/kanonarion/internal/directive/adapters/store/sqlite"
-	"github.com/eitanity/kanonarion/internal/directive/domain"
+	"code.eitanity.com/kanonarion/internal/adapters/blobcodec"
+	"code.eitanity.com/kanonarion/internal/adapters/sqlitestore"
+	directivesqlite "code.eitanity.com/kanonarion/internal/directive/adapters/store/sqlite"
+	"code.eitanity.com/kanonarion/internal/directive/domain"
 )
 
 func openTestStore(t *testing.T) (*directivesqlite.Store, sqlitestore.DB) {

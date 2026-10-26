@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
+	"code.eitanity.com/kanonarion/internal/coordinate/coordinatetest"
 )
 
 func TestNew(t *testing.T) {

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/vuln/adapters/reachability"
+	"code.eitanity.com/kanonarion/internal/vuln/adapters/reachability"
 )
 
 // A call-site read the run's cancellation stopped is not a graph that could not

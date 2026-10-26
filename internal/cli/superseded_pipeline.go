@@ -6,10 +6,10 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 
-	exapp "github.com/eitanity/kanonarion/internal/example/application"
-	licapp "github.com/eitanity/kanonarion/internal/license/application"
+	exapp "code.eitanity.com/kanonarion/internal/example/application"
+	licapp "code.eitanity.com/kanonarion/internal/license/application"
 )
 
 // supersededRecordLine is the statement for a coordinate whose every stored

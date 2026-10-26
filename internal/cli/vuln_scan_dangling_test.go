@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/cli/testfakes"
-	vulndomain "github.com/eitanity/kanonarion/internal/vuln/domain"
+	"code.eitanity.com/kanonarion/internal/cli/testfakes"
+	vulndomain "code.eitanity.com/kanonarion/internal/vuln/domain"
 )
 
 // A scan run whose walk has been purged is half-preserved evidence: the findings

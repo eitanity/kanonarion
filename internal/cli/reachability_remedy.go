@@ -5,9 +5,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	localdomain "github.com/eitanity/kanonarion/internal/local/domain"
+	cgdomain "code.eitanity.com/kanonarion/internal/callgraph/domain"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	localdomain "code.eitanity.com/kanonarion/internal/local/domain"
 )
 
 // reachabilityRemedy is the command-line half of a reachability refusal: the

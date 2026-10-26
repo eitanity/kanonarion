@@ -6,12 +6,12 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 
-	domain2 "github.com/eitanity/kanonarion/internal/callgraph/domain"
-	"github.com/eitanity/kanonarion/internal/callgraph/ports"
+	domain2 "code.eitanity.com/kanonarion/internal/callgraph/domain"
+	"code.eitanity.com/kanonarion/internal/callgraph/ports"
 
-	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
+	fetchports "code.eitanity.com/kanonarion/internal/fetch/ports"
 )
 
 // ExtractLocalCallGraphUseCase extracts the call graph of a Go module

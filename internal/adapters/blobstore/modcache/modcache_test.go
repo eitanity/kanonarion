@@ -10,12 +10,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 
-	localfs "github.com/eitanity/kanonarion/internal/adapters/blobstore/localfs"
+	localfs "code.eitanity.com/kanonarion/internal/adapters/blobstore/localfs"
 
-	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
-	"github.com/eitanity/kanonarion/internal/fetch/ports"
+	"code.eitanity.com/kanonarion/internal/fetch/fetchtest"
+	"code.eitanity.com/kanonarion/internal/fetch/ports"
 )
 
 func newCoord(t *testing.T, path, version string) coordinate.ModuleCoordinate {

@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/adapters/childproc"
+	"code.eitanity.com/kanonarion/internal/adapters/childproc"
 )
 
 // Every temp entry production code makes in the system temp directory is one

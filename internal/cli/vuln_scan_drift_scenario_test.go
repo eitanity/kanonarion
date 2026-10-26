@@ -9,10 +9,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/cli/testfakes"
-	walkapp "github.com/eitanity/kanonarion/internal/walk/application"
-	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
-	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
+	"code.eitanity.com/kanonarion/internal/cli/testfakes"
+	walkapp "code.eitanity.com/kanonarion/internal/walk/application"
+	walkdomain "code.eitanity.com/kanonarion/internal/walk/domain"
+	walkports "code.eitanity.com/kanonarion/internal/walk/ports"
 )
 
 // driftScenarioProject is the fixture the scenario edits: a module whose one

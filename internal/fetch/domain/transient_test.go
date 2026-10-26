@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
+	domain2 "code.eitanity.com/kanonarion/internal/fetch/domain"
 )
 
 // wrapped nests err a couple of layers deep the way the fetch path does

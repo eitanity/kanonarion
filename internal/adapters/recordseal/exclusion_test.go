@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
+	"code.eitanity.com/kanonarion/internal/adapters/recordseal"
 
-	vulndomain "github.com/eitanity/kanonarion/internal/vuln/domain"
+	vulndomain "code.eitanity.com/kanonarion/internal/vuln/domain"
 )
 
 // TestVulnerabilityRecord_WithFirstScannedAt_IsSelfConsistent pins the case the

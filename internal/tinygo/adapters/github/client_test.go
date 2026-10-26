@@ -18,9 +18,9 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/adapters/goenv"
-	"github.com/eitanity/kanonarion/internal/tinygo/adapters/github"
-	"github.com/eitanity/kanonarion/internal/tinygo/domain"
+	"code.eitanity.com/kanonarion/internal/adapters/goenv"
+	"code.eitanity.com/kanonarion/internal/tinygo/adapters/github"
+	"code.eitanity.com/kanonarion/internal/tinygo/domain"
 )
 
 func sum(b []byte) string {

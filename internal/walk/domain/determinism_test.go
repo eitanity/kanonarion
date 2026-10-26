@@ -4,10 +4,10 @@ import (
 	"math/rand"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
-	domain3 "github.com/eitanity/kanonarion/internal/walk/domain"
+	fetchdomain "code.eitanity.com/kanonarion/internal/fetch/domain"
+	domain3 "code.eitanity.com/kanonarion/internal/walk/domain"
 )
 
 // determinismShuffles is how many independent input orders this guard puts

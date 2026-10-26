@@ -5,10 +5,10 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	"github.com/eitanity/kanonarion/internal/sbom/application"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/sbom/application"
 
-	nativedomain "github.com/eitanity/kanonarion/internal/native/domain"
+	nativedomain "code.eitanity.com/kanonarion/internal/native/domain"
 )
 
 // fakeNativeReader serves what a test seeded, and can fail for one coordinate —

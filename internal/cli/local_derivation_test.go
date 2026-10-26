@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	cgapp "github.com/eitanity/kanonarion/internal/callgraph/application"
-	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
+	cgapp "code.eitanity.com/kanonarion/internal/callgraph/application"
+	cgdomain "code.eitanity.com/kanonarion/internal/callgraph/domain"
 )
 
 // TestLocalDerivation_NamesTheReusedRecordAndItsDate: a run that served a held

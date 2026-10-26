@@ -3,7 +3,7 @@ package domain_test
 import (
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/native/domain"
+	"code.eitanity.com/kanonarion/internal/native/domain"
 )
 
 // names renders the libraries a preamble names as "name/kind" pairs, which is

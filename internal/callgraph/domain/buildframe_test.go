@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/callgraph/domain"
-	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
+	"code.eitanity.com/kanonarion/internal/callgraph/domain"
+	walkdomain "code.eitanity.com/kanonarion/internal/walk/domain"
 )
 
 var (

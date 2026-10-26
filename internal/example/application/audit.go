@@ -3,10 +3,10 @@ package application
 import (
 	"fmt"
 
-	"github.com/eitanity/kanonarion/internal/audit"
+	"code.eitanity.com/kanonarion/internal/audit"
 
-	domain2 "github.com/eitanity/kanonarion/internal/example/domain"
-	"github.com/eitanity/kanonarion/internal/example/ports"
+	domain2 "code.eitanity.com/kanonarion/internal/example/domain"
+	"code.eitanity.com/kanonarion/internal/example/ports"
 )
 
 // emitExamplesExtracted appends one examples_extracted event for a generation

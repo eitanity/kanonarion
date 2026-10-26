@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/adapters/modcache"
+	"code.eitanity.com/kanonarion/internal/adapters/modcache"
 )
 
 // Errors a bounded child ends with. They are sentinels because the two are

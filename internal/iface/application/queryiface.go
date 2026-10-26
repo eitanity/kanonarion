@@ -5,10 +5,10 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 
-	"github.com/eitanity/kanonarion/internal/iface/domain"
-	ifaceports "github.com/eitanity/kanonarion/internal/iface/ports"
+	"code.eitanity.com/kanonarion/internal/iface/domain"
+	ifaceports "code.eitanity.com/kanonarion/internal/iface/ports"
 )
 
 // QueryInterfaceUseCase provides read-only access to stored interface records.

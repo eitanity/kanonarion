@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/stdlib/adapters/godev"
-	"github.com/eitanity/kanonarion/internal/stdlib/application"
-	"github.com/eitanity/kanonarion/internal/stdlib/domain"
+	"code.eitanity.com/kanonarion/internal/stdlib/adapters/godev"
+	"code.eitanity.com/kanonarion/internal/stdlib/application"
+	"code.eitanity.com/kanonarion/internal/stdlib/domain"
 )
 
 // errTestClassifier stands for a licence classifier that could not run.

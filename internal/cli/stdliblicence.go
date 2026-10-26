@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	stdlibdomain "github.com/eitanity/kanonarion/internal/stdlib/domain"
-	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	stdlibdomain "code.eitanity.com/kanonarion/internal/stdlib/domain"
+	walkdomain "code.eitanity.com/kanonarion/internal/walk/domain"
 )
 
 // StdlibCustodyReader reads the recorded standard-library chain of custody for

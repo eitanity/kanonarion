@@ -132,7 +132,7 @@ file it cannot parse is **not analysed**, not a parse failure of the module:
 $ kanonarion interface example.com/mod@v1.0.0
 example.com/mod@v1.0.0: Partial — 2 package(s), build frame linux/amd64 (cgo on)
   failure: not analysed: 1 file (mod.go): the kanonarion that ran was built with go1.26.6 and the code requires go1.27.2
-  Use a kanonarion built with go1.27.2 or newer: a newer release, or `go install github.com/eitanity/kanonarion@latest` run with go1.27.2 or newer.
+  Use a kanonarion built with go1.27.2 or newer: a newer release, or `go install code.eitanity.com/kanonarion@latest` run with go1.27.2 or newer.
   example.com/mod                                              0T 0F 0C 0V (1 file not analysed)
 error: execute root command: example.com/mod@v1.0.0: Partial — this kanonarion cannot read this code: it was built with go1.26.6 and the code requires go1.27.2. ...
 ```

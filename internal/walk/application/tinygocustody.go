@@ -8,12 +8,12 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/eitanity/kanonarion/internal/adapters/interrupt"
-	"github.com/eitanity/kanonarion/internal/adapters/ziparchive"
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
-	domain3 "github.com/eitanity/kanonarion/internal/walk/domain"
-	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
+	"code.eitanity.com/kanonarion/internal/adapters/interrupt"
+	"code.eitanity.com/kanonarion/internal/adapters/ziparchive"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	fetchports "code.eitanity.com/kanonarion/internal/fetch/ports"
+	domain3 "code.eitanity.com/kanonarion/internal/walk/domain"
+	walkports "code.eitanity.com/kanonarion/internal/walk/ports"
 )
 
 // WithTinyGoReleaseAcquirer returns a shallow copy of the resolver that

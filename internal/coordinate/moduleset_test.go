@@ -3,7 +3,7 @@ package coordinate_test
 import (
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 )
 
 func mustCoord(t *testing.T, path, version string) coordinate.ModuleCoordinate {

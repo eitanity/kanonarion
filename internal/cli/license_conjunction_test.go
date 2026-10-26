@@ -8,10 +8,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/cli/testfakes"
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	licapp "github.com/eitanity/kanonarion/internal/license/application"
-	domain "github.com/eitanity/kanonarion/internal/license/domain"
+	"code.eitanity.com/kanonarion/internal/cli/testfakes"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	licapp "code.eitanity.com/kanonarion/internal/license/application"
+	domain "code.eitanity.com/kanonarion/internal/license/domain"
 )
 
 // contextLicenseOf builds the `context` licence section from a record with the

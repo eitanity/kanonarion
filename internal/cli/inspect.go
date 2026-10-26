@@ -11,21 +11,21 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	"github.com/eitanity/kanonarion/internal/driver"
-	extstages "github.com/eitanity/kanonarion/internal/extract/adapters/stages/local"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/driver"
+	extstages "code.eitanity.com/kanonarion/internal/extract/adapters/stages/local"
 
 	"github.com/spf13/cobra"
 
-	proxyadapter "github.com/eitanity/kanonarion/internal/adapters/proxy/direct"
+	proxyadapter "code.eitanity.com/kanonarion/internal/adapters/proxy/direct"
 
-	extractdomain "github.com/eitanity/kanonarion/internal/extract/domain"
-	vendports "github.com/eitanity/kanonarion/internal/vendortree/ports"
-	vulnapp "github.com/eitanity/kanonarion/internal/vuln/application"
-	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
-	"github.com/eitanity/kanonarion/internal/walk/application"
-	domain "github.com/eitanity/kanonarion/internal/walk/domain"
-	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
+	extractdomain "code.eitanity.com/kanonarion/internal/extract/domain"
+	vendports "code.eitanity.com/kanonarion/internal/vendortree/ports"
+	vulnapp "code.eitanity.com/kanonarion/internal/vuln/application"
+	vuldomain "code.eitanity.com/kanonarion/internal/vuln/domain"
+	"code.eitanity.com/kanonarion/internal/walk/application"
+	domain "code.eitanity.com/kanonarion/internal/walk/domain"
+	walkports "code.eitanity.com/kanonarion/internal/walk/ports"
 )
 
 type inspectFlags struct {

@@ -7,7 +7,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 )
 
 // TimelineStateKind is what one record says about one advisory.

@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/directive/application"
-	"github.com/eitanity/kanonarion/internal/directive/domain"
+	"code.eitanity.com/kanonarion/internal/directive/application"
+	"code.eitanity.com/kanonarion/internal/directive/domain"
 )
 
 type diffFakeStore struct{ records map[string]domain.Record }

@@ -8,8 +8,8 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	"github.com/eitanity/kanonarion/internal/fetch/ports"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/fetch/ports"
 )
 
 // Router is a ports.ModuleProxy that sends private modules to the module cache.

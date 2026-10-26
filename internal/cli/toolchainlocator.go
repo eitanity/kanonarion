@@ -8,13 +8,13 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/eitanity/kanonarion/internal/adapters/childproc"
-	"github.com/eitanity/kanonarion/internal/adapters/goenv"
-	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
-	stdlibdomain "github.com/eitanity/kanonarion/internal/stdlib/domain"
-	vulnports "github.com/eitanity/kanonarion/internal/vuln/ports"
-	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
-	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
+	"code.eitanity.com/kanonarion/internal/adapters/childproc"
+	"code.eitanity.com/kanonarion/internal/adapters/goenv"
+	cgports "code.eitanity.com/kanonarion/internal/callgraph/ports"
+	stdlibdomain "code.eitanity.com/kanonarion/internal/stdlib/domain"
+	vulnports "code.eitanity.com/kanonarion/internal/vuln/ports"
+	walkdomain "code.eitanity.com/kanonarion/internal/walk/domain"
+	walkports "code.eitanity.com/kanonarion/internal/walk/ports"
 )
 
 // toolchainLocator finds the installed Go toolchain whose standard library a

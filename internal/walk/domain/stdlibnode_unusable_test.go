@@ -3,7 +3,7 @@ package domain_test
 import (
 	"testing"
 
-	domain "github.com/eitanity/kanonarion/internal/walk/domain"
+	domain "code.eitanity.com/kanonarion/internal/walk/domain"
 )
 
 // TestStdlibNode_UnusableToolchainVersion covers the leg where the toolchain

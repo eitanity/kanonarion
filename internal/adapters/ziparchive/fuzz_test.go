@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/adapters/ziparchive"
+	"code.eitanity.com/kanonarion/internal/adapters/ziparchive"
 )
 
 // fuzzZip builds a ZIP from name->content. Names are written verbatim so the

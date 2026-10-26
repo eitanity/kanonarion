@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/vuln/ports"
+	"code.eitanity.com/kanonarion/internal/vuln/ports"
 )
 
 // An unreadable row is rendered by the one path a consuming command takes when

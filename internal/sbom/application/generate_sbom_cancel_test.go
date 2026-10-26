@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/sbom/application"
-	"github.com/eitanity/kanonarion/internal/sbom/domain"
+	"code.eitanity.com/kanonarion/internal/sbom/application"
+	"code.eitanity.com/kanonarion/internal/sbom/domain"
 )
 
 // A vendored-tree read the run's cancellation stopped ends generation with the

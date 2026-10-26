@@ -3,7 +3,7 @@ package cli
 import (
 	"slices"
 
-	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
+	vuldomain "code.eitanity.com/kanonarion/internal/vuln/domain"
 )
 
 // sortUnscanReasons orders reason codes lexically, for the tail of the roll-up

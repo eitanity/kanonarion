@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
-	domain2 "github.com/eitanity/kanonarion/internal/license/domain"
+	fetchdomain "code.eitanity.com/kanonarion/internal/fetch/domain"
+	domain2 "code.eitanity.com/kanonarion/internal/license/domain"
 )
 
 func TestRoundTrip(t *testing.T) {

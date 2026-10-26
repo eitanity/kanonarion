@@ -3,10 +3,10 @@ package application
 import (
 	"fmt"
 
-	"github.com/eitanity/kanonarion/internal/audit"
+	"code.eitanity.com/kanonarion/internal/audit"
 
-	"github.com/eitanity/kanonarion/internal/sbom/domain"
-	"github.com/eitanity/kanonarion/internal/sbom/ports"
+	"code.eitanity.com/kanonarion/internal/sbom/domain"
+	"code.eitanity.com/kanonarion/internal/sbom/ports"
 )
 
 // emitSBOMGenerated appends one sbom_generated event for a document this run

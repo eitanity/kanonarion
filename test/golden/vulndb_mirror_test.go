@@ -18,11 +18,11 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
-	"github.com/eitanity/kanonarion/internal/cli"
-	vulnsqlite "github.com/eitanity/kanonarion/internal/vuln/adapters/store/sqlite"
-	"github.com/eitanity/kanonarion/internal/vuln/domain"
-	"github.com/eitanity/kanonarion/pkg/kanonarion"
+	"code.eitanity.com/kanonarion/internal/adapters/sqlitestore"
+	"code.eitanity.com/kanonarion/internal/cli"
+	vulnsqlite "code.eitanity.com/kanonarion/internal/vuln/adapters/store/sqlite"
+	"code.eitanity.com/kanonarion/internal/vuln/domain"
+	"code.eitanity.com/kanonarion/pkg/kanonarion"
 )
 
 // vulnMirror serves the fixture advisory database in vuln.go.dev's layout over

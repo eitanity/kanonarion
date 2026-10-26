@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/vuln/vulntest"
+	"code.eitanity.com/kanonarion/internal/vuln/vulntest"
 )
 
 // A refresh the run's cancellation stopped returns the cancellation. It is not a

@@ -9,13 +9,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/cli/testfakes"
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
-	licdomain "github.com/eitanity/kanonarion/internal/license/domain"
-	vulndomain "github.com/eitanity/kanonarion/internal/vuln/domain"
-	vulnports "github.com/eitanity/kanonarion/internal/vuln/ports"
-	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
+	"code.eitanity.com/kanonarion/internal/cli/testfakes"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate/coordinatetest"
+	licdomain "code.eitanity.com/kanonarion/internal/license/domain"
+	vulndomain "code.eitanity.com/kanonarion/internal/vuln/domain"
+	vulnports "code.eitanity.com/kanonarion/internal/vuln/ports"
+	walkdomain "code.eitanity.com/kanonarion/internal/walk/domain"
 )
 
 // The three ways the scan leg can fall short, each as the derivation records it.

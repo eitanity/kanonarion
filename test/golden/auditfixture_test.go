@@ -44,16 +44,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
+	"code.eitanity.com/kanonarion/internal/adapters/sqlitestore"
 
-	fetchsqlite "github.com/eitanity/kanonarion/internal/adapters/factstore/sqlite"
-	cgsqlite "github.com/eitanity/kanonarion/internal/callgraph/adapters/store/sqlite"
-	licsqlite "github.com/eitanity/kanonarion/internal/license/adapters/store/sqlite"
-	stalesqlite "github.com/eitanity/kanonarion/internal/staleness/adapters/store/sqlite"
-	staledomain "github.com/eitanity/kanonarion/internal/staleness/domain"
-	vulnsqlite "github.com/eitanity/kanonarion/internal/vuln/adapters/store/sqlite"
-	"github.com/eitanity/kanonarion/internal/vuln/vulntest"
-	walksqlite "github.com/eitanity/kanonarion/internal/walk/adapters/walks/sqlite"
+	fetchsqlite "code.eitanity.com/kanonarion/internal/adapters/factstore/sqlite"
+	cgsqlite "code.eitanity.com/kanonarion/internal/callgraph/adapters/store/sqlite"
+	licsqlite "code.eitanity.com/kanonarion/internal/license/adapters/store/sqlite"
+	stalesqlite "code.eitanity.com/kanonarion/internal/staleness/adapters/store/sqlite"
+	staledomain "code.eitanity.com/kanonarion/internal/staleness/domain"
+	vulnsqlite "code.eitanity.com/kanonarion/internal/vuln/adapters/store/sqlite"
+	"code.eitanity.com/kanonarion/internal/vuln/vulntest"
+	walksqlite "code.eitanity.com/kanonarion/internal/walk/adapters/walks/sqlite"
 )
 
 // auditSnapshotVersion names the advisory database generation the audit fixture

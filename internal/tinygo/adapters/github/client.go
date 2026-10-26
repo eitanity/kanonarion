@@ -19,9 +19,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/adapters/goenv"
-	"github.com/eitanity/kanonarion/internal/tinygo/domain"
-	"github.com/eitanity/kanonarion/internal/tinygo/ports"
+	"code.eitanity.com/kanonarion/internal/adapters/goenv"
+	"code.eitanity.com/kanonarion/internal/tinygo/domain"
+	"code.eitanity.com/kanonarion/internal/tinygo/ports"
 )
 
 // ErrNetworkForbidden reports that the environment declares no network, so

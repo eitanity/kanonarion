@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
+	domain2 "code.eitanity.com/kanonarion/internal/fetch/domain"
 	"golang.org/x/mod/modfile"
 	"golang.org/x/mod/module"
 )

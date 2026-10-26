@@ -17,9 +17,9 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/eitanity/kanonarion/internal/adapters/childproc"
-	"github.com/eitanity/kanonarion/internal/adapters/goenv"
-	"github.com/eitanity/kanonarion/internal/gotoolchain"
+	"code.eitanity.com/kanonarion/internal/adapters/childproc"
+	"code.eitanity.com/kanonarion/internal/adapters/goenv"
+	"code.eitanity.com/kanonarion/internal/gotoolchain"
 )
 
 // ErrNotOnPath is the refusal for a declaration with no tinygo to ask.

@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
-	"github.com/eitanity/kanonarion/internal/license/domain"
+	"code.eitanity.com/kanonarion/internal/coordinate/coordinatetest"
+	"code.eitanity.com/kanonarion/internal/license/domain"
 )
 
 func TestStore_LoadOverrides(t *testing.T) {

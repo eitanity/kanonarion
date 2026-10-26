@@ -6,10 +6,10 @@ import (
 	"strings"
 	"testing"
 
-	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
-	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
-	"github.com/eitanity/kanonarion/internal/gotoolchain"
-	ifacedomain "github.com/eitanity/kanonarion/internal/iface/domain"
+	cgdomain "code.eitanity.com/kanonarion/internal/callgraph/domain"
+	cgports "code.eitanity.com/kanonarion/internal/callgraph/ports"
+	"code.eitanity.com/kanonarion/internal/gotoolchain"
+	ifacedomain "code.eitanity.com/kanonarion/internal/iface/domain"
 )
 
 // A coverage limit is a field, and "not recorded" is a value.

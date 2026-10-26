@@ -12,10 +12,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/adapters/goenv"
-	coordinatetest "github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
-	"github.com/eitanity/kanonarion/internal/vuln/adapters/vulndb/osv"
-	"github.com/eitanity/kanonarion/internal/vuln/domain"
+	"code.eitanity.com/kanonarion/internal/adapters/goenv"
+	coordinatetest "code.eitanity.com/kanonarion/internal/coordinate/coordinatetest"
+	"code.eitanity.com/kanonarion/internal/vuln/adapters/vulndb/osv"
+	"code.eitanity.com/kanonarion/internal/vuln/domain"
 )
 
 // permitted declares the contract absent: a GOPROXY naming a real proxy, and no

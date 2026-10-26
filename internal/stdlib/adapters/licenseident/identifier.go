@@ -7,8 +7,8 @@ import (
 	"context"
 	"fmt"
 
-	licports "github.com/eitanity/kanonarion/internal/license/ports"
-	"github.com/eitanity/kanonarion/internal/stdlib/ports"
+	licports "code.eitanity.com/kanonarion/internal/license/ports"
+	"code.eitanity.com/kanonarion/internal/stdlib/ports"
 )
 
 // Identifier wraps a license.LicenseDetector.

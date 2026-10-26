@@ -6,10 +6,10 @@ import (
 	"log/slog"
 	"testing"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
-	"github.com/eitanity/kanonarion/internal/stdlib/adapters/walkbridge"
-	stdlibapp "github.com/eitanity/kanonarion/internal/stdlib/application"
-	"github.com/eitanity/kanonarion/internal/stdlib/domain"
+	fetchdomain "code.eitanity.com/kanonarion/internal/fetch/domain"
+	"code.eitanity.com/kanonarion/internal/stdlib/adapters/walkbridge"
+	stdlibapp "code.eitanity.com/kanonarion/internal/stdlib/application"
+	"code.eitanity.com/kanonarion/internal/stdlib/domain"
 )
 
 // stub ports for constructing a real Acquirer whose behaviour the bridge maps.

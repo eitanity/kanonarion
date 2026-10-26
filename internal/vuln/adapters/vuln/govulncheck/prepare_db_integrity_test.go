@@ -9,9 +9,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/vuln/domain"
-	"github.com/eitanity/kanonarion/internal/vuln/ports"
-	"github.com/eitanity/kanonarion/internal/vuln/vulntest"
+	"code.eitanity.com/kanonarion/internal/vuln/domain"
+	"code.eitanity.com/kanonarion/internal/vuln/ports"
+	"code.eitanity.com/kanonarion/internal/vuln/vulntest"
 )
 
 // snapshotFaultStore fails the snapshot read under test. The embedded nil port

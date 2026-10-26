@@ -8,8 +8,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/eitanity/kanonarion/internal/config"
-	"github.com/eitanity/kanonarion/internal/config/domain"
+	"code.eitanity.com/kanonarion/internal/config"
+	"code.eitanity.com/kanonarion/internal/config/domain"
 )
 
 // Backend is a storage implementation a binary registers, selected by the

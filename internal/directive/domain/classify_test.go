@@ -3,7 +3,7 @@ package domain_test
 import (
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/directive/domain"
+	"code.eitanity.com/kanonarion/internal/directive/domain"
 )
 
 // TestClassify covers every rule, including the fail-safe:

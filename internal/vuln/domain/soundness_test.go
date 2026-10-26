@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"testing"
 
-	callgraphdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
-	"github.com/eitanity/kanonarion/internal/vuln/domain"
+	callgraphdomain "code.eitanity.com/kanonarion/internal/callgraph/domain"
+	"code.eitanity.com/kanonarion/internal/vuln/domain"
 )
 
 // negative builds a not-reachable finding derived by the named analyser at the

@@ -3,10 +3,10 @@ package kanonarion
 import (
 	"fmt"
 
-	"github.com/eitanity/kanonarion/internal/composition"
-	"github.com/eitanity/kanonarion/internal/driver"
-	staleapp "github.com/eitanity/kanonarion/internal/staleness/application"
-	stalenessports "github.com/eitanity/kanonarion/internal/staleness/ports"
+	"code.eitanity.com/kanonarion/internal/composition"
+	"code.eitanity.com/kanonarion/internal/driver"
+	staleapp "code.eitanity.com/kanonarion/internal/staleness/application"
+	stalenessports "code.eitanity.com/kanonarion/internal/staleness/ports"
 )
 
 // StalenessResolver answers, per module path and pinned version, how far

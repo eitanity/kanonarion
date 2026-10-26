@@ -9,10 +9,10 @@ import (
 	"testing/fstest"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 
-	"github.com/eitanity/kanonarion/internal/iface/adapters/extractor/godoc"
-	domain2 "github.com/eitanity/kanonarion/internal/iface/domain"
+	"code.eitanity.com/kanonarion/internal/iface/adapters/extractor/godoc"
+	domain2 "code.eitanity.com/kanonarion/internal/iface/domain"
 )
 
 type fixedClock struct{ t time.Time }

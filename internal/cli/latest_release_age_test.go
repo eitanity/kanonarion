@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	staleapp "github.com/eitanity/kanonarion/internal/staleness/application"
-	staledomain "github.com/eitanity/kanonarion/internal/staleness/domain"
+	staleapp "code.eitanity.com/kanonarion/internal/staleness/application"
+	staledomain "code.eitanity.com/kanonarion/internal/staleness/domain"
 )
 
 // answerWithLatest builds a staleness answer whose latest version shipped

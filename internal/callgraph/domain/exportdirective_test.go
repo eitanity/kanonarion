@@ -6,7 +6,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/callgraph/domain"
+	"code.eitanity.com/kanonarion/internal/callgraph/domain"
 )
 
 func TestParseExportDirective(t *testing.T) {

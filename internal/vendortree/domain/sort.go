@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/eitanity/kanonarion/internal/versionorder"
+	"code.eitanity.com/kanonarion/internal/versionorder"
 )
 
 // VendoredModuleLess is the canonical ordering for VendoredModule slices: the

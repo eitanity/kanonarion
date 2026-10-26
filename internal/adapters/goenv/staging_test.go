@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/adapters/goenv"
+	"code.eitanity.com/kanonarion/internal/adapters/goenv"
 )
 
 // noScratchDir makes os.MkdirTemp fail for the rest of the test by pointing the

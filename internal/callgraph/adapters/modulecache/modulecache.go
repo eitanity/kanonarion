@@ -15,12 +15,12 @@ import (
 	"io"
 	"log/slog"
 
-	"github.com/eitanity/kanonarion/internal/adapters/interrupt"
-	"github.com/eitanity/kanonarion/internal/adapters/modcache"
-	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
-	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
+	"code.eitanity.com/kanonarion/internal/adapters/interrupt"
+	"code.eitanity.com/kanonarion/internal/adapters/modcache"
+	cgports "code.eitanity.com/kanonarion/internal/callgraph/ports"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	fetchports "code.eitanity.com/kanonarion/internal/fetch/ports"
+	walkdomain "code.eitanity.com/kanonarion/internal/walk/domain"
 	"golang.org/x/mod/modfile"
 	"golang.org/x/mod/semver"
 )

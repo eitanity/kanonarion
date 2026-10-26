@@ -6,8 +6,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/eitanity/kanonarion/internal/versionorder"
-	"github.com/eitanity/kanonarion/internal/vuln/domain"
+	"code.eitanity.com/kanonarion/internal/versionorder"
+	"code.eitanity.com/kanonarion/internal/vuln/domain"
 )
 
 // FindingsIndexDefect names one vulnerability_findings_index row that the

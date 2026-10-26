@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
-	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
+	"code.eitanity.com/kanonarion/internal/adapters/recordseal"
+	walkports "code.eitanity.com/kanonarion/internal/walk/ports"
 )
 
 // A misfiled record is evidence in doubt whichever store raised it, including

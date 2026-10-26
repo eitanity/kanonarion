@@ -3,8 +3,8 @@ package cli
 import (
 	"errors"
 
-	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
-	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
+	"code.eitanity.com/kanonarion/internal/adapters/recordseal"
+	walkports "code.eitanity.com/kanonarion/internal/walk/ports"
 )
 
 func isWalkNotFound(err error) bool  { return errors.Is(err, walkports.ErrWalkNotFound) }

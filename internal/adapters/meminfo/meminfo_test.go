@@ -7,7 +7,7 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/adapters/meminfo"
+	"code.eitanity.com/kanonarion/internal/adapters/meminfo"
 )
 
 // writeMeminfo writes body to a temp file and returns its path.

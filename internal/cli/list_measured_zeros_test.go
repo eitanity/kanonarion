@@ -5,13 +5,13 @@ import (
 	"encoding/json"
 	"testing"
 
-	cgapp "github.com/eitanity/kanonarion/internal/callgraph/application"
-	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
-	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
-	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
-	ifaceapp "github.com/eitanity/kanonarion/internal/iface/application"
-	ifacedomain "github.com/eitanity/kanonarion/internal/iface/domain"
-	ifaceports "github.com/eitanity/kanonarion/internal/iface/ports"
+	cgapp "code.eitanity.com/kanonarion/internal/callgraph/application"
+	cgdomain "code.eitanity.com/kanonarion/internal/callgraph/domain"
+	cgports "code.eitanity.com/kanonarion/internal/callgraph/ports"
+	"code.eitanity.com/kanonarion/internal/coordinate/coordinatetest"
+	ifaceapp "code.eitanity.com/kanonarion/internal/iface/application"
+	ifacedomain "code.eitanity.com/kanonarion/internal/iface/domain"
+	ifaceports "code.eitanity.com/kanonarion/internal/iface/ports"
 )
 
 // interfaceListRows renders the list through the production presenter and
