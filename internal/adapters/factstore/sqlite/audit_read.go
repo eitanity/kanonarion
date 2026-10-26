@@ -11,7 +11,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/audit"
+	"code.eitanity.com/kanonarion/internal/audit"
 )
 
 // auditLogName is the assurance log's file name under a store root.

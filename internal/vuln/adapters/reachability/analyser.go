@@ -5,12 +5,12 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 
-	callgraphdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
+	callgraphdomain "code.eitanity.com/kanonarion/internal/callgraph/domain"
 
-	"github.com/eitanity/kanonarion/internal/vuln/domain"
-	"github.com/eitanity/kanonarion/internal/vuln/ports"
+	"code.eitanity.com/kanonarion/internal/vuln/domain"
+	"code.eitanity.com/kanonarion/internal/vuln/ports"
 )
 
 // Analyser implements ports.ReachabilityAnalyser using static call graph analysis.

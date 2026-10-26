@@ -9,10 +9,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/composition"
-	"github.com/eitanity/kanonarion/internal/composition/storage"
-	sqlitestorage "github.com/eitanity/kanonarion/internal/composition/storage/sqlite"
-	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
+	"code.eitanity.com/kanonarion/internal/composition"
+	"code.eitanity.com/kanonarion/internal/composition/storage"
+	sqlitestorage "code.eitanity.com/kanonarion/internal/composition/storage/sqlite"
+	walkports "code.eitanity.com/kanonarion/internal/walk/ports"
 )
 
 // oneWalkStore is a walk store that is not SQLite: it holds one walk and

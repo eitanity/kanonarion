@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	fetchdomain "code.eitanity.com/kanonarion/internal/fetch/domain"
 )
 
 // unsealed is a measurement written before the seal existed: no content hash,

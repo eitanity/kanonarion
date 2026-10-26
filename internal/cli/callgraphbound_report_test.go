@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	extextractor "github.com/eitanity/kanonarion/internal/extract/adapters/extractor/local"
+	extextractor "code.eitanity.com/kanonarion/internal/extract/adapters/extractor/local"
 )
 
 // TestDescribeCallgraphBound covers the run's own statement of the bound it

@@ -5,12 +5,12 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate/coordinatetest"
 
-	"github.com/eitanity/kanonarion/internal/example/application"
-	"github.com/eitanity/kanonarion/internal/example/domain"
-	exampleports "github.com/eitanity/kanonarion/internal/example/ports"
+	"code.eitanity.com/kanonarion/internal/example/application"
+	"code.eitanity.com/kanonarion/internal/example/domain"
+	exampleports "code.eitanity.com/kanonarion/internal/example/ports"
 )
 
 // queryExFakeStore is a minimal ExampleStore for QueryExamplesUseCase tests.

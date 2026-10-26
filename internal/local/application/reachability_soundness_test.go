@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/local/domain"
-	"github.com/eitanity/kanonarion/internal/local/ports"
+	"code.eitanity.com/kanonarion/internal/local/domain"
+	"code.eitanity.com/kanonarion/internal/local/ports"
 )
 
 // The local probe publishes two kinds of negative and they are not the same

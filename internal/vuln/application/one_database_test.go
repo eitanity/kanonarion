@@ -3,7 +3,7 @@ package application_test
 import (
 	"testing"
 
-	application "github.com/eitanity/kanonarion/internal/vuln/application"
+	application "code.eitanity.com/kanonarion/internal/vuln/application"
 )
 
 // TestScanWalk_CoordinateMatchIsAskedForTheRecordsOwnSnapshot is the regression

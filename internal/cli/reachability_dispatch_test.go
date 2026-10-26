@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
+	vuldomain "code.eitanity.com/kanonarion/internal/vuln/domain"
 )
 
 // TestHopDispatchLine_NeverRendersAnAbsenceAsADirectCall is the rendering half

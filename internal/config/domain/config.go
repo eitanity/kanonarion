@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/gotoolchain"
+	"code.eitanity.com/kanonarion/internal/gotoolchain"
 )
 
 // SupportedSchemaVersion is the config schema version this implementation

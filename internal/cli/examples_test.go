@@ -9,12 +9,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 
-	"github.com/eitanity/kanonarion/internal/cli/testfakes"
-	exapp "github.com/eitanity/kanonarion/internal/example/application"
-	exdomain "github.com/eitanity/kanonarion/internal/example/domain"
-	exports "github.com/eitanity/kanonarion/internal/example/ports"
+	"code.eitanity.com/kanonarion/internal/cli/testfakes"
+	exapp "code.eitanity.com/kanonarion/internal/example/application"
+	exdomain "code.eitanity.com/kanonarion/internal/example/domain"
+	exports "code.eitanity.com/kanonarion/internal/example/ports"
 )
 
 func TestExamplesListCmd_EmptyStore(t *testing.T) {

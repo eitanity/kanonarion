@@ -11,8 +11,8 @@ import (
 	"strings"
 	"testing"
 
-	osvdb "github.com/eitanity/kanonarion/internal/vuln/adapters/vulndb/osv"
-	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
+	osvdb "code.eitanity.com/kanonarion/internal/vuln/adapters/vulndb/osv"
+	vuldomain "code.eitanity.com/kanonarion/internal/vuln/domain"
 )
 
 // withSnapshotsHeld makes the store report held as its snapshots, newest first.

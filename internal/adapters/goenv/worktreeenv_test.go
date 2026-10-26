@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/adapters/goenv"
+	"code.eitanity.com/kanonarion/internal/adapters/goenv"
 )
 
 // check asserts one producer's output against the posture of the given name.

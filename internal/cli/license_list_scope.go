@@ -6,10 +6,10 @@ import (
 	"io"
 	"sort"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
-	licapp "github.com/eitanity/kanonarion/internal/license/application"
-	licports "github.com/eitanity/kanonarion/internal/license/ports"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	fetchdomain "code.eitanity.com/kanonarion/internal/fetch/domain"
+	licapp "code.eitanity.com/kanonarion/internal/license/application"
+	licports "code.eitanity.com/kanonarion/internal/license/ports"
 )
 
 // This file scopes `license-list` to the modules a build compiles.

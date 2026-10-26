@@ -6,11 +6,11 @@ import (
 	"io"
 	"strings"
 
-	"github.com/eitanity/kanonarion/internal/audit"
-	"github.com/eitanity/kanonarion/internal/composition/storage"
-	"github.com/eitanity/kanonarion/internal/config/domain"
-	configports "github.com/eitanity/kanonarion/internal/config/ports"
-	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
+	"code.eitanity.com/kanonarion/internal/audit"
+	"code.eitanity.com/kanonarion/internal/composition/storage"
+	"code.eitanity.com/kanonarion/internal/config/domain"
+	configports "code.eitanity.com/kanonarion/internal/config/ports"
+	fetchports "code.eitanity.com/kanonarion/internal/fetch/ports"
 )
 
 // configOverride is a flag that changed a gate for this invocation only.

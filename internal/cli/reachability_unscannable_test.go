@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
+	vuldomain "code.eitanity.com/kanonarion/internal/vuln/domain"
 )
 
 const unscannableNote = "source analysis unavailable: requires a module version outside the analysed project toolchain"

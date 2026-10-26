@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/adapters/clock"
+	"code.eitanity.com/kanonarion/internal/adapters/clock"
 )
 
 func TestSystem_Now(t *testing.T) {

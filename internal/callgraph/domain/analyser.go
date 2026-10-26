@@ -6,7 +6,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 )
 
 // AnalyserVersion is the golang.org/x/tools version that type-checked a module

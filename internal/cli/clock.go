@@ -3,8 +3,8 @@ package cli
 import (
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/adapters/clock"
-	staleports "github.com/eitanity/kanonarion/internal/staleness/ports"
+	"code.eitanity.com/kanonarion/internal/adapters/clock"
+	staleports "code.eitanity.com/kanonarion/internal/staleness/ports"
 )
 
 // cliClock is the wall clock every CLI-layer time question goes through.

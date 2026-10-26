@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/adapters/goenv"
+	"code.eitanity.com/kanonarion/internal/adapters/goenv"
 )
 
 // listStub is a go that logs its arguments and frame variables and lists

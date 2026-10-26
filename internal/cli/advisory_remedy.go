@@ -5,10 +5,10 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
-	"github.com/eitanity/kanonarion/internal/composition/storage"
-	osvdb "github.com/eitanity/kanonarion/internal/vuln/adapters/vulndb/osv"
-	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
+	"code.eitanity.com/kanonarion/internal/adapters/recordseal"
+	"code.eitanity.com/kanonarion/internal/composition/storage"
+	osvdb "code.eitanity.com/kanonarion/internal/vuln/adapters/vulndb/osv"
+	vuldomain "code.eitanity.com/kanonarion/internal/vuln/domain"
 )
 
 // discardSetAside drops the set-aside rows an inspection read meets: the

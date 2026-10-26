@@ -5,13 +5,13 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 
-	callgraphdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
-	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
+	callgraphdomain "code.eitanity.com/kanonarion/internal/callgraph/domain"
+	cgports "code.eitanity.com/kanonarion/internal/callgraph/ports"
 
-	"github.com/eitanity/kanonarion/internal/local/adapters/dependencies/store"
-	"github.com/eitanity/kanonarion/internal/local/ports"
+	"code.eitanity.com/kanonarion/internal/local/adapters/dependencies/store"
+	"code.eitanity.com/kanonarion/internal/local/ports"
 )
 
 // fakeCallGraphStore is a minimal in-memory implementation of cgports.CallGraphStore.

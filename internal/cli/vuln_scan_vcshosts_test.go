@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	configdomain "github.com/eitanity/kanonarion/internal/config/domain"
-	vulnapp "github.com/eitanity/kanonarion/internal/vuln/application"
-	vulndomain "github.com/eitanity/kanonarion/internal/vuln/domain"
+	configdomain "code.eitanity.com/kanonarion/internal/config/domain"
+	vulnapp "code.eitanity.com/kanonarion/internal/vuln/application"
+	vulndomain "code.eitanity.com/kanonarion/internal/vuln/domain"
 )
 
 // noHostScan satisfies the CLI's narrow ScanWalkUseCase and nothing more, which

@@ -47,7 +47,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/gotoolchain"
+	"code.eitanity.com/kanonarion/internal/gotoolchain"
 )
 
 // WaitDelay bounds how long Wait blocks on the child's I/O pipes after the

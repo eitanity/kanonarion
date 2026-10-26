@@ -7,8 +7,8 @@ import (
 	"io"
 	"strings"
 
-	"github.com/eitanity/kanonarion/internal/walk/application"
-	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
+	"code.eitanity.com/kanonarion/internal/walk/application"
+	walkports "code.eitanity.com/kanonarion/internal/walk/ports"
 	"github.com/spf13/cobra"
 )
 

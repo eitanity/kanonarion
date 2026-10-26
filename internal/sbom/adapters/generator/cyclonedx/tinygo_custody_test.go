@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/sbom/adapters/generator/cyclonedx"
-	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
+	"code.eitanity.com/kanonarion/internal/sbom/adapters/generator/cyclonedx"
+	walkdomain "code.eitanity.com/kanonarion/internal/walk/domain"
 )
 
 // tinygoComponentProperties generates the SBOM of a pico walk whose TinyGo

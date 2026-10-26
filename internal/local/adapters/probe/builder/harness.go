@@ -14,7 +14,7 @@ import (
 	"sort"
 	"strings"
 
-	localdomain "github.com/eitanity/kanonarion/internal/local/domain"
+	localdomain "code.eitanity.com/kanonarion/internal/local/domain"
 )
 
 // exportedFunc records one exported function or method reference for the harness.

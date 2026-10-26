@@ -21,16 +21,16 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/adapters/goenv"
-	proxyadapter "github.com/eitanity/kanonarion/internal/adapters/proxy/direct"
-	"github.com/eitanity/kanonarion/internal/adapters/sumdb/gosum"
-	"github.com/eitanity/kanonarion/internal/adapters/vcs/gitexec"
-	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
-	stalegolist "github.com/eitanity/kanonarion/internal/staleness/adapters/golist"
-	"github.com/eitanity/kanonarion/internal/stdlib/adapters/gitlsremote"
-	"github.com/eitanity/kanonarion/internal/stdlib/adapters/godev"
-	stdlibdomain "github.com/eitanity/kanonarion/internal/stdlib/domain"
-	osvdb "github.com/eitanity/kanonarion/internal/vuln/adapters/vulndb/osv"
+	"code.eitanity.com/kanonarion/internal/adapters/goenv"
+	proxyadapter "code.eitanity.com/kanonarion/internal/adapters/proxy/direct"
+	"code.eitanity.com/kanonarion/internal/adapters/sumdb/gosum"
+	"code.eitanity.com/kanonarion/internal/adapters/vcs/gitexec"
+	"code.eitanity.com/kanonarion/internal/coordinate/coordinatetest"
+	stalegolist "code.eitanity.com/kanonarion/internal/staleness/adapters/golist"
+	"code.eitanity.com/kanonarion/internal/stdlib/adapters/gitlsremote"
+	"code.eitanity.com/kanonarion/internal/stdlib/adapters/godev"
+	stdlibdomain "code.eitanity.com/kanonarion/internal/stdlib/domain"
+	osvdb "code.eitanity.com/kanonarion/internal/vuln/adapters/vulndb/osv"
 )
 
 // flagAirGapFixture is a one-module project whose module is published to a file

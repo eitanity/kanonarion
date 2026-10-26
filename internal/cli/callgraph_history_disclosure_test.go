@@ -7,13 +7,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate/coordinatetest"
 
-	cgsqlite "github.com/eitanity/kanonarion/internal/callgraph/adapters/store/sqlite"
-	cgapp "github.com/eitanity/kanonarion/internal/callgraph/application"
-	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	cgsqlite "code.eitanity.com/kanonarion/internal/callgraph/adapters/store/sqlite"
+	cgapp "code.eitanity.com/kanonarion/internal/callgraph/application"
+	cgdomain "code.eitanity.com/kanonarion/internal/callgraph/domain"
+	fetchdomain "code.eitanity.com/kanonarion/internal/fetch/domain"
 )
 
 // disclosureCoord is the coordinate every case here holds generations of.

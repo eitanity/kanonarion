@@ -31,7 +31,7 @@ linters:
     wrapcheck:
       # Only errors from outside this module need wrapping.
       ignore-package-globs:
-        - github.com/eitanity/kanonarion/*
+        - code.eitanity.com/kanonarion/*
     gocyclo:
       min-complexity: 15
     forbidigo:

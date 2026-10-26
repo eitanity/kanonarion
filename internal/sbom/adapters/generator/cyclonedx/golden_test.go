@@ -6,15 +6,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/sbom/adapters/generator/cyclonedx"
-	"github.com/eitanity/kanonarion/internal/sbom/domain"
-	"github.com/eitanity/kanonarion/internal/sbom/ports"
+	"code.eitanity.com/kanonarion/internal/sbom/adapters/generator/cyclonedx"
+	"code.eitanity.com/kanonarion/internal/sbom/domain"
+	"code.eitanity.com/kanonarion/internal/sbom/ports"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
-	licensedomain "github.com/eitanity/kanonarion/internal/license/domain"
-	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
+	fetchdomain "code.eitanity.com/kanonarion/internal/fetch/domain"
+	licensedomain "code.eitanity.com/kanonarion/internal/license/domain"
+	walkdomain "code.eitanity.com/kanonarion/internal/walk/domain"
 )
 
 // TestGoldenByteLock locks generator output byte-for-byte. The fixture was

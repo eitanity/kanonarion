@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
+	cgdomain "code.eitanity.com/kanonarion/internal/callgraph/domain"
 )
 
 // rankInf is the min-confidence rank of a zero-edge path (a root reached with

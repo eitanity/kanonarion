@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/walk/adapters/buildlist/tinygo"
-	"github.com/eitanity/kanonarion/internal/walk/adapters/buildlist/tinygotest"
+	"code.eitanity.com/kanonarion/internal/walk/adapters/buildlist/tinygo"
+	"code.eitanity.com/kanonarion/internal/walk/adapters/buildlist/tinygotest"
 )
 
 // With tinygo on PATH, a package is TinyGo's when its directory is under TINYGOROOT/src.

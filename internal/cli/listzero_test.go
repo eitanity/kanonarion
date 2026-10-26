@@ -3,16 +3,16 @@ package cli
 import (
 	"bytes"
 	"context"
-	cgapp "github.com/eitanity/kanonarion/internal/callgraph/application"
 	"io"
 	"strings"
 	"testing"
 
-	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
-	"github.com/eitanity/kanonarion/internal/cli/testfakes"
-	licapp "github.com/eitanity/kanonarion/internal/license/application"
-	licdomain "github.com/eitanity/kanonarion/internal/license/domain"
-	licports "github.com/eitanity/kanonarion/internal/license/ports"
+	cgapp "code.eitanity.com/kanonarion/internal/callgraph/application"
+	cgports "code.eitanity.com/kanonarion/internal/callgraph/ports"
+	"code.eitanity.com/kanonarion/internal/cli/testfakes"
+	licapp "code.eitanity.com/kanonarion/internal/license/application"
+	licdomain "code.eitanity.com/kanonarion/internal/license/domain"
+	licports "code.eitanity.com/kanonarion/internal/license/ports"
 )
 
 // populatedCallGraphList is the corpus the defect was measured against: a store

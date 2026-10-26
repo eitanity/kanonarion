@@ -3,10 +3,11 @@ package sqlite_test
 import (
 	"context"
 	"encoding/json"
-	directivesqlite "github.com/eitanity/kanonarion/internal/directive/adapters/store/sqlite"
 	"strings"
 	"testing"
 	"time"
+
+	directivesqlite "code.eitanity.com/kanonarion/internal/directive/adapters/store/sqlite"
 )
 
 // A record written before the config hash was kept has no ConfigHash key in

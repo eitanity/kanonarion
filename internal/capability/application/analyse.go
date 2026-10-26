@@ -5,10 +5,10 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 
-	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
-	capdomain "github.com/eitanity/kanonarion/internal/capability/domain"
+	cgdomain "code.eitanity.com/kanonarion/internal/callgraph/domain"
+	capdomain "code.eitanity.com/kanonarion/internal/capability/domain"
 )
 
 // ErrNoCallGraph is returned when no call graph record exists for the requested

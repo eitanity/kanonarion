@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
-	"github.com/eitanity/kanonarion/internal/staleness/ports"
+	fetchdomain "code.eitanity.com/kanonarion/internal/fetch/domain"
+	"code.eitanity.com/kanonarion/internal/staleness/ports"
 )
 
 // fakeClock stands in for time: sleeping advances it, and so does each request

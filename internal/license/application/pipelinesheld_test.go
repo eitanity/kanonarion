@@ -6,10 +6,10 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate/coordinatetest"
 
-	"github.com/eitanity/kanonarion/internal/license/application"
+	"code.eitanity.com/kanonarion/internal/license/application"
 )
 
 // pipelineListingStore is a store that can list the pipelines a coordinate is

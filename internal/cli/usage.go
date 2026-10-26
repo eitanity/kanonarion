@@ -11,12 +11,12 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/mod/semver"
 
-	cgapp "github.com/eitanity/kanonarion/internal/callgraph/application"
-	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
-	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	"github.com/eitanity/kanonarion/internal/gotoolchain"
-	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
+	cgapp "code.eitanity.com/kanonarion/internal/callgraph/application"
+	cgdomain "code.eitanity.com/kanonarion/internal/callgraph/domain"
+	cgports "code.eitanity.com/kanonarion/internal/callgraph/ports"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/gotoolchain"
+	walkports "code.eitanity.com/kanonarion/internal/walk/ports"
 )
 
 // usageConfidenceNote is the distinction the whole report rests on, printed

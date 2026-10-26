@@ -3,7 +3,7 @@ package domain_test
 import (
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/sbom/domain"
+	"code.eitanity.com/kanonarion/internal/sbom/domain"
 )
 
 // TestComponentCompare_IsKeyedOnEveryField exercises the component comparator

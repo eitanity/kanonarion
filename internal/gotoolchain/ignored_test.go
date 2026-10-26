@@ -3,7 +3,7 @@ package gotoolchain_test
 import (
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/gotoolchain"
+	"code.eitanity.com/kanonarion/internal/gotoolchain"
 )
 
 func TestIgnoredDir(t *testing.T) {

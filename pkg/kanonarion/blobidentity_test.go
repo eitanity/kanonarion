@@ -3,7 +3,7 @@ package kanonarion_test
 import (
 	"testing"
 
-	"github.com/eitanity/kanonarion/pkg/kanonarion"
+	"code.eitanity.com/kanonarion/pkg/kanonarion"
 )
 
 // An external implementer of BlobStore cannot import anything internal, so the

@@ -5,7 +5,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/callgraph/domain"
+	"code.eitanity.com/kanonarion/internal/callgraph/domain"
 )
 
 // TestDerivationFor_SeparatesAForcedRunFromAGatedOne is the whole point of the

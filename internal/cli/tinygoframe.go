@@ -16,11 +16,11 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
-	cganalyser "github.com/eitanity/kanonarion/internal/callgraph/adapters/analyser/staticcha"
-	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	"github.com/eitanity/kanonarion/internal/gotoolchain"
-	"github.com/eitanity/kanonarion/internal/walk/adapters/buildlist/tinygo"
+	cganalyser "code.eitanity.com/kanonarion/internal/callgraph/adapters/analyser/staticcha"
+	cgdomain "code.eitanity.com/kanonarion/internal/callgraph/domain"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/gotoolchain"
+	"code.eitanity.com/kanonarion/internal/walk/adapters/buildlist/tinygo"
 )
 
 // invokedCmd and invokedArgs are this invocation's command and positionals, so

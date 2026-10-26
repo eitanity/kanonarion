@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/cli/testfakes"
-	dirapp "github.com/eitanity/kanonarion/internal/directive/application"
-	directivedomain "github.com/eitanity/kanonarion/internal/directive/domain"
+	"code.eitanity.com/kanonarion/internal/cli/testfakes"
+	dirapp "code.eitanity.com/kanonarion/internal/directive/application"
+	directivedomain "code.eitanity.com/kanonarion/internal/directive/domain"
 )
 
 // A missing scan is surfaced as ExitNotFound, never an empty success.

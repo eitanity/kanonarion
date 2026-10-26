@@ -5,12 +5,12 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 
-	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
-	vulnports "github.com/eitanity/kanonarion/internal/vuln/ports"
-	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
-	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
+	vuldomain "code.eitanity.com/kanonarion/internal/vuln/domain"
+	vulnports "code.eitanity.com/kanonarion/internal/vuln/ports"
+	walkdomain "code.eitanity.com/kanonarion/internal/walk/domain"
+	walkports "code.eitanity.com/kanonarion/internal/walk/ports"
 )
 
 // vulnBatchCtx holds snapshot and scan-run data fetched once for a walk batch,

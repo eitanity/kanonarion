@@ -10,16 +10,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/adapters/blobcodec"
-	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
-	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
-	stdlibsqlite "github.com/eitanity/kanonarion/internal/stdlib/adapters/store/sqlite"
-	stdlibdomain "github.com/eitanity/kanonarion/internal/stdlib/domain"
-	vulnsqlite "github.com/eitanity/kanonarion/internal/vuln/adapters/store/sqlite"
-	vulndomain "github.com/eitanity/kanonarion/internal/vuln/domain"
-	vulnports "github.com/eitanity/kanonarion/internal/vuln/ports"
-	walksqlite "github.com/eitanity/kanonarion/internal/walk/adapters/walks/sqlite"
+	"code.eitanity.com/kanonarion/internal/adapters/blobcodec"
+	"code.eitanity.com/kanonarion/internal/adapters/recordseal"
+	"code.eitanity.com/kanonarion/internal/adapters/sqlitestore"
+	fetchdomain "code.eitanity.com/kanonarion/internal/fetch/domain"
+	stdlibsqlite "code.eitanity.com/kanonarion/internal/stdlib/adapters/store/sqlite"
+	stdlibdomain "code.eitanity.com/kanonarion/internal/stdlib/domain"
+	vulnsqlite "code.eitanity.com/kanonarion/internal/vuln/adapters/store/sqlite"
+	vulndomain "code.eitanity.com/kanonarion/internal/vuln/domain"
+	vulnports "code.eitanity.com/kanonarion/internal/vuln/ports"
+	walksqlite "code.eitanity.com/kanonarion/internal/walk/adapters/walks/sqlite"
 )
 
 // A walk, an extraction run, a scan run or a stdlib custody measurement written

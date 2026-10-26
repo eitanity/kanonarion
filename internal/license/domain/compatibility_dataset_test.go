@@ -4,7 +4,7 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/license/domain"
+	"code.eitanity.com/kanonarion/internal/license/domain"
 )
 
 // expectedPermissive is the compatibility dataset's permissive tier, written

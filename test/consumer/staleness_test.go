@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/pkg/kanonarion"
+	"code.eitanity.com/kanonarion/pkg/kanonarion"
 )
 
 // The module the upstream knows: one version at its v1 path, nothing above.

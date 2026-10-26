@@ -3,7 +3,7 @@ package domain_test
 import (
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/walk/domain"
+	"code.eitanity.com/kanonarion/internal/walk/domain"
 )
 
 // Four resolution sources name a module this walk acquired no bytes for and

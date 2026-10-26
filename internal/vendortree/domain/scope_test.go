@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/vendortree/domain"
+	"code.eitanity.com/kanonarion/internal/vendortree/domain"
 )
 
 // zeroPackageTree is base() plus a module the module graph carries and no

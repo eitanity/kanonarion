@@ -3,7 +3,7 @@ package domain
 import (
 	"maps"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 )
 
 // CopyrightDeclaration is an operator-recorded copyright line for a module the

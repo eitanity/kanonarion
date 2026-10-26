@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	nativedomain "github.com/eitanity/kanonarion/internal/native/domain"
-	nativeports "github.com/eitanity/kanonarion/internal/native/ports"
+	nativedomain "code.eitanity.com/kanonarion/internal/native/domain"
+	nativeports "code.eitanity.com/kanonarion/internal/native/ports"
 )
 
 // The defect this file pins: the native fact could be read one module at a

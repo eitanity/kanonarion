@@ -3,8 +3,8 @@ package domain_test
 import (
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
-	"github.com/eitanity/kanonarion/internal/license/domain"
+	"code.eitanity.com/kanonarion/internal/coordinate/coordinatetest"
+	"code.eitanity.com/kanonarion/internal/license/domain"
 )
 
 // synthDeclaration is an obviously invented declaration. A fixture that reads

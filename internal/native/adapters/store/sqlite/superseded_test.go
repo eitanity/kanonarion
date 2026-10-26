@@ -5,9 +5,9 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	nativesqlite "github.com/eitanity/kanonarion/internal/native/adapters/store/sqlite"
-	"github.com/eitanity/kanonarion/internal/native/ports"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	nativesqlite "code.eitanity.com/kanonarion/internal/native/adapters/store/sqlite"
+	"code.eitanity.com/kanonarion/internal/native/ports"
 )
 
 // A record of a directory read under the published coordinate answers no read:

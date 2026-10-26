@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/staleness/application"
-	"github.com/eitanity/kanonarion/internal/staleness/domain"
-	"github.com/eitanity/kanonarion/internal/staleness/ports"
+	"code.eitanity.com/kanonarion/internal/staleness/application"
+	"code.eitanity.com/kanonarion/internal/staleness/domain"
+	"code.eitanity.com/kanonarion/internal/staleness/ports"
 )
 
 var errBatchRefused = errors.New("the environment forbids fetching")

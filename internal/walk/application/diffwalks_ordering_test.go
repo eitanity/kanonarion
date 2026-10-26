@@ -3,8 +3,8 @@ package application
 import (
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	"github.com/eitanity/kanonarion/internal/walk/domain"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/walk/domain"
 )
 
 // assertOrders checks that less decides a pair differing in exactly one field,

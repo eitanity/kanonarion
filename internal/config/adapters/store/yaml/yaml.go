@@ -18,10 +18,10 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/eitanity/kanonarion/internal/adapters/yamlkeys"
-	"github.com/eitanity/kanonarion/internal/config/domain"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
-	"github.com/eitanity/kanonarion/internal/gotoolchain"
+	"code.eitanity.com/kanonarion/internal/adapters/yamlkeys"
+	"code.eitanity.com/kanonarion/internal/config/domain"
+	fetchdomain "code.eitanity.com/kanonarion/internal/fetch/domain"
+	"code.eitanity.com/kanonarion/internal/gotoolchain"
 )
 
 // ConfigStore loads a Config from a YAML file at a fixed path.

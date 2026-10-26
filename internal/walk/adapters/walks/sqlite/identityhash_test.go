@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
+	walkports "code.eitanity.com/kanonarion/internal/walk/ports"
 )
 
 // TestPutGetWalk_IdentityHashRoundTrips asserts the analysis identity survives

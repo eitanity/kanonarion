@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/adapters/modcache"
+	"code.eitanity.com/kanonarion/internal/adapters/modcache"
 )
 
 // writeReadOnlyModCache builds a directory tree that mimics a Go module cache:

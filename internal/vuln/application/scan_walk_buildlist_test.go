@@ -5,12 +5,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
-	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate/coordinatetest"
+	"code.eitanity.com/kanonarion/internal/fetch/fetchtest"
 
-	"github.com/eitanity/kanonarion/internal/vuln/application"
-	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
+	"code.eitanity.com/kanonarion/internal/vuln/application"
+	walkdomain "code.eitanity.com/kanonarion/internal/walk/domain"
 )
 
 // seedFactNodeGoMod records a node's zip and a caller-supplied go.mod body in the

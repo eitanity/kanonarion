@@ -6,16 +6,16 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/adapters/clock"
-	proxyadapter "github.com/eitanity/kanonarion/internal/adapters/proxy/direct"
-	configdomain "github.com/eitanity/kanonarion/internal/config/domain"
-	"github.com/eitanity/kanonarion/internal/driver"
-	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
-	stalegolist "github.com/eitanity/kanonarion/internal/staleness/adapters/golist"
-	staleproxy "github.com/eitanity/kanonarion/internal/staleness/adapters/proxy"
-	staleretry "github.com/eitanity/kanonarion/internal/staleness/adapters/proxy/retrying"
-	staleapp "github.com/eitanity/kanonarion/internal/staleness/application"
-	staleports "github.com/eitanity/kanonarion/internal/staleness/ports"
+	"code.eitanity.com/kanonarion/internal/adapters/clock"
+	proxyadapter "code.eitanity.com/kanonarion/internal/adapters/proxy/direct"
+	configdomain "code.eitanity.com/kanonarion/internal/config/domain"
+	"code.eitanity.com/kanonarion/internal/driver"
+	fetchports "code.eitanity.com/kanonarion/internal/fetch/ports"
+	stalegolist "code.eitanity.com/kanonarion/internal/staleness/adapters/golist"
+	staleproxy "code.eitanity.com/kanonarion/internal/staleness/adapters/proxy"
+	staleretry "code.eitanity.com/kanonarion/internal/staleness/adapters/proxy/retrying"
+	staleapp "code.eitanity.com/kanonarion/internal/staleness/application"
+	staleports "code.eitanity.com/kanonarion/internal/staleness/ports"
 )
 
 // StalenessResolverConfig is what a caller may supply to a staleness resolver. A zero

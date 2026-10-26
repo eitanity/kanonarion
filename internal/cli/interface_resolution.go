@@ -9,10 +9,10 @@ import (
 
 	"golang.org/x/mod/semver"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 
-	ifaceapp "github.com/eitanity/kanonarion/internal/iface/application"
-	ifaceports "github.com/eitanity/kanonarion/internal/iface/ports"
+	ifaceapp "code.eitanity.com/kanonarion/internal/iface/application"
+	ifaceports "code.eitanity.com/kanonarion/internal/iface/ports"
 )
 
 // Telling "never extracted" from "extracted under superseded logic".

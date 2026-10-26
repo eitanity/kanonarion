@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/eitanity/kanonarion/internal/versionorder"
+	"code.eitanity.com/kanonarion/internal/versionorder"
 )
 
 // listZeroScope is everything a listing knows about a zero result: the filter it

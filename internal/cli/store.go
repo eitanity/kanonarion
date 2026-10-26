@@ -13,12 +13,12 @@ import (
 
 	"github.com/spf13/cobra"
 
-	blobstore "github.com/eitanity/kanonarion/internal/adapters/blobstore/localfs"
-	"github.com/eitanity/kanonarion/internal/adapters/childproc"
-	"github.com/eitanity/kanonarion/internal/adapters/modcache"
-	"github.com/eitanity/kanonarion/internal/composition/storage"
-	sqlitestorage "github.com/eitanity/kanonarion/internal/composition/storage/sqlite"
-	"github.com/eitanity/kanonarion/internal/config/domain"
+	blobstore "code.eitanity.com/kanonarion/internal/adapters/blobstore/localfs"
+	"code.eitanity.com/kanonarion/internal/adapters/childproc"
+	"code.eitanity.com/kanonarion/internal/adapters/modcache"
+	"code.eitanity.com/kanonarion/internal/composition/storage"
+	sqlitestorage "code.eitanity.com/kanonarion/internal/composition/storage/sqlite"
+	"code.eitanity.com/kanonarion/internal/config/domain"
 )
 
 func newStoreCmd(stdout, stderr io.Writer) *cobra.Command {

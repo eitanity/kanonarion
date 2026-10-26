@@ -3,8 +3,8 @@ package domain_test
 import (
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/canonicalshape"
-	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"code.eitanity.com/kanonarion/internal/canonicalshape"
+	domain2 "code.eitanity.com/kanonarion/internal/fetch/domain"
 )
 
 // TestCanonicalShape_IsPinned fails when the bytes this domain seals over

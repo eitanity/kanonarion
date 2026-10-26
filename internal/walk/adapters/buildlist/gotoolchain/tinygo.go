@@ -14,8 +14,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/eitanity/kanonarion/internal/adapters/childproc"
-	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
+	"code.eitanity.com/kanonarion/internal/adapters/childproc"
+	walkdomain "code.eitanity.com/kanonarion/internal/walk/domain"
 )
 
 // attributeTinyGo lists the closure's packages under the TinyGo frame, with the

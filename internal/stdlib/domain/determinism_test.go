@@ -5,10 +5,10 @@ import (
 	"testing"
 	"time"
 
-	domain "github.com/eitanity/kanonarion/internal/stdlib/domain"
-	"github.com/eitanity/kanonarion/internal/wireshape"
+	domain "code.eitanity.com/kanonarion/internal/stdlib/domain"
+	"code.eitanity.com/kanonarion/internal/wireshape"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	fetchdomain "code.eitanity.com/kanonarion/internal/fetch/domain"
 )
 
 // determinismSeals is how many times this guard re-seals one value. Map

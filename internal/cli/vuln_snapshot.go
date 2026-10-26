@@ -7,7 +7,7 @@ import (
 	"io"
 	"time"
 
-	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
+	vuldomain "code.eitanity.com/kanonarion/internal/vuln/domain"
 
 	"github.com/spf13/cobra"
 )

@@ -7,10 +7,10 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 
-	vulnports "github.com/eitanity/kanonarion/internal/vuln/ports"
-	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
+	vulnports "code.eitanity.com/kanonarion/internal/vuln/ports"
+	walkports "code.eitanity.com/kanonarion/internal/walk/ports"
 )
 
 // Telling "never vuln-scanned" from "scanned under logic this build supersedes".

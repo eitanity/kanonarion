@@ -9,8 +9,8 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
-	"github.com/eitanity/kanonarion/internal/gotoolchain"
+	fetchdomain "code.eitanity.com/kanonarion/internal/fetch/domain"
+	"code.eitanity.com/kanonarion/internal/gotoolchain"
 )
 
 // ValidateSetting refuses a value for a settable key that no load could use.

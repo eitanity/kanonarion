@@ -6,16 +6,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
+	"code.eitanity.com/kanonarion/internal/adapters/recordseal"
 
-	callgraphdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
-	exampledomain "github.com/eitanity/kanonarion/internal/example/domain"
-	extractdomain "github.com/eitanity/kanonarion/internal/extract/domain"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
-	ifacedomain "github.com/eitanity/kanonarion/internal/iface/domain"
-	licensedomain "github.com/eitanity/kanonarion/internal/license/domain"
-	stdlibdomain "github.com/eitanity/kanonarion/internal/stdlib/domain"
-	vulndomain "github.com/eitanity/kanonarion/internal/vuln/domain"
+	callgraphdomain "code.eitanity.com/kanonarion/internal/callgraph/domain"
+	exampledomain "code.eitanity.com/kanonarion/internal/example/domain"
+	extractdomain "code.eitanity.com/kanonarion/internal/extract/domain"
+	fetchdomain "code.eitanity.com/kanonarion/internal/fetch/domain"
+	ifacedomain "code.eitanity.com/kanonarion/internal/iface/domain"
+	licensedomain "code.eitanity.com/kanonarion/internal/license/domain"
+	stdlibdomain "code.eitanity.com/kanonarion/internal/stdlib/domain"
+	vulndomain "code.eitanity.com/kanonarion/internal/vuln/domain"
 )
 
 // sealedRecord is one domain's answer to "seal a record and hand back the bytes

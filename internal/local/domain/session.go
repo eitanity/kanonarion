@@ -1,7 +1,7 @@
 package domain
 
 import (
-	callgraphdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
+	callgraphdomain "code.eitanity.com/kanonarion/internal/callgraph/domain"
 )
 
 // AnalysisSession is the in-memory, ephemeral state for a local workspace

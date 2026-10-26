@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 )
 
 // ToolchainConflict is two vulnerability records for one coordinate that state

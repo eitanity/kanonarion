@@ -8,9 +8,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	sqlite2 "github.com/eitanity/kanonarion/internal/adapters/factstore/sqlite"
-	"github.com/eitanity/kanonarion/internal/audit"
-	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
+	sqlite2 "code.eitanity.com/kanonarion/internal/adapters/factstore/sqlite"
+	"code.eitanity.com/kanonarion/internal/audit"
+	domain2 "code.eitanity.com/kanonarion/internal/fetch/domain"
 )
 
 func TestAuditingStore_AttestationDelegates(t *testing.T) {

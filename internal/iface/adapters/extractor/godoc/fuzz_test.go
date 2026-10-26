@@ -5,7 +5,7 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/eitanity/kanonarion/internal/iface/domain"
+	"code.eitanity.com/kanonarion/internal/iface/domain"
 )
 
 // FuzzExtract feeds arbitrary Go source text to the iface godoc extractor as a

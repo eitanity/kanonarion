@@ -1129,9 +1129,9 @@ project was scanned last.
 ```
 $ kanonarion vuln-show github.com/pkg/errors@v0.9.1
 error: execute root command: the store holds github.com/pkg/errors@v0.9.1 in 6 consumer frames, and this question names none:
+  target-rooted:code.eitanity.com/kanonarion@local
   target-rooted:github.com/AustralianCyberSecurityCentre/azul-bedrock/v13@local
   target-rooted:github.com/cortezaproject/corteza/server@local
-  target-rooted:github.com/eitanity/kanonarion@local
   target-rooted:github.com/grafana/loki/v3@local
   target-rooted:github.com/guacsec/guac@local
   target-rooted:ragflow@local

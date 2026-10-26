@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/fips/application"
-	"github.com/eitanity/kanonarion/internal/fips/domain"
+	"code.eitanity.com/kanonarion/internal/fips/application"
+	"code.eitanity.com/kanonarion/internal/fips/domain"
 )
 
 // TestQueryFIPS_GetFound: a stored record is returned with found=true.

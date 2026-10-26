@@ -5,10 +5,10 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 
-	"github.com/eitanity/kanonarion/internal/example/domain"
-	exampleports "github.com/eitanity/kanonarion/internal/example/ports"
+	"code.eitanity.com/kanonarion/internal/example/domain"
+	exampleports "code.eitanity.com/kanonarion/internal/example/ports"
 )
 
 // QueryExamplesUseCase provides read-only access to stored example records.

@@ -6,15 +6,15 @@ import (
 	"testing"
 	"time"
 
-	cgsqlite "github.com/eitanity/kanonarion/internal/callgraph/adapters/store/sqlite"
-	cgapp "github.com/eitanity/kanonarion/internal/callgraph/application"
-	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
-	capapp "github.com/eitanity/kanonarion/internal/capability/application"
-	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
-	"github.com/eitanity/kanonarion/internal/vuln/adapters/reachability"
-	"github.com/eitanity/kanonarion/internal/vuln/adapters/rootclass"
-	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
+	cgsqlite "code.eitanity.com/kanonarion/internal/callgraph/adapters/store/sqlite"
+	cgapp "code.eitanity.com/kanonarion/internal/callgraph/application"
+	cgdomain "code.eitanity.com/kanonarion/internal/callgraph/domain"
+	capapp "code.eitanity.com/kanonarion/internal/capability/application"
+	"code.eitanity.com/kanonarion/internal/coordinate/coordinatetest"
+	fetchdomain "code.eitanity.com/kanonarion/internal/fetch/domain"
+	"code.eitanity.com/kanonarion/internal/vuln/adapters/reachability"
+	"code.eitanity.com/kanonarion/internal/vuln/adapters/rootclass"
+	vuldomain "code.eitanity.com/kanonarion/internal/vuln/domain"
 )
 
 var (

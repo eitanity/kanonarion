@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
+	"code.eitanity.com/kanonarion/internal/adapters/sqlitestore"
 
-	sbomsqlite "github.com/eitanity/kanonarion/internal/sbom/adapters/store/sqlite"
-	sbomdomain "github.com/eitanity/kanonarion/internal/sbom/domain"
+	sbomsqlite "code.eitanity.com/kanonarion/internal/sbom/adapters/store/sqlite"
+	sbomdomain "code.eitanity.com/kanonarion/internal/sbom/domain"
 )
 
 // sbomJSONFixture is a store holding two SBOM records that differ in the one

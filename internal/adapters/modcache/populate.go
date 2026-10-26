@@ -11,9 +11,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 
-	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
+	fetchports "code.eitanity.com/kanonarion/internal/fetch/ports"
 	"golang.org/x/mod/modfile"
 	"golang.org/x/mod/module"
 )

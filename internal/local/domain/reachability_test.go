@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/local/domain"
+	"code.eitanity.com/kanonarion/internal/local/domain"
 )
 
 func TestSortProbeModules_SortsByPath(t *testing.T) {

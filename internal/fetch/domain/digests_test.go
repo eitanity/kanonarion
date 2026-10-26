@@ -6,8 +6,8 @@ import (
 	"encoding/hex"
 	"testing"
 
-	domain "github.com/eitanity/kanonarion/internal/fetch/domain"
-	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
+	domain "code.eitanity.com/kanonarion/internal/fetch/domain"
+	"code.eitanity.com/kanonarion/internal/fetch/fetchtest"
 )
 
 func TestComputeArtifactDigests_MatchesStdlib(t *testing.T) {

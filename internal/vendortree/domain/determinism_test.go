@@ -4,7 +4,7 @@ import (
 	"math/rand"
 	"testing"
 
-	domain "github.com/eitanity/kanonarion/internal/vendortree/domain"
+	domain "code.eitanity.com/kanonarion/internal/vendortree/domain"
 )
 
 // determinismShuffles is how many independent input orders this guard puts

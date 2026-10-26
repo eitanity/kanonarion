@@ -5,11 +5,11 @@ import (
 
 	cdx "github.com/CycloneDX/cyclonedx-go"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate/coordinatetest"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
-	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
+	fetchdomain "code.eitanity.com/kanonarion/internal/fetch/domain"
+	walkdomain "code.eitanity.com/kanonarion/internal/walk/domain"
 )
 
 func TestDigestHashes(t *testing.T) {

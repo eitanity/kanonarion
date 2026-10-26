@@ -4,16 +4,16 @@ import (
 	"strings"
 	"testing"
 
-	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
-	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
-	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
-	exapp "github.com/eitanity/kanonarion/internal/example/application"
-	exdomain "github.com/eitanity/kanonarion/internal/example/domain"
-	"github.com/eitanity/kanonarion/internal/extract/domain"
-	"github.com/eitanity/kanonarion/internal/failurecause"
-	"github.com/eitanity/kanonarion/internal/gotoolchain"
-	ifaceapp "github.com/eitanity/kanonarion/internal/iface/application"
-	ifacedomain "github.com/eitanity/kanonarion/internal/iface/domain"
+	cgdomain "code.eitanity.com/kanonarion/internal/callgraph/domain"
+	cgports "code.eitanity.com/kanonarion/internal/callgraph/ports"
+	"code.eitanity.com/kanonarion/internal/coordinate/coordinatetest"
+	exapp "code.eitanity.com/kanonarion/internal/example/application"
+	exdomain "code.eitanity.com/kanonarion/internal/example/domain"
+	"code.eitanity.com/kanonarion/internal/extract/domain"
+	"code.eitanity.com/kanonarion/internal/failurecause"
+	"code.eitanity.com/kanonarion/internal/gotoolchain"
+	ifaceapp "code.eitanity.com/kanonarion/internal/iface/application"
+	ifacedomain "code.eitanity.com/kanonarion/internal/iface/domain"
 )
 
 // A stage whose record met a limit binding this binary is failed on this

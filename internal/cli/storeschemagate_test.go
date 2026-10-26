@@ -11,10 +11,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
-	"github.com/eitanity/kanonarion/internal/composition/storage"
-	sqlitestorage "github.com/eitanity/kanonarion/internal/composition/storage/sqlite"
-	"github.com/eitanity/kanonarion/internal/config/domain"
+	"code.eitanity.com/kanonarion/internal/adapters/sqlitestore"
+	"code.eitanity.com/kanonarion/internal/composition/storage"
+	sqlitestorage "code.eitanity.com/kanonarion/internal/composition/storage/sqlite"
+	"code.eitanity.com/kanonarion/internal/config/domain"
 )
 
 // allMigrations returns every migration the binary knows about, for fixtures

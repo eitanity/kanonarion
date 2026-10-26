@@ -7,7 +7,7 @@ import (
 	"path"
 	"strings"
 
-	"github.com/eitanity/kanonarion/internal/gotoolchain"
+	"code.eitanity.com/kanonarion/internal/gotoolchain"
 )
 
 // analyserLimitJSON is a record's analyser limit under --json: the files this

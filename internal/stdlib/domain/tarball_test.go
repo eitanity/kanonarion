@@ -7,7 +7,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/stdlib/domain"
+	"code.eitanity.com/kanonarion/internal/stdlib/domain"
 )
 
 // buildTarball assembles a gzip'd tar from the given name→content entries, the

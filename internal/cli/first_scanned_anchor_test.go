@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/cli/testfakes"
-	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
+	"code.eitanity.com/kanonarion/internal/cli/testfakes"
+	vuldomain "code.eitanity.com/kanonarion/internal/vuln/domain"
 )
 
 // first_scanned_at is anchored per (module, version, pipeline version,

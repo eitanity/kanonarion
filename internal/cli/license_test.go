@@ -9,16 +9,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate/coordinatetest"
 
-	"github.com/eitanity/kanonarion/internal/cli/testfakes"
+	"code.eitanity.com/kanonarion/internal/cli/testfakes"
 
-	licapp "github.com/eitanity/kanonarion/internal/license/application"
-	domain "github.com/eitanity/kanonarion/internal/license/domain"
-	licenseports "github.com/eitanity/kanonarion/internal/license/ports"
-	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
-	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
+	licapp "code.eitanity.com/kanonarion/internal/license/application"
+	domain "code.eitanity.com/kanonarion/internal/license/domain"
+	licenseports "code.eitanity.com/kanonarion/internal/license/ports"
+	walkdomain "code.eitanity.com/kanonarion/internal/walk/domain"
+	walkports "code.eitanity.com/kanonarion/internal/walk/ports"
 )
 
 var errTest = errors.New("test error")

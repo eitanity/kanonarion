@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
+	"code.eitanity.com/kanonarion/internal/coordinate/coordinatetest"
 )
 
 // Both word types wrap a marshal failure rather than emitting nothing.

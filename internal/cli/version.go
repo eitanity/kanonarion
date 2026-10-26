@@ -3,7 +3,7 @@ package cli
 import "runtime/debug"
 
 // version is overridable at build time via
-// -ldflags "-X github.com/eitanity/kanonarion/internal/cli.version=v1.2.3".
+// -ldflags "-X code.eitanity.com/kanonarion/internal/cli.version=v1.2.3".
 // When unset, it falls back to the VCS revision embedded by the Go
 // toolchain (runtime/debug.ReadBuildInfo).
 var version = ""

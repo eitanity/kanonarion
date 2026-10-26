@@ -10,13 +10,13 @@ import (
 
 	"github.com/spf13/cobra"
 
-	cgapp "github.com/eitanity/kanonarion/internal/callgraph/application"
-	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
-	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	"github.com/eitanity/kanonarion/internal/gotoolchain"
-	ifaceapp "github.com/eitanity/kanonarion/internal/iface/application"
-	ifacedomain "github.com/eitanity/kanonarion/internal/iface/domain"
+	cgapp "code.eitanity.com/kanonarion/internal/callgraph/application"
+	cgdomain "code.eitanity.com/kanonarion/internal/callgraph/domain"
+	cgports "code.eitanity.com/kanonarion/internal/callgraph/ports"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/gotoolchain"
+	ifaceapp "code.eitanity.com/kanonarion/internal/iface/application"
+	ifacedomain "code.eitanity.com/kanonarion/internal/iface/domain"
 )
 
 // interfaceDiffCoverageNote is the standing statement of what this comparison

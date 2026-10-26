@@ -8,12 +8,12 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	extsqlite "github.com/eitanity/kanonarion/internal/extract/adapters/store/sqlite"
-	stdlibsqlite "github.com/eitanity/kanonarion/internal/stdlib/adapters/store/sqlite"
-	vulnports "github.com/eitanity/kanonarion/internal/vuln/ports"
-	walksqlite "github.com/eitanity/kanonarion/internal/walk/adapters/walks/sqlite"
+	"code.eitanity.com/kanonarion/internal/adapters/recordseal"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	extsqlite "code.eitanity.com/kanonarion/internal/extract/adapters/store/sqlite"
+	stdlibsqlite "code.eitanity.com/kanonarion/internal/stdlib/adapters/store/sqlite"
+	vulnports "code.eitanity.com/kanonarion/internal/vuln/ports"
+	walksqlite "code.eitanity.com/kanonarion/internal/walk/adapters/walks/sqlite"
 )
 
 // setAsideRows collects the stored generations the reads behind one answer set

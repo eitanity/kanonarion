@@ -4,7 +4,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/callgraph/domain"
+	"code.eitanity.com/kanonarion/internal/callgraph/domain"
 )
 
 // appCandidates is one module's nodes: a command's main, a package initialiser,

@@ -15,8 +15,8 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/eitanity/kanonarion/internal/iface/domain"
-	"github.com/eitanity/kanonarion/internal/iface/ports"
+	"code.eitanity.com/kanonarion/internal/iface/domain"
+	"code.eitanity.com/kanonarion/internal/iface/ports"
 )
 
 // Reader satisfies both the port and the shape the domain comparison asks for.

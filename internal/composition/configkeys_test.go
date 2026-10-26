@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/composition"
+	"code.eitanity.com/kanonarion/internal/composition"
 )
 
 // The library entry point refuses a misspelt key as the CLI does, naming the

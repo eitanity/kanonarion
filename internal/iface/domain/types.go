@@ -3,8 +3,8 @@ package domain
 import (
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	"github.com/eitanity/kanonarion/internal/gotoolchain"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/gotoolchain"
 )
 
 // InterfaceSchemaVersion is the version of the InterfaceRecord JSON schema.

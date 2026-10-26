@@ -8,8 +8,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/driver"
-	extextractor "github.com/eitanity/kanonarion/internal/extract/adapters/extractor/local"
+	"code.eitanity.com/kanonarion/internal/driver"
+	extextractor "code.eitanity.com/kanonarion/internal/extract/adapters/extractor/local"
 )
 
 // capturingExecutor stands in for the real callgraph child process. It records

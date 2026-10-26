@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	configdomain "github.com/eitanity/kanonarion/internal/config/domain"
+	configdomain "code.eitanity.com/kanonarion/internal/config/domain"
 )
 
 func TestStderrProgressReporter_ThrottlesByInterval(t *testing.T) {

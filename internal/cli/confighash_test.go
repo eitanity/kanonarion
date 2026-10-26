@@ -10,9 +10,9 @@ import (
 	"strings"
 	"testing"
 
-	factsqlite "github.com/eitanity/kanonarion/internal/adapters/factstore/sqlite"
-	"github.com/eitanity/kanonarion/internal/cli/testfakes"
-	directivedomain "github.com/eitanity/kanonarion/internal/directive/domain"
+	factsqlite "code.eitanity.com/kanonarion/internal/adapters/factstore/sqlite"
+	"code.eitanity.com/kanonarion/internal/cli/testfakes"
+	directivedomain "code.eitanity.com/kanonarion/internal/directive/domain"
 )
 
 // configEvent is one config_* line of a store's ledger.

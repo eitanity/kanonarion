@@ -7,13 +7,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 
-	ifaceapp "github.com/eitanity/kanonarion/internal/iface/application"
-	ifacedomain "github.com/eitanity/kanonarion/internal/iface/domain"
-	ifaceports "github.com/eitanity/kanonarion/internal/iface/ports"
+	ifaceapp "code.eitanity.com/kanonarion/internal/iface/application"
+	ifacedomain "code.eitanity.com/kanonarion/internal/iface/domain"
+	ifaceports "code.eitanity.com/kanonarion/internal/iface/ports"
 
-	"github.com/eitanity/kanonarion/internal/cli/testfakes"
+	"code.eitanity.com/kanonarion/internal/cli/testfakes"
 )
 
 // A pipeline bump stops the store's existing records being served. That reads

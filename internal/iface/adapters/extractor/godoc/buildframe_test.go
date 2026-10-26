@@ -8,8 +8,8 @@ import (
 	"testing/fstest"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/iface/adapters/extractor/godoc"
-	domain2 "github.com/eitanity/kanonarion/internal/iface/domain"
+	"code.eitanity.com/kanonarion/internal/iface/adapters/extractor/godoc"
+	domain2 "code.eitanity.com/kanonarion/internal/iface/domain"
 )
 
 // variantFS builds a package directory that declares ONE exported function

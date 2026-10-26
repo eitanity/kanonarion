@@ -3,7 +3,7 @@ package xmod_test
 import (
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/walk/adapters/gomod/xmod"
+	"code.eitanity.com/kanonarion/internal/walk/adapters/gomod/xmod"
 )
 
 func TestParse_simple(t *testing.T) {

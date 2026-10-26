@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/adapters/vcs/gitenv"
+	"code.eitanity.com/kanonarion/internal/adapters/vcs/gitenv"
 )
 
 // envMap indexes a KEY=VALUE block. A duplicate key is a defect in itself: it

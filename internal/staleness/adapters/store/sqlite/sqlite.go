@@ -22,8 +22,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
-	"github.com/eitanity/kanonarion/internal/staleness/domain"
+	"code.eitanity.com/kanonarion/internal/adapters/sqlitestore"
+	"code.eitanity.com/kanonarion/internal/staleness/domain"
 )
 
 // Store is the SQLite-backed staleness ledger.

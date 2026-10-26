@@ -6,11 +6,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/adapters/blobcodec"
-	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
-	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
-	godebugstore "github.com/eitanity/kanonarion/internal/godebug/adapters/store/sqlite"
-	"github.com/eitanity/kanonarion/internal/godebug/domain"
+	"code.eitanity.com/kanonarion/internal/adapters/blobcodec"
+	"code.eitanity.com/kanonarion/internal/adapters/recordseal"
+	"code.eitanity.com/kanonarion/internal/adapters/sqlitestore"
+	godebugstore "code.eitanity.com/kanonarion/internal/godebug/adapters/store/sqlite"
+	"code.eitanity.com/kanonarion/internal/godebug/domain"
 )
 
 // A godebug_records row filed under a project or pipeline_fingerprint its record does not state is

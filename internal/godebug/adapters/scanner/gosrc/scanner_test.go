@@ -6,10 +6,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/godebug/adapters/scanner/gosrc"
-	gdvendortree "github.com/eitanity/kanonarion/internal/godebug/adapters/vendortree"
-	venlocalfs "github.com/eitanity/kanonarion/internal/vendortree/adapters/scanner/localfs"
-	vendordomain "github.com/eitanity/kanonarion/internal/vendortree/domain"
+	"code.eitanity.com/kanonarion/internal/godebug/adapters/scanner/gosrc"
+	gdvendortree "code.eitanity.com/kanonarion/internal/godebug/adapters/vendortree"
+	venlocalfs "code.eitanity.com/kanonarion/internal/vendortree/adapters/scanner/localfs"
+	vendordomain "code.eitanity.com/kanonarion/internal/vendortree/domain"
 )
 
 // scanner is the scanner as the composition root builds it: the vendor

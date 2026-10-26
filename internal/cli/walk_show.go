@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/eitanity/kanonarion/internal/walk/domain"
+	"code.eitanity.com/kanonarion/internal/walk/domain"
 	"github.com/spf13/cobra"
 )
 

@@ -1,9 +1,9 @@
 package kanonarion
 
 import (
-	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
-	"github.com/eitanity/kanonarion/internal/composition"
-	vulnports "github.com/eitanity/kanonarion/internal/vuln/ports"
+	"code.eitanity.com/kanonarion/internal/adapters/recordseal"
+	"code.eitanity.com/kanonarion/internal/composition"
+	vulnports "code.eitanity.com/kanonarion/internal/vuln/ports"
 )
 
 // Stored records this build cannot reproduce. A record whose bytes hash to

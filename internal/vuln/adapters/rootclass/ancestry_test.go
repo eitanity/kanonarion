@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
-	"github.com/eitanity/kanonarion/internal/vuln/adapters/rootclass"
-	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
+	cgdomain "code.eitanity.com/kanonarion/internal/callgraph/domain"
+	"code.eitanity.com/kanonarion/internal/vuln/adapters/rootclass"
+	vuldomain "code.eitanity.com/kanonarion/internal/vuln/domain"
 )
 
 // registeredHandlerGraph is the shape the measurement exists for: confirmEmail

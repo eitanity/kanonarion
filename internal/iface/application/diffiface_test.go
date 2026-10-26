@@ -6,13 +6,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate/coordinatetest"
 
-	"github.com/eitanity/kanonarion/internal/iface/adapters/spelling/goast"
-	"github.com/eitanity/kanonarion/internal/iface/application"
-	"github.com/eitanity/kanonarion/internal/iface/domain"
-	"github.com/eitanity/kanonarion/internal/iface/ports"
+	"code.eitanity.com/kanonarion/internal/iface/adapters/spelling/goast"
+	"code.eitanity.com/kanonarion/internal/iface/application"
+	"code.eitanity.com/kanonarion/internal/iface/domain"
+	"code.eitanity.com/kanonarion/internal/iface/ports"
 )
 
 func seedDiffIfaceRecord(t *testing.T, store *fakeInterfaceStore, path, ver string, funcs ...domain.FuncDecl) coordinate.ModuleCoordinate {

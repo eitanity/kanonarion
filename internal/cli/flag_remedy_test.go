@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	proxyadapter "github.com/eitanity/kanonarion/internal/adapters/proxy/direct"
-	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
-	vulnports "github.com/eitanity/kanonarion/internal/vuln/ports"
+	proxyadapter "code.eitanity.com/kanonarion/internal/adapters/proxy/direct"
+	fetchports "code.eitanity.com/kanonarion/internal/fetch/ports"
+	vulnports "code.eitanity.com/kanonarion/internal/vuln/ports"
 )
 
 // An adapter's refusal names no flag; the command adds the flag only when it

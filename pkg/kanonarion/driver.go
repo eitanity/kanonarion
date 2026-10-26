@@ -3,10 +3,10 @@ package kanonarion
 import (
 	"fmt"
 
-	"github.com/eitanity/kanonarion/internal/composition"
-	"github.com/eitanity/kanonarion/internal/driver"
-	fetchapp "github.com/eitanity/kanonarion/internal/fetch/application"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"code.eitanity.com/kanonarion/internal/composition"
+	"code.eitanity.com/kanonarion/internal/driver"
+	fetchapp "code.eitanity.com/kanonarion/internal/fetch/application"
+	fetchdomain "code.eitanity.com/kanonarion/internal/fetch/domain"
 )
 
 // Driver/serving surface (§1). The write entries are whole operations — serve

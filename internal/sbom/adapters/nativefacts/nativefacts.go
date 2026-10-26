@@ -11,11 +11,11 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 
-	nativedomain "github.com/eitanity/kanonarion/internal/native/domain"
-	nativeports "github.com/eitanity/kanonarion/internal/native/ports"
-	sbomports "github.com/eitanity/kanonarion/internal/sbom/ports"
+	nativedomain "code.eitanity.com/kanonarion/internal/native/domain"
+	nativeports "code.eitanity.com/kanonarion/internal/native/ports"
+	sbomports "code.eitanity.com/kanonarion/internal/sbom/ports"
 )
 
 // Reader answers what one module's artefact was measured to compile in from

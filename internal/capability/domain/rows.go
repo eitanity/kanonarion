@@ -4,7 +4,7 @@ import (
 	"slices"
 	"sort"
 
-	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
+	cgdomain "code.eitanity.com/kanonarion/internal/callgraph/domain"
 )
 
 // WitnessRow is one piece of evidence: an owned, in-scope function's edge to a

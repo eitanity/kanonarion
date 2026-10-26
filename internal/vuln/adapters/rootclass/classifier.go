@@ -18,10 +18,10 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 
-	callgraphdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
-	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
+	callgraphdomain "code.eitanity.com/kanonarion/internal/callgraph/domain"
+	vuldomain "code.eitanity.com/kanonarion/internal/vuln/domain"
 )
 
 // GraphReader is the narrow read this package needs: the COMPOSED call-graph

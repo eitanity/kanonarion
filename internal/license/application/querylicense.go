@@ -5,11 +5,11 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 
-	"github.com/eitanity/kanonarion/internal/license/domain"
-	licenseports "github.com/eitanity/kanonarion/internal/license/ports"
-	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
+	"code.eitanity.com/kanonarion/internal/license/domain"
+	licenseports "code.eitanity.com/kanonarion/internal/license/ports"
+	walkports "code.eitanity.com/kanonarion/internal/walk/ports"
 )
 
 // DepLicenseResult holds the license outcome for a single dependency module.

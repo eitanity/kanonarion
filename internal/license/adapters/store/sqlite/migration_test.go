@@ -4,8 +4,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
-	licensesqlite "github.com/eitanity/kanonarion/internal/license/adapters/store/sqlite"
+	"code.eitanity.com/kanonarion/internal/adapters/sqlitestore"
+	licensesqlite "code.eitanity.com/kanonarion/internal/license/adapters/store/sqlite"
 )
 
 // TestMigration6_PurgesTheUnverifiableGeneration pins what migration 6 deletes

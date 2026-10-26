@@ -26,8 +26,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/eitanity/kanonarion/internal/vendortree/domain"
-	"github.com/eitanity/kanonarion/internal/vendortree/ports"
+	"code.eitanity.com/kanonarion/internal/vendortree/domain"
+	"code.eitanity.com/kanonarion/internal/vendortree/ports"
 	"golang.org/x/mod/modfile"
 )
 

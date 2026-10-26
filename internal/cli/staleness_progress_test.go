@@ -9,8 +9,8 @@ import (
 	"sync/atomic"
 	"testing"
 
-	proxyadapter "github.com/eitanity/kanonarion/internal/adapters/proxy/direct"
-	configdomain "github.com/eitanity/kanonarion/internal/config/domain"
+	proxyadapter "code.eitanity.com/kanonarion/internal/adapters/proxy/direct"
+	configdomain "code.eitanity.com/kanonarion/internal/config/domain"
 )
 
 // A staleness probe that waits out a transient proxy answer says so, on the

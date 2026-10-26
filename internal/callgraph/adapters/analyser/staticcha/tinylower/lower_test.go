@@ -10,7 +10,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/callgraph/adapters/analyser/staticcha/tinylower"
+	"code.eitanity.com/kanonarion/internal/callgraph/adapters/analyser/staticcha/tinylower"
 
 	"golang.org/x/tools/go/ssa"
 	"golang.org/x/tools/go/ssa/ssautil"

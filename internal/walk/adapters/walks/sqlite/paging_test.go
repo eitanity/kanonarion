@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"testing"
 
-	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
+	walkports "code.eitanity.com/kanonarion/internal/walk/ports"
 )
 
 // walk-list can now be paged, and the walk listing is ordered started_at DESC.

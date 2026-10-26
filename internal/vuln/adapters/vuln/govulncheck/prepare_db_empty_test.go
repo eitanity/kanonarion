@@ -12,9 +12,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/vuln/domain"
-	"github.com/eitanity/kanonarion/internal/vuln/ports"
-	"github.com/eitanity/kanonarion/internal/vuln/vulntest"
+	"code.eitanity.com/kanonarion/internal/vuln/domain"
+	"code.eitanity.com/kanonarion/internal/vuln/ports"
+	"code.eitanity.com/kanonarion/internal/vuln/vulntest"
 )
 
 // snapshotBlobStore answers the snapshot read with a blob the test built, so the

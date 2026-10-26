@@ -3,7 +3,7 @@ package clock
 import (
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/fetch/ports"
+	"code.eitanity.com/kanonarion/internal/fetch/ports"
 )
 
 var (

@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/staleness/domain"
-	"github.com/eitanity/kanonarion/internal/staleness/ports"
+	"code.eitanity.com/kanonarion/internal/staleness/domain"
+	"code.eitanity.com/kanonarion/internal/staleness/ports"
 )
 
 // maxProbeDepth bounds the major-suffix walk. The probe already stops at the

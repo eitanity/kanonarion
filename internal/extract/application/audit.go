@@ -3,9 +3,9 @@ package application
 import (
 	"fmt"
 
-	"github.com/eitanity/kanonarion/internal/audit"
+	"code.eitanity.com/kanonarion/internal/audit"
 
-	"github.com/eitanity/kanonarion/internal/extract/domain"
+	"code.eitanity.com/kanonarion/internal/extract/domain"
 )
 
 // emitRunCompleted appends one extraction_run_completed event for the run this

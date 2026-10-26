@@ -10,12 +10,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 
-	"github.com/eitanity/kanonarion/internal/walk/adapters/gomod/xmod"
-	"github.com/eitanity/kanonarion/internal/walk/application"
-	domain3 "github.com/eitanity/kanonarion/internal/walk/domain"
-	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
+	"code.eitanity.com/kanonarion/internal/walk/adapters/gomod/xmod"
+	"code.eitanity.com/kanonarion/internal/walk/application"
+	domain3 "code.eitanity.com/kanonarion/internal/walk/domain"
+	walkports "code.eitanity.com/kanonarion/internal/walk/ports"
 )
 
 // concurrencyTracker wraps a ModuleFetcher to record the peak number of fetches

@@ -6,7 +6,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/staleness/domain"
+	"code.eitanity.com/kanonarion/internal/staleness/domain"
 )
 
 // ErrPathAbsent reports that the proxy has no such module path at all.

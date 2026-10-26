@@ -1,6 +1,6 @@
 package domain
 
-import "github.com/eitanity/kanonarion/internal/coordinate"
+import "code.eitanity.com/kanonarion/internal/coordinate"
 
 // FilterGraph selects the nodes of g for which inScope accepts either the node's
 // replacement coordinate (Coordinate) or its original require coordinate

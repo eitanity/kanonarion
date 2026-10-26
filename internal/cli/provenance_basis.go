@@ -8,11 +8,11 @@ import (
 
 	"golang.org/x/mod/semver"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	licapp "github.com/eitanity/kanonarion/internal/license/application"
-	licdomain "github.com/eitanity/kanonarion/internal/license/domain"
-	licports "github.com/eitanity/kanonarion/internal/license/ports"
-	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	licapp "code.eitanity.com/kanonarion/internal/license/application"
+	licdomain "code.eitanity.com/kanonarion/internal/license/domain"
+	licports "code.eitanity.com/kanonarion/internal/license/ports"
+	walkports "code.eitanity.com/kanonarion/internal/walk/ports"
 )
 
 // provenanceSelection says which licence record a provenance answer read its

@@ -8,9 +8,9 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/eitanity/kanonarion/internal/cli"
-	"github.com/eitanity/kanonarion/internal/composition/storage"
-	sqlitestorage "github.com/eitanity/kanonarion/internal/composition/storage/sqlite"
+	"code.eitanity.com/kanonarion/internal/cli"
+	"code.eitanity.com/kanonarion/internal/composition/storage"
+	sqlitestorage "code.eitanity.com/kanonarion/internal/composition/storage/sqlite"
 )
 
 func main() {

@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/eitanity/kanonarion/internal/extract/domain"
-	extractports "github.com/eitanity/kanonarion/internal/extract/ports"
+	"code.eitanity.com/kanonarion/internal/extract/domain"
+	extractports "code.eitanity.com/kanonarion/internal/extract/ports"
 )
 
 // QueryExtractionUseCase provides read-only access to stored extraction runs.

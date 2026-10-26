@@ -7,7 +7,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/tinygo/domain"
+	"code.eitanity.com/kanonarion/internal/tinygo/domain"
 )
 
 // Asset is one release asset as GitHub lists it. Digest is GitHub's

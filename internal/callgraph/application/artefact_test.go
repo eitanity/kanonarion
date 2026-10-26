@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/callgraph/application"
-	domain2 "github.com/eitanity/kanonarion/internal/callgraph/domain"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"code.eitanity.com/kanonarion/internal/callgraph/application"
+	domain2 "code.eitanity.com/kanonarion/internal/callgraph/domain"
+	fetchdomain "code.eitanity.com/kanonarion/internal/fetch/domain"
 )
 
 // TestExecute_RecordsTheArtefactItWasDerivedFrom is the ticket's headline

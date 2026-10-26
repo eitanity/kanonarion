@@ -4,8 +4,8 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	domain3 "github.com/eitanity/kanonarion/internal/walk/domain"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	domain3 "code.eitanity.com/kanonarion/internal/walk/domain"
 )
 
 const toolchainReason = "go list -m -mod=readonly -json all: exit status 1\n" +

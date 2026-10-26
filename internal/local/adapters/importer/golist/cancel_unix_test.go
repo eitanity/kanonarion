@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/local/adapters/importer/golist"
+	"code.eitanity.com/kanonarion/internal/local/adapters/importer/golist"
 )
 
 // A `go list -test` the run's cancellation kills cannot remove the work

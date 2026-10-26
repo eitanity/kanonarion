@@ -9,8 +9,8 @@ import (
 	"runtime"
 	"sort"
 
-	"github.com/eitanity/kanonarion/internal/gotoolchain"
-	"github.com/eitanity/kanonarion/internal/iface/domain"
+	"code.eitanity.com/kanonarion/internal/gotoolchain"
+	"code.eitanity.com/kanonarion/internal/iface/domain"
 )
 
 // hostFrame is the build configuration extraction measures in when no other is

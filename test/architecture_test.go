@@ -14,14 +14,14 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/adapters/childproc"
-	"github.com/eitanity/kanonarion/internal/adapters/goenv"
+	"code.eitanity.com/kanonarion/internal/adapters/childproc"
+	"code.eitanity.com/kanonarion/internal/adapters/goenv"
 	"golang.org/x/tools/go/packages"
 )
 
 // modulePath is the Go module path; package paths are made repo-relative by
 // trimming this prefix.
-const modulePath = "github.com/eitanity/kanonarion"
+const modulePath = "code.eitanity.com/kanonarion"
 
 // boundedContexts is the set of DDD bounded contexts, DERIVED from the tree: a
 // directory under internal/ holding an application or a domain layer is one.
@@ -1559,7 +1559,7 @@ func TestHardeningGuardCatchesANewDirectSpawn(t *testing.T) {
 		},
 		{
 			name: "the hardened form the guard must not flag",
-			src:  "package p\nimport \"github.com/eitanity/kanonarion/internal/adapters/childproc\"\nfunc scan() { _ = childproc.CommandContext(nil, \"go\", \"list\") }\n",
+			src:  "package p\nimport \"code.eitanity.com/kanonarion/internal/adapters/childproc\"\nfunc scan() { _ = childproc.CommandContext(nil, \"go\", \"list\") }\n",
 			want: false,
 		},
 		{

@@ -9,7 +9,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/fetch/ports"
+	"code.eitanity.com/kanonarion/internal/fetch/ports"
 
 	"golang.org/x/mod/sumdb"
 	"golang.org/x/mod/sumdb/note"

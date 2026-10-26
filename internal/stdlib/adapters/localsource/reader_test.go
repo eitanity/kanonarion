@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/stdlib/adapters/localsource"
+	"code.eitanity.com/kanonarion/internal/stdlib/adapters/localsource"
 )
 
 func writeGoRoot(t *testing.T) string {

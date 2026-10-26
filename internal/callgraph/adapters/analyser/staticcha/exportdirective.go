@@ -7,8 +7,8 @@ import (
 	"log/slog"
 	"sort"
 
-	"github.com/eitanity/kanonarion/internal/callgraph/domain"
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/callgraph/domain"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 	"golang.org/x/tools/go/packages"
 )
 

@@ -8,11 +8,11 @@ import (
 
 	"golang.org/x/tools/go/packages"
 
-	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
-	capdomain "github.com/eitanity/kanonarion/internal/capability/domain"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
-	stdlibdomain "github.com/eitanity/kanonarion/internal/stdlib/domain"
-	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
+	cgdomain "code.eitanity.com/kanonarion/internal/callgraph/domain"
+	capdomain "code.eitanity.com/kanonarion/internal/capability/domain"
+	fetchdomain "code.eitanity.com/kanonarion/internal/fetch/domain"
+	stdlibdomain "code.eitanity.com/kanonarion/internal/stdlib/domain"
+	walkdomain "code.eitanity.com/kanonarion/internal/walk/domain"
 )
 
 // A rule over an enum written as "!= the good value" type-checks, reads well,

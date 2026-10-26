@@ -15,9 +15,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
-	"github.com/eitanity/kanonarion/internal/cli"
-	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
+	"code.eitanity.com/kanonarion/internal/adapters/sqlitestore"
+	"code.eitanity.com/kanonarion/internal/cli"
+	fetchports "code.eitanity.com/kanonarion/internal/fetch/ports"
 )
 
 // The module every tampered case alters, and the remedy its refusal must name.

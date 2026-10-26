@@ -6,7 +6,7 @@ import (
 
 	"golang.org/x/mod/semver"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 )
 
 // SynthesiseGoMod renders the go.mod that lets a module published before Go

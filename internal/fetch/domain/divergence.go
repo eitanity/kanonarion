@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 )
 
 // Divergence is two records for one coordinate that disagree on a hash they

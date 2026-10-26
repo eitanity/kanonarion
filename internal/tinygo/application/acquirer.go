@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/eitanity/kanonarion/internal/tinygo/domain"
-	"github.com/eitanity/kanonarion/internal/tinygo/ports"
+	"code.eitanity.com/kanonarion/internal/tinygo/domain"
+	"code.eitanity.com/kanonarion/internal/tinygo/ports"
 )
 
 // Acquirer measures release archives. It never fails: a leg that cannot run is

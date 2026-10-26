@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/eitanity/kanonarion/internal/vuln/domain"
+	"code.eitanity.com/kanonarion/internal/vuln/domain"
 )
 
 // JudgeToolchain derives whether the advisory database's toolchain key says

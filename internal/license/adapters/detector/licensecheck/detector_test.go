@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	lcdetector "github.com/eitanity/kanonarion/internal/license/adapters/detector/licensecheck"
+	lcdetector "code.eitanity.com/kanonarion/internal/license/adapters/detector/licensecheck"
 )
 
 //go:embed testdata/mit.txt

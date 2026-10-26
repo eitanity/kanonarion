@@ -5,9 +5,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
+	"code.eitanity.com/kanonarion/internal/coordinate/coordinatetest"
 
-	licensedomain "github.com/eitanity/kanonarion/internal/license/domain"
+	licensedomain "code.eitanity.com/kanonarion/internal/license/domain"
 )
 
 // -- directives table --

@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/vendortree/application"
-	"github.com/eitanity/kanonarion/internal/vendortree/domain"
+	"code.eitanity.com/kanonarion/internal/vendortree/application"
+	"code.eitanity.com/kanonarion/internal/vendortree/domain"
 )
 
 type fakeVendorStore struct {

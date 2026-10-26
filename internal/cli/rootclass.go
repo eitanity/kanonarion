@@ -3,9 +3,9 @@ package cli
 import (
 	"context"
 
-	cgapp "github.com/eitanity/kanonarion/internal/callgraph/application"
-	"github.com/eitanity/kanonarion/internal/vuln/adapters/rootclass"
-	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
+	cgapp "code.eitanity.com/kanonarion/internal/callgraph/application"
+	"code.eitanity.com/kanonarion/internal/vuln/adapters/rootclass"
+	vuldomain "code.eitanity.com/kanonarion/internal/vuln/domain"
 )
 
 // routeRootFunc classifies the root of one stored reachability route.

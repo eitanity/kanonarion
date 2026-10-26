@@ -3,7 +3,7 @@ package domain_test
 import (
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/directive/domain"
+	"code.eitanity.com/kanonarion/internal/directive/domain"
 )
 
 func mkReplace(line int, oldPath, newPath, newVer string, class domain.RiskClass, outcome string, blocking bool) domain.Directive {

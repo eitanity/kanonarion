@@ -7,13 +7,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	"github.com/eitanity/kanonarion/internal/sbom/adapters/generator/cyclonedx"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/sbom/adapters/generator/cyclonedx"
 
-	licensedomain "github.com/eitanity/kanonarion/internal/license/domain"
-	nativedomain "github.com/eitanity/kanonarion/internal/native/domain"
-	"github.com/eitanity/kanonarion/internal/sbom/ports"
-	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
+	licensedomain "code.eitanity.com/kanonarion/internal/license/domain"
+	nativedomain "code.eitanity.com/kanonarion/internal/native/domain"
+	"code.eitanity.com/kanonarion/internal/sbom/ports"
+	walkdomain "code.eitanity.com/kanonarion/internal/walk/domain"
 )
 
 // A cgo module can ship a whole C library inside its own zip and compile it

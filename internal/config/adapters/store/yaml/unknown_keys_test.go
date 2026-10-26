@@ -9,9 +9,9 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/eitanity/kanonarion/internal/adapters/yamlkeys"
-	"github.com/eitanity/kanonarion/internal/config"
-	configyaml "github.com/eitanity/kanonarion/internal/config/adapters/store/yaml"
+	"code.eitanity.com/kanonarion/internal/adapters/yamlkeys"
+	"code.eitanity.com/kanonarion/internal/config"
+	configyaml "code.eitanity.com/kanonarion/internal/config/adapters/store/yaml"
 )
 
 // A misspelt key in any section is refused with its full path and the key it

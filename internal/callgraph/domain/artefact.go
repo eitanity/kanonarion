@@ -3,7 +3,7 @@ package domain
 import (
 	"fmt"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	fetchdomain "code.eitanity.com/kanonarion/internal/fetch/domain"
 )
 
 // RecordArtefactIdentity reads back the artefact identity r was derived from.

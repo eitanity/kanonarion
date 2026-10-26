@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
+	"code.eitanity.com/kanonarion/internal/coordinate/coordinatetest"
 )
 
 // clearSumEnv puts every variable this adapter reads into a known state, so a

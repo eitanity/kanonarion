@@ -5,7 +5,7 @@ import (
 	"io"
 	"strings"
 
-	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
+	walkdomain "code.eitanity.com/kanonarion/internal/walk/domain"
 )
 
 // buildListUnavailablePartialMsg is what exit 1 says when a walk's module set is

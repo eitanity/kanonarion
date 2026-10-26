@@ -8,10 +8,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/adapters/ziparchive"
-	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
+	"code.eitanity.com/kanonarion/internal/adapters/ziparchive"
+	"code.eitanity.com/kanonarion/internal/coordinate/coordinatetest"
 
-	domain2 "github.com/eitanity/kanonarion/internal/license/domain"
+	domain2 "code.eitanity.com/kanonarion/internal/license/domain"
 )
 
 func buildArchive(t *testing.T, files map[string]string) *ziparchive.Archive {

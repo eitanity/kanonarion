@@ -3,10 +3,10 @@ package application
 import (
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate/coordinatetest"
 
-	domain2 "github.com/eitanity/kanonarion/internal/walk/domain"
+	domain2 "code.eitanity.com/kanonarion/internal/walk/domain"
 )
 
 // The TinyGo node ships with the toolchain: it is recorded succeeded with no

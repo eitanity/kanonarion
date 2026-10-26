@@ -4,11 +4,11 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 
-	fetchapp "github.com/eitanity/kanonarion/internal/fetch/application"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
-	vulnports "github.com/eitanity/kanonarion/internal/vuln/ports"
+	fetchapp "code.eitanity.com/kanonarion/internal/fetch/application"
+	fetchdomain "code.eitanity.com/kanonarion/internal/fetch/domain"
+	vulnports "code.eitanity.com/kanonarion/internal/vuln/ports"
 )
 
 // FetchModuleAdapter wraps a fetch.FetchModuleUseCase to satisfy ports.ModuleFetcher.

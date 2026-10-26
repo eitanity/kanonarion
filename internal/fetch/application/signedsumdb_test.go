@@ -8,10 +8,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/adapters/sumdb/gosum"
-	"github.com/eitanity/kanonarion/internal/fetch/application"
-	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
-	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
+	"code.eitanity.com/kanonarion/internal/adapters/sumdb/gosum"
+	"code.eitanity.com/kanonarion/internal/fetch/application"
+	domain2 "code.eitanity.com/kanonarion/internal/fetch/domain"
+	"code.eitanity.com/kanonarion/internal/fetch/fetchtest"
 
 	"golang.org/x/mod/sumdb"
 	"golang.org/x/mod/sumdb/note"

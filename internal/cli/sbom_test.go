@@ -7,13 +7,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate/coordinatetest"
 
-	"github.com/eitanity/kanonarion/internal/cli/testfakes"
+	"code.eitanity.com/kanonarion/internal/cli/testfakes"
 
-	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
-	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
+	walkdomain "code.eitanity.com/kanonarion/internal/walk/domain"
+	walkports "code.eitanity.com/kanonarion/internal/walk/ports"
 )
 
 // sbomTestEnv is the build these selection tests ask in. The fixtures below
@@ -204,7 +204,7 @@ func TestBuildPackageAllowList_LiveRepo(t *testing.T) {
 		t.Skip("skipping live go list test in short mode")
 	}
 
-	list, err := buildPackageAllowList(t.Context(), "github.com/eitanity/kanonarion/cmd/kanonarion")
+	list, err := buildPackageAllowList(t.Context(), "code.eitanity.com/kanonarion/cmd/kanonarion")
 	if err != nil {
 		t.Fatalf("buildPackageAllowList: %v", err)
 	}

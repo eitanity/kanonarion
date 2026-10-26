@@ -10,7 +10,7 @@ import (
 
 	"golang.org/x/mod/modfile"
 
-	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
+	walkdomain "code.eitanity.com/kanonarion/internal/walk/domain"
 )
 
 // manifestDrift is the comparison between what a go.mod resolves to now and

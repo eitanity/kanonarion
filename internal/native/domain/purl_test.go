@@ -3,7 +3,7 @@ package domain_test
 import (
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/native/domain"
+	"code.eitanity.com/kanonarion/internal/native/domain"
 )
 
 // TestComponentPURL_NamesTheLibraryUnderTheGenericType locks the identity two

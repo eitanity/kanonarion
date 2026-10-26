@@ -7,15 +7,15 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate/coordinatetest"
 
-	"github.com/eitanity/kanonarion/internal/cli/testfakes"
+	"code.eitanity.com/kanonarion/internal/cli/testfakes"
 
-	licapp "github.com/eitanity/kanonarion/internal/license/application"
-	licdomain "github.com/eitanity/kanonarion/internal/license/domain"
-	licenseports "github.com/eitanity/kanonarion/internal/license/ports"
-	sbomdomain "github.com/eitanity/kanonarion/internal/sbom/domain"
+	licapp "code.eitanity.com/kanonarion/internal/license/application"
+	licdomain "code.eitanity.com/kanonarion/internal/license/domain"
+	licenseports "code.eitanity.com/kanonarion/internal/license/ports"
+	sbomdomain "code.eitanity.com/kanonarion/internal/sbom/domain"
 )
 
 // One module, read through every surface that answers "what is this module

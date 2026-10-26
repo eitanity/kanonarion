@@ -9,11 +9,11 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/eitanity/kanonarion/internal/composition/storage"
-	sbomdomain "github.com/eitanity/kanonarion/internal/sbom/domain"
-	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
-	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
-	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
+	"code.eitanity.com/kanonarion/internal/composition/storage"
+	sbomdomain "code.eitanity.com/kanonarion/internal/sbom/domain"
+	vuldomain "code.eitanity.com/kanonarion/internal/vuln/domain"
+	walkdomain "code.eitanity.com/kanonarion/internal/walk/domain"
+	walkports "code.eitanity.com/kanonarion/internal/walk/ports"
 )
 
 // annotationWalkIDArgs lists, comma-separated, the positional indices a command

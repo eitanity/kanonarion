@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	staledomain "github.com/eitanity/kanonarion/internal/staleness/domain"
-	staleports "github.com/eitanity/kanonarion/internal/staleness/ports"
+	staledomain "code.eitanity.com/kanonarion/internal/staleness/domain"
+	staleports "code.eitanity.com/kanonarion/internal/staleness/ports"
 )
 
 // The module the offline `latest` cases are about, and the two ledger ages that

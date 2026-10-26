@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 )
 
 // LicenseSchemaVersion is the version of the LicenseRecord JSON schema. Bump

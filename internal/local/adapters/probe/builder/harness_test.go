@@ -16,8 +16,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/adapters/goenv"
-	localdomain "github.com/eitanity/kanonarion/internal/local/domain"
+	"code.eitanity.com/kanonarion/internal/adapters/goenv"
+	localdomain "code.eitanity.com/kanonarion/internal/local/domain"
 )
 
 const goMod127 = "module example.com/probe\n\ngo 1.27\n"

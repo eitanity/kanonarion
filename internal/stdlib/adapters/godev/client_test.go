@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/stdlib/adapters/godev"
+	"code.eitanity.com/kanonarion/internal/stdlib/adapters/godev"
 )
 
 func TestClient_FetchReleasesAndDownload(t *testing.T) {

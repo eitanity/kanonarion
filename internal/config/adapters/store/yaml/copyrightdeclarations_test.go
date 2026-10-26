@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/config/adapters/store/yaml"
+	"code.eitanity.com/kanonarion/internal/config/adapters/store/yaml"
 )
 
 // TestParse_CopyrightDeclarations reads a complete entry back.

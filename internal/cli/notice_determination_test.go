@@ -9,11 +9,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/cli/testfakes"
-	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
-	licoverrides "github.com/eitanity/kanonarion/internal/license/adapters/overrides/yaml"
-	licapp "github.com/eitanity/kanonarion/internal/license/application"
-	licdomain "github.com/eitanity/kanonarion/internal/license/domain"
+	"code.eitanity.com/kanonarion/internal/cli/testfakes"
+	"code.eitanity.com/kanonarion/internal/coordinate/coordinatetest"
+	licoverrides "code.eitanity.com/kanonarion/internal/license/adapters/overrides/yaml"
+	licapp "code.eitanity.com/kanonarion/internal/license/application"
+	licdomain "code.eitanity.com/kanonarion/internal/license/domain"
 )
 
 // synthOverride is an obviously invented determination; see the note in the

@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/fips/domain"
+	"code.eitanity.com/kanonarion/internal/fips/domain"
 )
 
 // allow is a no-op evaluator for tests that don't care about policy.

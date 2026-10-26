@@ -7,11 +7,11 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
-	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
-	sbomports "github.com/eitanity/kanonarion/internal/sbom/ports"
+	fetchdomain "code.eitanity.com/kanonarion/internal/fetch/domain"
+	fetchports "code.eitanity.com/kanonarion/internal/fetch/ports"
+	sbomports "code.eitanity.com/kanonarion/internal/sbom/ports"
 )
 
 // Reader answers what the fetch ledger recorded about a module's origin.

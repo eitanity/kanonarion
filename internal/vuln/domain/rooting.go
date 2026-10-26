@@ -3,7 +3,7 @@ package domain
 import (
 	"strings"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 )
 
 // Rooting names the analysis frame a vulnerability record was produced in.

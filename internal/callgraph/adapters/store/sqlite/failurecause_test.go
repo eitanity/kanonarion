@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	domain2 "github.com/eitanity/kanonarion/internal/callgraph/domain"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	domain2 "code.eitanity.com/kanonarion/internal/callgraph/domain"
+	fetchdomain "code.eitanity.com/kanonarion/internal/fetch/domain"
 )
 
 func sealedFailure(t *testing.T, cause domain2.FailureCause) domain2.CallGraphRecord {

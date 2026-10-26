@@ -14,25 +14,25 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 
 	"github.com/spf13/cobra"
 
-	"github.com/eitanity/kanonarion/internal/adapters/interrupt"
-	proxyadapter "github.com/eitanity/kanonarion/internal/adapters/proxy/direct"
-	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
-	configdomain "github.com/eitanity/kanonarion/internal/config/domain"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
-	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
+	"code.eitanity.com/kanonarion/internal/adapters/interrupt"
+	proxyadapter "code.eitanity.com/kanonarion/internal/adapters/proxy/direct"
+	"code.eitanity.com/kanonarion/internal/adapters/recordseal"
+	configdomain "code.eitanity.com/kanonarion/internal/config/domain"
+	fetchdomain "code.eitanity.com/kanonarion/internal/fetch/domain"
+	fetchports "code.eitanity.com/kanonarion/internal/fetch/ports"
 
-	licapp "github.com/eitanity/kanonarion/internal/license/application"
-	licdomain "github.com/eitanity/kanonarion/internal/license/domain"
-	staledomain "github.com/eitanity/kanonarion/internal/staleness/domain"
-	staleports "github.com/eitanity/kanonarion/internal/staleness/ports"
-	vulnapp "github.com/eitanity/kanonarion/internal/vuln/application"
-	vulndomain "github.com/eitanity/kanonarion/internal/vuln/domain"
-	vulnports "github.com/eitanity/kanonarion/internal/vuln/ports"
-	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
+	licapp "code.eitanity.com/kanonarion/internal/license/application"
+	licdomain "code.eitanity.com/kanonarion/internal/license/domain"
+	staledomain "code.eitanity.com/kanonarion/internal/staleness/domain"
+	staleports "code.eitanity.com/kanonarion/internal/staleness/ports"
+	vulnapp "code.eitanity.com/kanonarion/internal/vuln/application"
+	vulndomain "code.eitanity.com/kanonarion/internal/vuln/domain"
+	vulnports "code.eitanity.com/kanonarion/internal/vuln/ports"
+	walkdomain "code.eitanity.com/kanonarion/internal/walk/domain"
 )
 
 type auditFlags struct {

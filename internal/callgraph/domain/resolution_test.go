@@ -3,14 +3,14 @@ package domain_test
 import (
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/callgraph/domain"
+	"code.eitanity.com/kanonarion/internal/callgraph/domain"
 )
 
 func TestResolveSymbolModule(t *testing.T) {
 	analysed := []string{
 		"example.com/m",
 		"example.com/m/sub",
-		"github.com/eitanity/kanonarion",
+		"code.eitanity.com/kanonarion",
 	}
 
 	cases := []struct {
@@ -21,7 +21,7 @@ func TestResolveSymbolModule(t *testing.T) {
 	}{
 		{"package under module", "example.com/m/pkg.Fn", "example.com/m", true},
 		{"longest-prefix wins", "example.com/m/sub/pkg.Fn", "example.com/m/sub", true},
-		{"method receiver form", "github.com/eitanity/kanonarion/internal/cli.(*X).Y", "github.com/eitanity/kanonarion", true},
+		{"method receiver form", "code.eitanity.com/kanonarion/internal/cli.(*X).Y", "code.eitanity.com/kanonarion", true},
 		{"prefix but not a path boundary", "example.com/much.Fn", "", false},
 		{"stdlib symbol — no module", "fmt.Errorf", "", false},
 		{"module not analysed", "other.com/z/pkg.Fn", "", false},

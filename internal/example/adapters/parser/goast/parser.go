@@ -14,9 +14,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/eitanity/kanonarion/internal/example/domain"
-	"github.com/eitanity/kanonarion/internal/example/ports"
-	"github.com/eitanity/kanonarion/internal/gotoolchain"
+	"code.eitanity.com/kanonarion/internal/example/domain"
+	"code.eitanity.com/kanonarion/internal/example/ports"
+	"code.eitanity.com/kanonarion/internal/gotoolchain"
 )
 
 // Parser implements ports.ExampleParser.

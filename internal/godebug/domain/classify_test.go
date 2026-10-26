@@ -3,7 +3,7 @@ package domain_test
 import (
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/godebug/domain"
+	"code.eitanity.com/kanonarion/internal/godebug/domain"
 )
 
 // TestClassify covers the three taxonomy tiers and the

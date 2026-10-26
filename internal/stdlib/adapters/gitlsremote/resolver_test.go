@@ -10,7 +10,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/stdlib/adapters/gitlsremote"
+	"code.eitanity.com/kanonarion/internal/stdlib/adapters/gitlsremote"
 )
 
 // The commit resolver is the VCS-anchor half of the standard-library chain of

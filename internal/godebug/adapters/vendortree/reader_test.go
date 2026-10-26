@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	gdvendortree "github.com/eitanity/kanonarion/internal/godebug/adapters/vendortree"
-	venlocalfs "github.com/eitanity/kanonarion/internal/vendortree/adapters/scanner/localfs"
+	gdvendortree "code.eitanity.com/kanonarion/internal/godebug/adapters/vendortree"
+	venlocalfs "code.eitanity.com/kanonarion/internal/vendortree/adapters/scanner/localfs"
 )
 
 const corpus = "../../../../test/fixtures/supplychain/godebug"

@@ -9,12 +9,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/audit"
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	"github.com/eitanity/kanonarion/internal/example/application"
-	"github.com/eitanity/kanonarion/internal/example/ports"
+	"code.eitanity.com/kanonarion/internal/audit"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/example/application"
+	"code.eitanity.com/kanonarion/internal/example/ports"
 
-	goast "github.com/eitanity/kanonarion/internal/example/adapters/parser/goast"
+	goast "code.eitanity.com/kanonarion/internal/example/adapters/parser/goast"
 )
 
 // recordingSink captures the events an extraction appends.

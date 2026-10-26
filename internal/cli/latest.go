@@ -10,11 +10,11 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/eitanity/kanonarion/internal/adapters/interrupt"
-	proxyadapter "github.com/eitanity/kanonarion/internal/adapters/proxy/direct"
-	staleapp "github.com/eitanity/kanonarion/internal/staleness/application"
-	staledomain "github.com/eitanity/kanonarion/internal/staleness/domain"
-	staleports "github.com/eitanity/kanonarion/internal/staleness/ports"
+	"code.eitanity.com/kanonarion/internal/adapters/interrupt"
+	proxyadapter "code.eitanity.com/kanonarion/internal/adapters/proxy/direct"
+	staleapp "code.eitanity.com/kanonarion/internal/staleness/application"
+	staledomain "code.eitanity.com/kanonarion/internal/staleness/domain"
+	staleports "code.eitanity.com/kanonarion/internal/staleness/ports"
 )
 
 type latestFlags struct {

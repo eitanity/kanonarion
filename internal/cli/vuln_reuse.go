@@ -3,7 +3,7 @@ package cli
 import (
 	"fmt"
 
-	vulndomain "github.com/eitanity/kanonarion/internal/vuln/domain"
+	vulndomain "code.eitanity.com/kanonarion/internal/vuln/domain"
 )
 
 // reachabilityVerdicts counts the findings in a record set that carry a

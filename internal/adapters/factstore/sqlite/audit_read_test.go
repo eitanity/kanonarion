@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	sqlite "github.com/eitanity/kanonarion/internal/adapters/factstore/sqlite"
-	"github.com/eitanity/kanonarion/internal/audit"
+	sqlite "code.eitanity.com/kanonarion/internal/adapters/factstore/sqlite"
+	"code.eitanity.com/kanonarion/internal/audit"
 )
 
 // writeLedger plants a ledger file with the exact lines given and returns its

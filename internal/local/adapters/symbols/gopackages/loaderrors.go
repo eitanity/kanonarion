@@ -9,7 +9,7 @@ import (
 
 	"golang.org/x/tools/go/packages"
 
-	"github.com/eitanity/kanonarion/internal/gotoolchain"
+	"code.eitanity.com/kanonarion/internal/gotoolchain"
 )
 
 // reportLoadErrors writes one line per distinct problem the load reported and

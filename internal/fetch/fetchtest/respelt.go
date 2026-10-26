@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/fetch/domain"
+	"code.eitanity.com/kanonarion/internal/fetch/domain"
 )
 
 // Respelt returns the row a build spelling fetched_at as a trimmed fraction

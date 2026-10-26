@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	nativedomain "github.com/eitanity/kanonarion/internal/native/domain"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	nativedomain "code.eitanity.com/kanonarion/internal/native/domain"
 )
 
 func nativeCoord(t *testing.T, path, version string) coordinate.ModuleCoordinate {

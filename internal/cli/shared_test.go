@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
+	walkports "code.eitanity.com/kanonarion/internal/walk/ports"
 )
 
 // TestStoreIsolation_NotProductionUnderTest guards the package-cli
@@ -614,7 +614,7 @@ func TestReadPackageModules_LiveRepo(t *testing.T) {
 		t.Skip("skipping live go list test in short mode")
 	}
 
-	coords, err := readPackageModules(t.Context(), "github.com/eitanity/kanonarion/cmd/kanonarion")
+	coords, err := readPackageModules(t.Context(), "code.eitanity.com/kanonarion/cmd/kanonarion")
 	if err != nil {
 		t.Fatalf("readPackageModules: %v", err)
 	}

@@ -8,11 +8,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/adapters/blobcodec"
-	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
-	nativesqlite "github.com/eitanity/kanonarion/internal/native/adapters/store/sqlite"
-	"github.com/eitanity/kanonarion/internal/native/domain"
-	"github.com/eitanity/kanonarion/internal/native/ports"
+	"code.eitanity.com/kanonarion/internal/adapters/blobcodec"
+	"code.eitanity.com/kanonarion/internal/adapters/sqlitestore"
+	nativesqlite "code.eitanity.com/kanonarion/internal/native/adapters/store/sqlite"
+	"code.eitanity.com/kanonarion/internal/native/domain"
+	"code.eitanity.com/kanonarion/internal/native/ports"
 )
 
 // openTestStoreDB is openTestStore with the handle kept, for the two facts this

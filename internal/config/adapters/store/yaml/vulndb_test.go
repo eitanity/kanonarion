@@ -3,7 +3,7 @@ package yaml_test
 import (
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/config/adapters/store/yaml"
+	"code.eitanity.com/kanonarion/internal/config/adapters/store/yaml"
 )
 
 // vulndb.url loads as written; absent, or written with no value, is vuln.go.dev.

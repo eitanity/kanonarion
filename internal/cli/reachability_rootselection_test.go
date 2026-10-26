@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
-	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
+	cgdomain "code.eitanity.com/kanonarion/internal/callgraph/domain"
+	vuldomain "code.eitanity.com/kanonarion/internal/vuln/domain"
 )
 
 // TestReachabilityStatesTheRootingItUsed covers the answer produced over a call

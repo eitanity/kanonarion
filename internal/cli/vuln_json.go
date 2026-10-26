@@ -1,8 +1,8 @@
 package cli
 
 import (
-	"github.com/eitanity/kanonarion/internal/recordstamp"
-	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
+	"code.eitanity.com/kanonarion/internal/recordstamp"
+	vuldomain "code.eitanity.com/kanonarion/internal/vuln/domain"
 )
 
 // This file holds the one JSON projection every command that publishes a stored

@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
-	stalesqlite "github.com/eitanity/kanonarion/internal/staleness/adapters/store/sqlite"
-	"github.com/eitanity/kanonarion/internal/staleness/domain"
+	"code.eitanity.com/kanonarion/internal/adapters/sqlitestore"
+	stalesqlite "code.eitanity.com/kanonarion/internal/staleness/adapters/store/sqlite"
+	"code.eitanity.com/kanonarion/internal/staleness/domain"
 )
 
 func newStore(t *testing.T) *stalesqlite.Store {

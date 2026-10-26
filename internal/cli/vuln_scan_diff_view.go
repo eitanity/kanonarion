@@ -3,8 +3,8 @@ package cli
 import (
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	vuldomain "code.eitanity.com/kanonarion/internal/vuln/domain"
 )
 
 // scanRunDiffDocument is what `vuln-scan-diff --json` answers with.

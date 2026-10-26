@@ -3,8 +3,8 @@ package cli
 import (
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	"github.com/eitanity/kanonarion/internal/license/domain"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/license/domain"
 )
 
 // licenseDocument is what `license <coord> --json` answers with.

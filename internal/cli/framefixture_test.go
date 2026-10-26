@@ -1,9 +1,9 @@
 package cli
 
 import (
-	"github.com/eitanity/kanonarion/internal/adapters/goenv"
-	cganalyser "github.com/eitanity/kanonarion/internal/callgraph/adapters/analyser/staticcha"
-	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
+	"code.eitanity.com/kanonarion/internal/adapters/goenv"
+	cganalyser "code.eitanity.com/kanonarion/internal/callgraph/adapters/analyser/staticcha"
+	cgdomain "code.eitanity.com/kanonarion/internal/callgraph/domain"
 )
 
 // hostFrame is the frame an undeclared read selects, which a record seeded into

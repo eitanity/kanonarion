@@ -519,8 +519,8 @@ the toolchain's own sentence does not:
 
 ```console
 $ kanonarion walk --gomod ./go.mod --target wasip1/wasm
-error: execute root command: resolving code scope: go list -deps -test -f ... ./... (resolving for the declared build target wasip1/wasm; this failure may be the target's rather than the project's): go: can't load test package: package github.com/eitanity/kanonarion
-	imports github.com/eitanity/kanonarion/internal/cli
+error: execute root command: resolving code scope: go list -deps -test -f ... ./... (resolving for the declared build target wasip1/wasm; this failure may be the target's rather than the project's): go: can't load test package: package code.eitanity.com/kanonarion
+	imports code.eitanity.com/kanonarion/internal/cli
 	...
 	imports modernc.org/libc/errno: build constraints exclude all Go files in .../modernc.org/libc@v1.75.7/errno
 ```

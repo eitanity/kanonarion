@@ -3,9 +3,9 @@ package modcache_test
 import (
 	"testing"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	fetchdomain "code.eitanity.com/kanonarion/internal/fetch/domain"
 
-	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
+	"code.eitanity.com/kanonarion/internal/fetch/fetchtest"
 )
 
 // The fake stands in for a real fact store, so it owes the same refusal: a fake

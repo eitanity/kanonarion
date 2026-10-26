@@ -6,10 +6,10 @@ import (
 	"testing"
 	"time"
 
-	coordinatetest "github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
-	vulndomain "github.com/eitanity/kanonarion/internal/vuln/domain"
-	"github.com/eitanity/kanonarion/internal/vuln/vulntest"
-	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
+	coordinatetest "code.eitanity.com/kanonarion/internal/coordinate/coordinatetest"
+	vulndomain "code.eitanity.com/kanonarion/internal/vuln/domain"
+	"code.eitanity.com/kanonarion/internal/vuln/vulntest"
+	walkdomain "code.eitanity.com/kanonarion/internal/walk/domain"
 )
 
 func testSnapshot(t *testing.T) vulndomain.DatabaseSnapshot {

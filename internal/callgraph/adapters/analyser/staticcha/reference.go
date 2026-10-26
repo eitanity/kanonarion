@@ -5,7 +5,7 @@ import (
 	"go/token"
 	"log/slog"
 
-	"github.com/eitanity/kanonarion/internal/callgraph/domain"
+	"code.eitanity.com/kanonarion/internal/callgraph/domain"
 
 	"golang.org/x/tools/go/ssa"
 )

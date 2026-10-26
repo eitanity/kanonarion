@@ -10,10 +10,10 @@ import (
 
 	"github.com/spf13/cobra"
 
-	factsqlite "github.com/eitanity/kanonarion/internal/adapters/factstore/sqlite"
-	"github.com/eitanity/kanonarion/internal/audit"
-	sqlitestorage "github.com/eitanity/kanonarion/internal/composition/storage/sqlite"
-	"github.com/eitanity/kanonarion/internal/recordstamp"
+	factsqlite "code.eitanity.com/kanonarion/internal/adapters/factstore/sqlite"
+	"code.eitanity.com/kanonarion/internal/audit"
+	sqlitestorage "code.eitanity.com/kanonarion/internal/composition/storage/sqlite"
+	"code.eitanity.com/kanonarion/internal/recordstamp"
 )
 
 // storeLedgerFlags are the query shapes the assurance log is asked in. They are

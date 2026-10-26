@@ -3,7 +3,7 @@ package config_test
 import (
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/config"
+	"code.eitanity.com/kanonarion/internal/config"
 )
 
 func TestRegistry_RegisterAndSpecs(t *testing.T) {

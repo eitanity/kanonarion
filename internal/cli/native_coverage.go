@@ -7,9 +7,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	nativedomain "github.com/eitanity/kanonarion/internal/native/domain"
-	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	nativedomain "code.eitanity.com/kanonarion/internal/native/domain"
+	walkdomain "code.eitanity.com/kanonarion/internal/walk/domain"
 )
 
 // This file states, on the read surfaces, what kanonarion knows and does not

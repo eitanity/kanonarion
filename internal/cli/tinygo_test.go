@@ -13,8 +13,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/adapters/goenv"
-	"github.com/eitanity/kanonarion/internal/walk/adapters/buildlist/tinygotest"
+	"code.eitanity.com/kanonarion/internal/adapters/goenv"
+	"code.eitanity.com/kanonarion/internal/walk/adapters/buildlist/tinygotest"
 )
 
 // hostGOROOT is the toolchain's own root, which the stubbed TinyGo frame names

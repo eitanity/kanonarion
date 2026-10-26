@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/stdlib/adapters/toolchainenv"
+	"code.eitanity.com/kanonarion/internal/stdlib/adapters/toolchainenv"
 )
 
 // TestLocate_RealToolchain probes the actual `go` on PATH. It is the honest

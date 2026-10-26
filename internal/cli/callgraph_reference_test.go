@@ -6,10 +6,10 @@ import (
 	"strings"
 	"testing"
 
-	cgapp "github.com/eitanity/kanonarion/internal/callgraph/application"
+	cgapp "code.eitanity.com/kanonarion/internal/callgraph/application"
 
-	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
-	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
+	cgdomain "code.eitanity.com/kanonarion/internal/callgraph/domain"
+	cgports "code.eitanity.com/kanonarion/internal/callgraph/ports"
 )
 
 // TestRunCallers_ReferenceEdgeReportsTheRegistrationSite is the end-to-end shape

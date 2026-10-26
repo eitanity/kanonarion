@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	vendomain "github.com/eitanity/kanonarion/internal/vendortree/domain"
+	vendomain "code.eitanity.com/kanonarion/internal/vendortree/domain"
 )
 
 // replacedRecord is a clean reconciliation of a project holding one ordinary

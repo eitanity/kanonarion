@@ -3,9 +3,9 @@ package driver
 import (
 	"context"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	vulnapp "github.com/eitanity/kanonarion/internal/vuln/application"
-	vulndomain "github.com/eitanity/kanonarion/internal/vuln/domain"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	vulnapp "code.eitanity.com/kanonarion/internal/vuln/application"
+	vulndomain "code.eitanity.com/kanonarion/internal/vuln/domain"
 )
 
 // rescanRunner is the slice of RescanWalkUseCase the rescan driver needs.

@@ -6,8 +6,8 @@ package ports
 import (
 	"context"
 
-	"github.com/eitanity/kanonarion/internal/audit"
-	"github.com/eitanity/kanonarion/internal/directive/domain"
+	"code.eitanity.com/kanonarion/internal/audit"
+	"code.eitanity.com/kanonarion/internal/directive/domain"
 )
 
 // DirectiveParser parses a project's go.mod (and adjacent go.work, if any)

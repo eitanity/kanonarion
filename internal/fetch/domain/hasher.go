@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/recordstamp"
+	"code.eitanity.com/kanonarion/internal/recordstamp"
 )
 
 // ErrUnsupportedEcosystem is returned when a record's ecosystem field is

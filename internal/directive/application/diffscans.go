@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/eitanity/kanonarion/internal/directive/domain"
-	"github.com/eitanity/kanonarion/internal/directive/ports"
+	"code.eitanity.com/kanonarion/internal/directive/domain"
+	"code.eitanity.com/kanonarion/internal/directive/ports"
 )
 
 // DiffScansUseCase loads two directive scans by ID and returns the

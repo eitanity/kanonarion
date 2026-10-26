@@ -12,7 +12,7 @@ package yaml
 import (
 	"context"
 
-	"github.com/eitanity/kanonarion/internal/license/domain"
+	"code.eitanity.com/kanonarion/internal/license/domain"
 )
 
 // Store serves a fixed LicenseOverrideSet built from config.yaml's

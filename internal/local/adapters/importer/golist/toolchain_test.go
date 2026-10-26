@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/local/adapters/importer/golist"
-	"github.com/eitanity/kanonarion/internal/local/localtest"
+	"code.eitanity.com/kanonarion/internal/local/adapters/importer/golist"
+	"code.eitanity.com/kanonarion/internal/local/localtest"
 )
 
 // TestAnalyseImports_UsesAToolchainAlreadyOnThisHost is the defect on the import

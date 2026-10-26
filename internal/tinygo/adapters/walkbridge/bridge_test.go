@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/tinygo/adapters/walkbridge"
-	"github.com/eitanity/kanonarion/internal/tinygo/application"
-	"github.com/eitanity/kanonarion/internal/tinygo/domain"
-	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
+	"code.eitanity.com/kanonarion/internal/tinygo/adapters/walkbridge"
+	"code.eitanity.com/kanonarion/internal/tinygo/application"
+	"code.eitanity.com/kanonarion/internal/tinygo/domain"
+	walkdomain "code.eitanity.com/kanonarion/internal/walk/domain"
 )
 
 const hexA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"

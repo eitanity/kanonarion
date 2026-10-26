@@ -8,7 +8,7 @@ import (
 
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/vuln/domain"
+	"code.eitanity.com/kanonarion/internal/vuln/domain"
 )
 
 // FuzzParseResults exercises the govulncheck subprocess output parser. The

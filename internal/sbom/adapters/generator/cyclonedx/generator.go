@@ -18,15 +18,15 @@ import (
 
 	cdx "github.com/CycloneDX/cyclonedx-go"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
-	licensedomain "github.com/eitanity/kanonarion/internal/license/domain"
-	"github.com/eitanity/kanonarion/internal/sbom/domain"
-	"github.com/eitanity/kanonarion/internal/sbom/ports"
-	stdlibdomain "github.com/eitanity/kanonarion/internal/stdlib/domain"
-	vendordomain "github.com/eitanity/kanonarion/internal/vendortree/domain"
-	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
+	fetchdomain "code.eitanity.com/kanonarion/internal/fetch/domain"
+	licensedomain "code.eitanity.com/kanonarion/internal/license/domain"
+	"code.eitanity.com/kanonarion/internal/sbom/domain"
+	"code.eitanity.com/kanonarion/internal/sbom/ports"
+	stdlibdomain "code.eitanity.com/kanonarion/internal/stdlib/domain"
+	vendordomain "code.eitanity.com/kanonarion/internal/vendortree/domain"
+	walkdomain "code.eitanity.com/kanonarion/internal/walk/domain"
 )
 
 const (

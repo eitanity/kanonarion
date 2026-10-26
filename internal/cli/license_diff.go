@@ -7,10 +7,10 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 
-	licapp "github.com/eitanity/kanonarion/internal/license/application"
-	"github.com/eitanity/kanonarion/internal/license/domain"
+	licapp "code.eitanity.com/kanonarion/internal/license/application"
+	"code.eitanity.com/kanonarion/internal/license/domain"
 	"github.com/spf13/cobra"
 )
 

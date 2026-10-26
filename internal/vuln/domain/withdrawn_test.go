@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/vuln/domain"
+	"code.eitanity.com/kanonarion/internal/vuln/domain"
 )
 
 // withdrawnAt is the retraction timestamp of GO-2026-4923, the advisory this

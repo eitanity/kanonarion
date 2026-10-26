@@ -16,13 +16,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/adapters/goenv"
-	"github.com/eitanity/kanonarion/internal/adapters/vulndbindex"
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
+	"code.eitanity.com/kanonarion/internal/adapters/goenv"
+	"code.eitanity.com/kanonarion/internal/adapters/vulndbindex"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	fetchports "code.eitanity.com/kanonarion/internal/fetch/ports"
 
-	"github.com/eitanity/kanonarion/internal/vuln/domain"
-	"github.com/eitanity/kanonarion/internal/vuln/ports"
+	"code.eitanity.com/kanonarion/internal/vuln/domain"
+	"code.eitanity.com/kanonarion/internal/vuln/ports"
 	"golang.org/x/mod/semver"
 )
 

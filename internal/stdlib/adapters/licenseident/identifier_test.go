@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	licports "github.com/eitanity/kanonarion/internal/license/ports"
-	"github.com/eitanity/kanonarion/internal/stdlib/adapters/licenseident"
+	licports "code.eitanity.com/kanonarion/internal/license/ports"
+	"code.eitanity.com/kanonarion/internal/stdlib/adapters/licenseident"
 )
 
 type stubDetector struct {

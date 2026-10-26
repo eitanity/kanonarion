@@ -3,7 +3,7 @@ package driver
 import (
 	"context"
 
-	staleapp "github.com/eitanity/kanonarion/internal/staleness/application"
+	staleapp "code.eitanity.com/kanonarion/internal/staleness/application"
 )
 
 // StalenessResolver answers, per module path and pinned version, how far

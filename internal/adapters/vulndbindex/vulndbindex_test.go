@@ -7,7 +7,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/vuln/ports"
+	"code.eitanity.com/kanonarion/internal/vuln/ports"
 )
 
 func zipOf(t *testing.T, name string, method uint16, body string) []byte {

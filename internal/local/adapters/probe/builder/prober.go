@@ -30,12 +30,12 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/eitanity/kanonarion/internal/adapters/childproc"
-	"github.com/eitanity/kanonarion/internal/adapters/goenv"
-	"github.com/eitanity/kanonarion/internal/adapters/interrupt"
-	"github.com/eitanity/kanonarion/internal/gotoolchain"
-	localdomain "github.com/eitanity/kanonarion/internal/local/domain"
-	"github.com/eitanity/kanonarion/internal/local/ports"
+	"code.eitanity.com/kanonarion/internal/adapters/childproc"
+	"code.eitanity.com/kanonarion/internal/adapters/goenv"
+	"code.eitanity.com/kanonarion/internal/adapters/interrupt"
+	"code.eitanity.com/kanonarion/internal/gotoolchain"
+	localdomain "code.eitanity.com/kanonarion/internal/local/domain"
+	"code.eitanity.com/kanonarion/internal/local/ports"
 )
 
 const probeHarnessDir = "_kanonarion_probe"

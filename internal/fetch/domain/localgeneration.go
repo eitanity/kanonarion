@@ -3,7 +3,7 @@ package domain
 import (
 	"fmt"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 )
 
 // SupersededLocalGenerations splits the measurements of coord into the ones a

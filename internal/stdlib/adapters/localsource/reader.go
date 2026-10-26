@@ -11,7 +11,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/eitanity/kanonarion/internal/stdlib/ports"
+	"code.eitanity.com/kanonarion/internal/stdlib/ports"
 )
 
 // maxLicenseBytes caps how much of the LICENSE file is read into memory. The Go

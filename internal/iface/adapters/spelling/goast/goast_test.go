@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/iface/adapters/spelling/goast"
-	"github.com/eitanity/kanonarion/internal/iface/ports"
+	"code.eitanity.com/kanonarion/internal/iface/adapters/spelling/goast"
+	"code.eitanity.com/kanonarion/internal/iface/ports"
 )
 
 // The motivating measurement: spf13/cast's v1.4.1 → v1.10.0 bump rewrites

@@ -86,7 +86,7 @@ test packages, and tag a module only test code reaches with `[test]`. The
 
 ```
 $ kanonarion context . --symbol
-github.com/eitanity/kanonarion
+code.eitanity.com/kanonarion
   Root:            /home/mb/dev/kanonarion
   Version:         local-7c28ebbc23b3709a...
   Analysis level:  symbol
@@ -120,7 +120,7 @@ a per-dependency `test_only`, both emitted always, `false` included:
 {
   "workspace": {
     "root": "/home/mb/dev/kanonarion",
-    "module": "github.com/eitanity/kanonarion",
+    "module": "code.eitanity.com/kanonarion",
     "version_id": "local-7c28ebbc23b3709a...",
     "analysis_level": "symbol",
     "tests_excluded": false

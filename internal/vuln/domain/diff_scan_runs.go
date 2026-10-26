@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"slices"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 )
 
 // DiffScanRuns compares two scan runs of the same walk and returns the delta.

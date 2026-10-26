@@ -15,10 +15,10 @@ import (
 
 	"golang.org/x/tools/go/packages"
 
-	"github.com/eitanity/kanonarion/internal/adapters/goenv"
-	"github.com/eitanity/kanonarion/internal/gotoolchain"
-	"github.com/eitanity/kanonarion/internal/local/domain"
-	"github.com/eitanity/kanonarion/internal/local/ports"
+	"code.eitanity.com/kanonarion/internal/adapters/goenv"
+	"code.eitanity.com/kanonarion/internal/gotoolchain"
+	"code.eitanity.com/kanonarion/internal/local/domain"
+	"code.eitanity.com/kanonarion/internal/local/ports"
 )
 
 // Analyser implements ports.SymbolAnalyser using go/packages.

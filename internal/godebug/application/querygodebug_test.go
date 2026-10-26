@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/godebug/application"
-	"github.com/eitanity/kanonarion/internal/godebug/domain"
+	"code.eitanity.com/kanonarion/internal/godebug/application"
+	"code.eitanity.com/kanonarion/internal/godebug/domain"
 )
 
 type fakeGoDebugStore struct {

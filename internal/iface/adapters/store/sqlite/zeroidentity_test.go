@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
+	"code.eitanity.com/kanonarion/internal/fetch/fetchtest"
 )
 
 // TestRefusesZeroArtefactIdentity pins the write-leg rule at this store.

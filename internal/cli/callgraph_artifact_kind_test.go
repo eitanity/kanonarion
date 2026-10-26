@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
+	cgdomain "code.eitanity.com/kanonarion/internal/callgraph/domain"
 )
 
 // TestCallGraphShowJSON_CarriesTheArtefactKind: the dimension that decides how a

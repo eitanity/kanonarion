@@ -10,7 +10,7 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/local/domain"
+	"code.eitanity.com/kanonarion/internal/local/domain"
 )
 
 // Tests for unexported helpers: qualifiedName and sortedSet.

@@ -8,13 +8,13 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 
-	extractapp "github.com/eitanity/kanonarion/internal/extract/application"
-	extractdomain "github.com/eitanity/kanonarion/internal/extract/domain"
+	extractapp "code.eitanity.com/kanonarion/internal/extract/application"
+	extractdomain "code.eitanity.com/kanonarion/internal/extract/domain"
 
-	walkapp "github.com/eitanity/kanonarion/internal/walk/application"
-	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
+	walkapp "code.eitanity.com/kanonarion/internal/walk/application"
+	walkdomain "code.eitanity.com/kanonarion/internal/walk/domain"
 )
 
 // fakeWalk records the request it received and returns a canned result/error.

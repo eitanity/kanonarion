@@ -10,8 +10,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
-	extextractor "github.com/eitanity/kanonarion/internal/extract/adapters/extractor/local"
+	cgports "code.eitanity.com/kanonarion/internal/callgraph/ports"
+	extextractor "code.eitanity.com/kanonarion/internal/extract/adapters/extractor/local"
 )
 
 // TestCallgraphTimeoutFlag_OnEveryCommandThatSpawnsAChild is the shared-flag

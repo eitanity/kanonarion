@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	vulndomain "github.com/eitanity/kanonarion/internal/vuln/domain"
+	vulndomain "code.eitanity.com/kanonarion/internal/vuln/domain"
 )
 
 // TestVulnAuditStatus_ReadErrorIsNotReportedAsNotScanned is the regression for

@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	nativedomain "github.com/eitanity/kanonarion/internal/native/domain"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	nativedomain "code.eitanity.com/kanonarion/internal/native/domain"
 )
 
 // The second half of the defect this file pins: `audit`, `inspect` and

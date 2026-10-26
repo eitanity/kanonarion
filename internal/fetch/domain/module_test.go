@@ -3,7 +3,7 @@ package domain_test
 import (
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/fetch/domain"
+	"code.eitanity.com/kanonarion/internal/fetch/domain"
 )
 
 func TestVerificationStatus_IsVerified(t *testing.T) {

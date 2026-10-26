@@ -68,7 +68,7 @@ record:
 ```
 example.com/mod@v1.0.0: Found — 1 example(s)
   not analysed: 1 file (example_test.go): the kanonarion that ran was built with go1.26.6 and the code requires go1.27.2.
-  Use a kanonarion built with go1.27.2 or newer: a newer release, or `go install github.com/eitanity/kanonarion@latest` run with go1.27.2 or newer.
+  Use a kanonarion built with go1.27.2 or newer: a newer release, or `go install code.eitanity.com/kanonarion@latest` run with go1.27.2 or newer.
   ExamplePlain (plain:plain_test) → Plain [validated]
 ```
 

@@ -3,7 +3,7 @@ package domain_test
 import (
 	"testing"
 
-	domain2 "github.com/eitanity/kanonarion/internal/iface/domain"
+	domain2 "code.eitanity.com/kanonarion/internal/iface/domain"
 )
 
 // TestToolchain_IsHashTransparentForRecordsThatPredateIt is the falsifying test

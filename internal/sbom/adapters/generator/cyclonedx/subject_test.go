@@ -4,13 +4,13 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 
-	licensedomain "github.com/eitanity/kanonarion/internal/license/domain"
+	licensedomain "code.eitanity.com/kanonarion/internal/license/domain"
 
-	"github.com/eitanity/kanonarion/internal/sbom/adapters/generator/cyclonedx"
+	"code.eitanity.com/kanonarion/internal/sbom/adapters/generator/cyclonedx"
 
-	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
+	walkdomain "code.eitanity.com/kanonarion/internal/walk/domain"
 )
 
 // TestStampedSubjectHasOneIdentityInTheDocument verifies that a stamped subject

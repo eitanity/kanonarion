@@ -1,6 +1,6 @@
 package domain
 
-import "github.com/eitanity/kanonarion/internal/gotoolchain"
+import "code.eitanity.com/kanonarion/internal/gotoolchain"
 
 // RecordIsCacheable reports whether a stored record may answer a later
 // extraction without measuring again, given the module's go directive ("" when

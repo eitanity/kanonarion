@@ -5,9 +5,9 @@ import (
 	"strings"
 	"testing"
 
-	configyaml "github.com/eitanity/kanonarion/internal/config/adapters/store/yaml"
+	configyaml "code.eitanity.com/kanonarion/internal/config/adapters/store/yaml"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	fetchdomain "code.eitanity.com/kanonarion/internal/fetch/domain"
 )
 
 // Absent and empty are different answers. Absent leaves the built-in host set

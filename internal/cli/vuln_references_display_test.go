@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	coordinatetest "github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
-	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
+	coordinatetest "code.eitanity.com/kanonarion/internal/coordinate/coordinatetest"
+	vuldomain "code.eitanity.com/kanonarion/internal/vuln/domain"
 )
 
 // referencesGinRecord is the record a scan produces for GO-2020-0001, carrying

@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/adapters/clock"
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	staleapp "github.com/eitanity/kanonarion/internal/staleness/application"
-	staleports "github.com/eitanity/kanonarion/internal/staleness/ports"
+	"code.eitanity.com/kanonarion/internal/adapters/clock"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	staleapp "code.eitanity.com/kanonarion/internal/staleness/application"
+	staleports "code.eitanity.com/kanonarion/internal/staleness/ports"
 )
 
 // probeStubResolver answers the same-major question and then gives the named

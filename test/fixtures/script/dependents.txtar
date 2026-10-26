@@ -99,7 +99,7 @@ stderr 'to list every walk record: kanonarion walk-list --limit 0'
 # the read refuses and names the walk to take rather than searching for a build
 # that happens to hold the coordinate.
 ! kanonarion dependents example.com/dep@v1.0.0 --store-root=$WORK/stores
-stderr 'no succeeded project walk for github.com/eitanity/kanonarion'
+stderr 'no succeeded project walk for code.eitanity.com/kanonarion'
 stderr 'kanonarion walk --gomod'
 ! stderr 'walk\(s\) searched'
 

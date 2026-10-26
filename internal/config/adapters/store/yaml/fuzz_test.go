@@ -6,7 +6,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	configyaml "github.com/eitanity/kanonarion/internal/config/adapters/store/yaml"
+	configyaml "code.eitanity.com/kanonarion/internal/config/adapters/store/yaml"
 )
 
 // schemaKeys are the top-level keys the config schema defines.

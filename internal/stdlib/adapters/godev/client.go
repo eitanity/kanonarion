@@ -10,9 +10,9 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/adapters/goenv"
-	"github.com/eitanity/kanonarion/internal/stdlib/domain"
-	"github.com/eitanity/kanonarion/internal/stdlib/ports"
+	"code.eitanity.com/kanonarion/internal/adapters/goenv"
+	"code.eitanity.com/kanonarion/internal/stdlib/domain"
+	"code.eitanity.com/kanonarion/internal/stdlib/ports"
 )
 
 // ErrNetworkForbidden reports that the environment declares no network access

@@ -13,8 +13,8 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/eitanity/kanonarion/internal/adapters/childproc"
-	"github.com/eitanity/kanonarion/internal/stdlib/ports"
+	"code.eitanity.com/kanonarion/internal/adapters/childproc"
+	"code.eitanity.com/kanonarion/internal/stdlib/ports"
 )
 
 // Inspector resolves GOROOT and GOVERSION from the local Go toolchain.

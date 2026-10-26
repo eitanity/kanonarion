@@ -9,7 +9,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/eitanity/kanonarion/internal/adapters/yamlkeys"
+	"code.eitanity.com/kanonarion/internal/adapters/yamlkeys"
 )
 
 type inner struct {

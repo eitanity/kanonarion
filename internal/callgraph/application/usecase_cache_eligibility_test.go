@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/callgraph/application"
-	domain2 "github.com/eitanity/kanonarion/internal/callgraph/domain"
+	"code.eitanity.com/kanonarion/internal/callgraph/application"
+	domain2 "code.eitanity.com/kanonarion/internal/callgraph/domain"
 )
 
 // storeFailureRecord seeds the call-graph store with a no-graph record carrying

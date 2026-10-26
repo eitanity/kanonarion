@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/adapters/goenv"
+	"code.eitanity.com/kanonarion/internal/adapters/goenv"
 )
 
 // mergedTree is a stub of TinyGo's merged GOROOT: TinyGo's and Go's source roots

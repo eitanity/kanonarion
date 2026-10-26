@@ -15,10 +15,10 @@ import (
 	"reflect"
 	"slices"
 
-	"github.com/eitanity/kanonarion/internal/adapters/yamlkeys"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
-	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
-	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
+	"code.eitanity.com/kanonarion/internal/adapters/yamlkeys"
+	fetchdomain "code.eitanity.com/kanonarion/internal/fetch/domain"
+	walkdomain "code.eitanity.com/kanonarion/internal/walk/domain"
+	walkports "code.eitanity.com/kanonarion/internal/walk/ports"
 	"gopkg.in/yaml.v3"
 )
 

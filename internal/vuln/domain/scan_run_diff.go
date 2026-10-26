@@ -1,7 +1,7 @@
 package domain
 
 import (
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 )
 
 // ScanRunDiff is the result of comparing two WalkScanRuns of the same walk.

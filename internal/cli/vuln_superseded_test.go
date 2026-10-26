@@ -10,14 +10,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/cli/testfakes"
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
+	"code.eitanity.com/kanonarion/internal/cli/testfakes"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate/coordinatetest"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
-	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
-	vulnports "github.com/eitanity/kanonarion/internal/vuln/ports"
-	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
+	fetchdomain "code.eitanity.com/kanonarion/internal/fetch/domain"
+	vuldomain "code.eitanity.com/kanonarion/internal/vuln/domain"
+	vulnports "code.eitanity.com/kanonarion/internal/vuln/ports"
+	walkports "code.eitanity.com/kanonarion/internal/walk/ports"
 )
 
 // A pipeline bump leaves records the reads cannot see, and every empty answer

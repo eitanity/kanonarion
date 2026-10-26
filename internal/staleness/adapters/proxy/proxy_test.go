@@ -9,9 +9,9 @@ import (
 	"strings"
 	"testing"
 
-	directproxy "github.com/eitanity/kanonarion/internal/adapters/proxy/direct"
-	staleproxy "github.com/eitanity/kanonarion/internal/staleness/adapters/proxy"
-	"github.com/eitanity/kanonarion/internal/staleness/ports"
+	directproxy "code.eitanity.com/kanonarion/internal/adapters/proxy/direct"
+	staleproxy "code.eitanity.com/kanonarion/internal/staleness/adapters/proxy"
+	"code.eitanity.com/kanonarion/internal/staleness/ports"
 )
 
 func bridgeFor(t *testing.T, handler http.HandlerFunc) *staleproxy.Bridge {

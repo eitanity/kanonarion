@@ -3,8 +3,8 @@ package kanonarion
 import (
 	"fmt"
 
-	"github.com/eitanity/kanonarion/internal/composition"
-	"github.com/eitanity/kanonarion/internal/composition/storage"
+	"code.eitanity.com/kanonarion/internal/composition"
+	"code.eitanity.com/kanonarion/internal/composition/storage"
 )
 
 // Storage is everything kanonarion persists through, supplied as one value:

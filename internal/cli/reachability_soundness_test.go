@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	coordinatetest "github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
-	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
+	coordinatetest "code.eitanity.com/kanonarion/internal/coordinate/coordinatetest"
+	vuldomain "code.eitanity.com/kanonarion/internal/vuln/domain"
 )
 
 // negativeRecord is a stored not-reachable answer of exactly the shape a working

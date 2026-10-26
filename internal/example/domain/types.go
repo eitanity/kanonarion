@@ -5,8 +5,8 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	"github.com/eitanity/kanonarion/internal/gotoolchain"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/gotoolchain"
 )
 
 // ExampleSchemaVersion is the version of the ExampleRecord JSON schema. Bump

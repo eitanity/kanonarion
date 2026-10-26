@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	dirdomain "github.com/eitanity/kanonarion/internal/directive/domain"
+	dirdomain "code.eitanity.com/kanonarion/internal/directive/domain"
 )
 
 // toDirectivesDiffJSON projects a domain DirectiveDiff into the JSON

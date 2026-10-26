@@ -2,7 +2,7 @@ package domain
 
 import "maps"
 
-import "github.com/eitanity/kanonarion/internal/coordinate"
+import "code.eitanity.com/kanonarion/internal/coordinate"
 
 // LicenseOverride is an operator-supplied determination for a single module's
 // license. It carries enough provenance for callers to indicate that a result

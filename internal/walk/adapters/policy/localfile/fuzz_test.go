@@ -6,8 +6,8 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/eitanity/kanonarion/internal/walk/adapters/policy/localfile"
-	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
+	"code.eitanity.com/kanonarion/internal/walk/adapters/policy/localfile"
+	walkdomain "code.eitanity.com/kanonarion/internal/walk/domain"
 )
 
 // FuzzParse fuzzes the policy.yaml loader. Policy files are operator-supplied

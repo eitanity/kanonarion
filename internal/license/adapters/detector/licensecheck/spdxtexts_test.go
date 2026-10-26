@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	detector "github.com/eitanity/kanonarion/internal/license/adapters/detector/licensecheck"
-	licensedomain "github.com/eitanity/kanonarion/internal/license/domain"
+	detector "code.eitanity.com/kanonarion/internal/license/adapters/detector/licensecheck"
+	licensedomain "code.eitanity.com/kanonarion/internal/license/domain"
 )
 
 // The embedded SPDX text table is the verbatim licence text kanonarion

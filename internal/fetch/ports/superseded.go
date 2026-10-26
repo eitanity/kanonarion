@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 )
 
 // SupersededArtefacts names, for one coordinate, the artefact identities a read

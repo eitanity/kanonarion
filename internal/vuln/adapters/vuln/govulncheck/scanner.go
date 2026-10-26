@@ -8,8 +8,8 @@ import (
 	"os/exec"
 	"runtime"
 
-	"github.com/eitanity/kanonarion/internal/adapters/goenv"
-	"github.com/eitanity/kanonarion/internal/vuln/ports"
+	"code.eitanity.com/kanonarion/internal/adapters/goenv"
+	"code.eitanity.com/kanonarion/internal/vuln/ports"
 )
 
 // Scanner runs the govulncheck binary, resolved from PATH.

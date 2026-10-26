@@ -24,7 +24,7 @@ package coordinatetest
 import (
 	"fmt"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 )
 
 // MustNew returns the coordinate for path and version, panicking if it is not

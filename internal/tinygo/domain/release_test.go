@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/tinygo/domain"
+	"code.eitanity.com/kanonarion/internal/tinygo/domain"
 )
 
 const hexA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"

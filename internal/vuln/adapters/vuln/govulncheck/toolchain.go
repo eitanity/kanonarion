@@ -6,8 +6,8 @@ import (
 	"io"
 	"os/exec"
 
-	"github.com/eitanity/kanonarion/internal/adapters/childproc"
-	"github.com/eitanity/kanonarion/internal/adapters/goenv"
+	"code.eitanity.com/kanonarion/internal/adapters/childproc"
+	"code.eitanity.com/kanonarion/internal/adapters/goenv"
 )
 
 // stderrLimit is how much of a child's own account of a failure is kept. The

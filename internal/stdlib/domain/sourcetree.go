@@ -9,7 +9,7 @@ import (
 	"sort"
 	"strings"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	fetchdomain "code.eitanity.com/kanonarion/internal/fetch/domain"
 )
 
 // SourceManifest builds a deterministic content manifest of a standard-library

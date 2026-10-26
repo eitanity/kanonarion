@@ -4,7 +4,7 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/eitanity/kanonarion/internal/stdlib/domain"
+	"code.eitanity.com/kanonarion/internal/stdlib/domain"
 )
 
 func TestSourceManifest_OrderIndependent(t *testing.T) {

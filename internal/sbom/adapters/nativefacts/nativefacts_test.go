@@ -5,10 +5,10 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	nativedomain "github.com/eitanity/kanonarion/internal/native/domain"
-	nativeports "github.com/eitanity/kanonarion/internal/native/ports"
-	"github.com/eitanity/kanonarion/internal/sbom/adapters/nativefacts"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	nativedomain "code.eitanity.com/kanonarion/internal/native/domain"
+	nativeports "code.eitanity.com/kanonarion/internal/native/ports"
+	"code.eitanity.com/kanonarion/internal/sbom/adapters/nativefacts"
 )
 
 type fakeStore struct {

@@ -3,9 +3,9 @@ package cyclonedx_test
 import (
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	"github.com/eitanity/kanonarion/internal/sbom/adapters/generator/cyclonedx"
-	"github.com/eitanity/kanonarion/internal/sbom/ports"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/sbom/adapters/generator/cyclonedx"
+	"code.eitanity.com/kanonarion/internal/sbom/ports"
 )
 
 // A nested module's VCS reference names the directory its zip was compared

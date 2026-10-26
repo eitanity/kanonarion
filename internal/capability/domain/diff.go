@@ -4,7 +4,7 @@ import (
 	"slices"
 	"strings"
 
-	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
+	cgdomain "code.eitanity.com/kanonarion/internal/callgraph/domain"
 )
 
 // CapabilityDiff compares two capability reports (for example two versions of a

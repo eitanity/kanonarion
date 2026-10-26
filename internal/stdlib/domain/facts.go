@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	fetchdomain "code.eitanity.com/kanonarion/internal/fetch/domain"
 )
 
 // ErrNoGoVersion is returned when a measurement names no toolchain version.

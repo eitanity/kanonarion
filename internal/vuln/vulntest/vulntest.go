@@ -25,7 +25,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/vuln/domain"
+	"code.eitanity.com/kanonarion/internal/vuln/domain"
 )
 
 // MustNew returns the snapshot naming source at version, with no retrieval time

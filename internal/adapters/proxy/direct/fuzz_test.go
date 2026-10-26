@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 )
 
 // fuzzRT returns the same fuzzer-controlled body (HTTP 200) for every request,

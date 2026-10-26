@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	configdomain "github.com/eitanity/kanonarion/internal/config/domain"
+	configdomain "code.eitanity.com/kanonarion/internal/config/domain"
 	"gopkg.in/yaml.v3"
 )
 

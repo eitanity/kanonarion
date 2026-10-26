@@ -3,9 +3,9 @@ package application_test
 import (
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	application "github.com/eitanity/kanonarion/internal/vuln/application"
-	"github.com/eitanity/kanonarion/internal/vuln/domain"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	application "code.eitanity.com/kanonarion/internal/vuln/application"
+	"code.eitanity.com/kanonarion/internal/vuln/domain"
 )
 
 // Two builds rooted at one target report one advisory set for a dependency,

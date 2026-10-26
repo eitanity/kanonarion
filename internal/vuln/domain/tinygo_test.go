@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/vuln/domain"
+	"code.eitanity.com/kanonarion/internal/vuln/domain"
 )
 
 var wasiSupply = domain.TinyGoSupply{TinyGo: []string{"os", "runtime"}}

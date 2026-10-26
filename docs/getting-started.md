@@ -69,7 +69,7 @@ kanonarion uses these four words everywhere.
 ### 1. Install kanonarion
 
 ```bash
-go install github.com/eitanity/kanonarion@latest
+go install code.eitanity.com/kanonarion@latest
 ```
 
 This puts a `kanonarion` binary in `$(go env GOBIN)`, or in
@@ -378,7 +378,7 @@ kanonarion dependents github.com/spf13/pflag@v1.0.10
 ```
 
 ```
-notice: ./go.mod names the build, so the answer below is walk 01M4DN1KPYJM458G55MJEGK9NV (code scope, frame linux/amd64) rooted at github.com/eitanity/kanonarion@local; ./go.mod was not re-resolved for this read, so an edit made to it since that walk is not reflected — kanonarion walk --gomod ./go.mod records the current resolution
+notice: ./go.mod names the build, so the answer below is walk 01M4DN1KPYJM458G55MJEGK9NV (code scope, frame linux/amd64) rooted at code.eitanity.com/kanonarion@local; ./go.mod was not re-resolved for this read, so an edit made to it since that walk is not reflected — kanonarion walk --gomod ./go.mod records the current resolution
 1 module(s) in walk 01M4DN1KPYJM458G55MJEGK9NV (frame linux/amd64) depend on github.com/spf13/pflag@v1.0.10 (the walk root does; it is excluded by default — pass --include-root):
   github.com/spf13/cobra@v1.10.2  [direct]
 ```
@@ -445,7 +445,7 @@ kanonarion local .
 ```
 
 ```
-github.com/eitanity/kanonarion@local: Extracted — 14819 nodes, 198790 edges [CHA] (cached)
+code.eitanity.com/kanonarion@local: Extracted — 14819 nodes, 198790 edges [CHA] (cached)
 ```
 
 That is 14,819 nodes and 198,790 call edges for this codebase. 8,584 of the
@@ -490,9 +490,9 @@ kanonarion reachability --local .
 
 ```
 local reachability probe of /home/mb/dev/kanonarion
-  module:    github.com/eitanity/kanonarion
+  module:    code.eitanity.com/kanonarion
   snapshot:  local-5f4438c9453f312e903b0c61eb5cbef18633b072bdbe9ef4f1586e0ecf00a384 taken 2026-08-27T01:33:16Z
-  seed:      seed restricted to stored records scanned by walk "01M4DN1KPYJM458G55MJEGK9NV" (code scope, frame target-rooted:github.com/eitanity/kanonarion@local), the newest project walk for this tree's go.mod, in its own frame or in the isolated frame; records of older walks and of another consumer's build were not read
+  seed:      seed restricted to stored records scanned by walk "01M4DN1KPYJM458G55MJEGK9NV" (code scope, frame target-rooted:code.eitanity.com/kanonarion@local), the newest project walk for this tree's go.mod, in its own frame or in the isolated frame; records of older walks and of another consumer's build were not read
   notice:    no stored vulnerability findings for the 18 module(s) of this build the store holds a record for
 
 coverage: 18 build module(s), 18 queried, 18 covered, 0 with findings

@@ -1,6 +1,6 @@
 package tinylower_test
 
-import "github.com/eitanity/kanonarion/internal/callgraph/adapters/analyser/staticcha/tinylower"
+import "code.eitanity.com/kanonarion/internal/callgraph/adapters/analyser/staticcha/tinylower"
 
 var allOps = []tinylower.Op{
 	tinylower.OpMapMake,

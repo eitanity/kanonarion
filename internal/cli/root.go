@@ -12,12 +12,12 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/eitanity/kanonarion/internal/adapters/childproc"
-	"github.com/eitanity/kanonarion/internal/adapters/interrupt"
-	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
-	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
-	sqlitestorage "github.com/eitanity/kanonarion/internal/composition/storage/sqlite"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"code.eitanity.com/kanonarion/internal/adapters/childproc"
+	"code.eitanity.com/kanonarion/internal/adapters/interrupt"
+	"code.eitanity.com/kanonarion/internal/adapters/recordseal"
+	"code.eitanity.com/kanonarion/internal/adapters/sqlitestore"
+	sqlitestorage "code.eitanity.com/kanonarion/internal/composition/storage/sqlite"
+	fetchdomain "code.eitanity.com/kanonarion/internal/fetch/domain"
 )
 
 func newRootCmd(stdout, stderr io.Writer) *cobra.Command {

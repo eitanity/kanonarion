@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	coordinatetest "github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
-	vulndomain "github.com/eitanity/kanonarion/internal/vuln/domain"
-	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
+	coordinatetest "code.eitanity.com/kanonarion/internal/coordinate/coordinatetest"
+	vulndomain "code.eitanity.com/kanonarion/internal/vuln/domain"
+	walkdomain "code.eitanity.com/kanonarion/internal/walk/domain"
 )
 
 func tinyGoWalkRecord(t *testing.T) walkdomain.WalkRecord {

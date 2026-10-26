@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	staleapp "github.com/eitanity/kanonarion/internal/staleness/application"
-	staledomain "github.com/eitanity/kanonarion/internal/staleness/domain"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	staleapp "code.eitanity.com/kanonarion/internal/staleness/application"
+	staledomain "code.eitanity.com/kanonarion/internal/staleness/domain"
 )
 
 // `audit` is the command a developer runs over a project, so a first-party fact

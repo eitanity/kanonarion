@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	sqlite2 "github.com/eitanity/kanonarion/internal/adapters/factstore/sqlite"
+	sqlite2 "code.eitanity.com/kanonarion/internal/adapters/factstore/sqlite"
 )
 
 func TestAuditingStore_PutError_ClosedDB(t *testing.T) {

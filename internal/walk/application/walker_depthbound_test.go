@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	application2 "github.com/eitanity/kanonarion/internal/walk/application"
-	"github.com/eitanity/kanonarion/internal/walk/domain"
+	application2 "code.eitanity.com/kanonarion/internal/walk/application"
+	"code.eitanity.com/kanonarion/internal/walk/domain"
 )
 
 // depthBoundPolicy is a fetch stage bounded at one hop, the shape a policy file

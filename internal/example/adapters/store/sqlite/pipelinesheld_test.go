@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	domain2 "github.com/eitanity/kanonarion/internal/example/domain"
+	domain2 "code.eitanity.com/kanonarion/internal/example/domain"
 )
 
 // PipelinesHeld names every pipeline one coordinate is held at, in version

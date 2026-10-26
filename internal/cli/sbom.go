@@ -11,16 +11,16 @@ import (
 	"strings"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 
 	"github.com/spf13/cobra"
 
-	extractapp "github.com/eitanity/kanonarion/internal/extract/application"
+	extractapp "code.eitanity.com/kanonarion/internal/extract/application"
 
-	"github.com/eitanity/kanonarion/internal/sbom/application"
-	"github.com/eitanity/kanonarion/internal/sbom/domain"
-	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
-	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
+	"code.eitanity.com/kanonarion/internal/sbom/application"
+	"code.eitanity.com/kanonarion/internal/sbom/domain"
+	walkdomain "code.eitanity.com/kanonarion/internal/walk/domain"
+	walkports "code.eitanity.com/kanonarion/internal/walk/ports"
 )
 
 // sbomFlags holds every flag the sbom command registers. They live in one

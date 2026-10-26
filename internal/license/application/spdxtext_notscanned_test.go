@@ -4,7 +4,7 @@ import (
 	"path"
 	"testing"
 
-	licensedomain "github.com/eitanity/kanonarion/internal/license/domain"
+	licensedomain "code.eitanity.com/kanonarion/internal/license/domain"
 )
 
 // The embedded SPDX text table ships verbatim licence texts inside this

@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	domain "github.com/eitanity/kanonarion/internal/license/domain"
+	domain "code.eitanity.com/kanonarion/internal/license/domain"
 )
 
 // The guard on the boundary `license --json` now has.

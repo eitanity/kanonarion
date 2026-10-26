@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/eitanity/kanonarion/internal/vuln/domain"
-	"github.com/eitanity/kanonarion/internal/vuln/ports"
+	"code.eitanity.com/kanonarion/internal/vuln/domain"
+	"code.eitanity.com/kanonarion/internal/vuln/ports"
 )
 
 // persistSnapshot stores a downloaded snapshot and witnesses it, and returns

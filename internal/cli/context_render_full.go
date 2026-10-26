@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
+	vuldomain "code.eitanity.com/kanonarion/internal/vuln/domain"
 )
 
 func printContextFull(out contextOutput, stdout io.Writer) error {

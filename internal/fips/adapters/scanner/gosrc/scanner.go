@@ -23,10 +23,10 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/eitanity/kanonarion/internal/fips/domain"
-	"github.com/eitanity/kanonarion/internal/fips/ports"
-	"github.com/eitanity/kanonarion/internal/gotoolchain"
-	vendordomain "github.com/eitanity/kanonarion/internal/vendortree/domain"
+	"code.eitanity.com/kanonarion/internal/fips/domain"
+	"code.eitanity.com/kanonarion/internal/fips/ports"
+	"code.eitanity.com/kanonarion/internal/gotoolchain"
+	vendordomain "code.eitanity.com/kanonarion/internal/vendortree/domain"
 	"golang.org/x/mod/modfile"
 )
 

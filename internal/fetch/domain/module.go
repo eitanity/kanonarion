@@ -3,7 +3,7 @@ package domain
 import (
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 )
 
 // VerificationStatus describes the outcome of cross-verifying a module zip

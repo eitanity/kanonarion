@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
-	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
+	"code.eitanity.com/kanonarion/internal/coordinate/coordinatetest"
+	fetchports "code.eitanity.com/kanonarion/internal/fetch/ports"
 )
 
 // A call-graph child that refused a stored artefact as altered exited with the

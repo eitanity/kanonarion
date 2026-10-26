@@ -61,7 +61,7 @@ If kanonarion can't determine something, it says so, and a command that refuses 
 
 ```bash
 # Install (puts `kanonarion` on your PATH)
-go install github.com/eitanity/kanonarion@latest
+go install code.eitanity.com/kanonarion@latest
 
 # Analyse a single module end to end (walk → extract → vuln-scan → context).
 # One module = a result you can read and sanity-check on one screen.

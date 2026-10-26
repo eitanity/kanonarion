@@ -3,7 +3,7 @@ package domain
 import (
 	"fmt"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	fetchdomain "code.eitanity.com/kanonarion/internal/fetch/domain"
 )
 
 // PolicySchemaVersion is the version of the DepthPolicy YAML schema.

@@ -7,10 +7,10 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
-	"github.com/eitanity/kanonarion/internal/recordstamp"
-	"github.com/eitanity/kanonarion/internal/tinygo/domain"
-	"github.com/eitanity/kanonarion/internal/tinygo/ports"
+	"code.eitanity.com/kanonarion/internal/adapters/sqlitestore"
+	"code.eitanity.com/kanonarion/internal/recordstamp"
+	"code.eitanity.com/kanonarion/internal/tinygo/domain"
+	"code.eitanity.com/kanonarion/internal/tinygo/ports"
 )
 
 // Migrations returns the schema migrations of the tinygo module.

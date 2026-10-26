@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/tinygo/adapters/store/sqlite"
-	"github.com/eitanity/kanonarion/internal/tinygo/domain"
+	"code.eitanity.com/kanonarion/internal/tinygo/adapters/store/sqlite"
+	"code.eitanity.com/kanonarion/internal/tinygo/domain"
 )
 
 const hexA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"

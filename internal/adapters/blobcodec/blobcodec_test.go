@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/adapters/blobcodec"
+	"code.eitanity.com/kanonarion/internal/adapters/blobcodec"
 )
 
 func TestRoundTrip(t *testing.T) {

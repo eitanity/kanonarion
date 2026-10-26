@@ -4,7 +4,7 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/versionorder"
+	"code.eitanity.com/kanonarion/internal/versionorder"
 )
 
 // Every trap the text idiom falls into. Each pair is one where "a < b" as a

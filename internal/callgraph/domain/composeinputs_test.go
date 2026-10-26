@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/callgraph/domain"
+	"code.eitanity.com/kanonarion/internal/callgraph/domain"
 )
 
 // TestCompose_AnInputThatShapesTheAnswerSeparatesRatherThanCollides.

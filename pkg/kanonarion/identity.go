@@ -1,6 +1,6 @@
 package kanonarion
 
-import "github.com/eitanity/kanonarion/internal/fetch/application"
+import "code.eitanity.com/kanonarion/internal/fetch/application"
 
 // ContentIdentity is the single source of canonical identity shared by signing,
 // bundling, and integrity audit (§1). It exposes the canonical digest

@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/eitanity/kanonarion/internal/versionorder"
+	"code.eitanity.com/kanonarion/internal/versionorder"
 )
 
 // DirectiveLess is the canonical ordering for Directive slices: where the

@@ -3,7 +3,7 @@ package staticcha_test
 import (
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/callgraph/domain"
+	"code.eitanity.com/kanonarion/internal/callgraph/domain"
 )
 
 // testScopeFiles is a module in the shape that made the omission expensive: a

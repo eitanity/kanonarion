@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/example/adapters/parser/goast"
+	"code.eitanity.com/kanonarion/internal/example/adapters/parser/goast"
 )
 
 // makeZip builds a ZIP from name->content, writing names verbatim so the seed

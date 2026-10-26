@@ -6,7 +6,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/callgraph/domain"
+	"code.eitanity.com/kanonarion/internal/callgraph/domain"
 )
 
 var rp2GPIO = domain.SourcePosition{File: "src/machine/machine_rp2_gpio.go", Line: 246}

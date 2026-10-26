@@ -21,10 +21,10 @@ import (
 	"math/rand/v2"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
-	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
+	fetchdomain "code.eitanity.com/kanonarion/internal/fetch/domain"
+	walkports "code.eitanity.com/kanonarion/internal/walk/ports"
 )
 
 const (

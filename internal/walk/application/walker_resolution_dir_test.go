@@ -7,9 +7,9 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	application2 "github.com/eitanity/kanonarion/internal/walk/application"
-	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	application2 "code.eitanity.com/kanonarion/internal/walk/application"
+	walkports "code.eitanity.com/kanonarion/internal/walk/ports"
 )
 
 // countingBuildListResolver records how many times the Go toolchain would have

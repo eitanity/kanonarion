@@ -6,11 +6,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate/coordinatetest"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
-	domain2 "github.com/eitanity/kanonarion/internal/iface/domain"
+	fetchdomain "code.eitanity.com/kanonarion/internal/fetch/domain"
+	domain2 "code.eitanity.com/kanonarion/internal/iface/domain"
 )
 
 func makeTestRecord(t *testing.T) domain2.InterfaceRecord {

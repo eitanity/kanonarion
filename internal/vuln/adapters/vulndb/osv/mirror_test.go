@@ -10,9 +10,9 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/adapters/goenv"
-	"github.com/eitanity/kanonarion/internal/vuln/adapters/vulndb/osv"
-	"github.com/eitanity/kanonarion/internal/vuln/domain"
+	"code.eitanity.com/kanonarion/internal/adapters/goenv"
+	"code.eitanity.com/kanonarion/internal/vuln/adapters/vulndb/osv"
+	"code.eitanity.com/kanonarion/internal/vuln/domain"
 )
 
 // mirrorZip is a layout-complete vulndb.zip whose advisory is stored

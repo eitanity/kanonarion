@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
+	domain2 "code.eitanity.com/kanonarion/internal/fetch/domain"
 )
 
 // The directory the VCS leg hashed reaches the record, is covered by its seal,

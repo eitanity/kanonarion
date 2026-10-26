@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/eitanity/kanonarion/internal/vendortree/domain"
-	"github.com/eitanity/kanonarion/internal/vendortree/ports"
+	"code.eitanity.com/kanonarion/internal/vendortree/domain"
+	"code.eitanity.com/kanonarion/internal/vendortree/ports"
 )
 
 // QueryVendorUseCase is read-only access to stored vendor records, used by

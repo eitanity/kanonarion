@@ -1,8 +1,8 @@
 package kanonarion
 
 import (
-	"github.com/eitanity/kanonarion/internal/adapters/signer/noop"
-	"github.com/eitanity/kanonarion/internal/fetch/ports"
+	"code.eitanity.com/kanonarion/internal/adapters/signer/noop"
+	"code.eitanity.com/kanonarion/internal/fetch/ports"
 )
 
 // Signer signs a subject digest from the content-identity surface and returns

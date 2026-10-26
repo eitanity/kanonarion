@@ -96,7 +96,7 @@ The answer states which build it is about, above the rows:
 ```
 notice: ./go.mod names the build, so the answer below is walk
 01M0RGVEZH7BN09G63JX3B1X88 (code scope, frame linux/amd64) rooted at
-github.com/eitanity/kanonarion@local; the require directives in ./go.mod agree
+code.eitanity.com/kanonarion@local; the require directives in ./go.mod agree
 with that walk, though the manifest was not re-resolved through the toolchain
 for this read
 3 module(s) in walk 01M0RGVEZH7BN09G63JX3B1X88 (frame linux/amd64) depend on
@@ -131,10 +131,10 @@ dependents, and it never widens the scope on your behalf:
 
 ```
 walk 01M0RGVEZH7BN09G63JX3B1X88 (code scope, frame linux/amd64), rooted at
-github.com/eitanity/kanonarion@local, does not contain
+code.eitanity.com/kanonarion@local, does not contain
 4d63.com/gochecknoglobals@v0.2.2; the store holds it in the tool scope on
 linux/amd64 (walk 01M0AFRTTC8DF0JQAFHB7RZM8N) and complete scope on linux/amd64
-(walk 01M0ABH9573T0TW1BBRSQ7KCZ1) of github.com/eitanity/kanonarion@local — ask
+(walk 01M0ABH9573T0TW1BBRSQ7KCZ1) of code.eitanity.com/kanonarion@local — ask
 there:
   kanonarion dependents 4d63.com/gochecknoglobals@v0.2.2 --gomod ./go.mod --tool
 ```
@@ -144,7 +144,7 @@ usually what the question was:
 
 ```
 ... does not contain golang.org/x/sync@v0.21.0; it resolved golang.org/x/sync at
-v0.22.0; no current build of github.com/eitanity/kanonarion@local holds it
+v0.22.0; no current build of code.eitanity.com/kanonarion@local holds it
 either — the newest walk of each scope and platform was checked, and an older one
 still may, so search them all with:
   kanonarion dependents golang.org/x/sync@v0.21.0 --any-build
@@ -195,7 +195,7 @@ the same refusal `vuln-show` gives for two consumer frames:
 ```
 the store holds github.com/pkg/errors@v0.9.1 in 3 builds, and this question names none:
   walk 01M0VG1267S1XDJGDFZTVRPM84  rooted at github.com/cortezaproject/corteza/server@local
-  walk 01M0ABH9573T0TW1BBRSQ7KCZ1  rooted at github.com/eitanity/kanonarion@local
+  walk 01M0ABH9573T0TW1BBRSQ7KCZ1  rooted at code.eitanity.com/kanonarion@local
   walk 01M04P06Y1GJKX225K01M22E4Q  rooted at ragflow@local
 what a coordinate is surrounded by is a property of one build, so name the build you mean:
   kanonarion dependents github.com/pkg/errors@v0.9.1 --walk-id <walk of that build>
@@ -424,7 +424,7 @@ kanonarion dependents golang.org/x/crypto@v0.48.0 --json \
 
   ```
   $ kanonarion dependents golang.org/x/sys@v0.38.0
-  error: execute root command: walk 01M308158YRB231T34T1D7DKJ7 (code scope, frame linux/amd64), rooted at github.com/eitanity/kanonarion@local, does not contain golang.org/x/sys@v0.38.0; it resolved golang.org/x/sys at v0.48.0; no current build of github.com/eitanity/kanonarion@local holds it either — the newest walk of each scope and platform was checked, and an older one still may, so search them all with:
+  error: execute root command: walk 01M308158YRB231T34T1D7DKJ7 (code scope, frame linux/amd64), rooted at code.eitanity.com/kanonarion@local, does not contain golang.org/x/sys@v0.38.0; it resolved golang.org/x/sys at v0.48.0; no current build of code.eitanity.com/kanonarion@local holds it either — the newest walk of each scope and platform was checked, and an older one still may, so search them all with:
     kanonarion dependents golang.org/x/sys@v0.38.0 --any-build
   ```
 - A zero-result response is not an error (exit 0). It means the module is in the

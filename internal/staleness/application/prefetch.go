@@ -7,8 +7,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/eitanity/kanonarion/internal/staleness/domain"
-	"github.com/eitanity/kanonarion/internal/staleness/ports"
+	"code.eitanity.com/kanonarion/internal/staleness/domain"
+	"code.eitanity.com/kanonarion/internal/staleness/ports"
 )
 
 // This file holds the CONCURRENT half of a go.mod-scoped resolution.

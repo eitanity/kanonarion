@@ -1,6 +1,6 @@
 package cli
 
-import ifacedomain "github.com/eitanity/kanonarion/internal/iface/domain"
+import ifacedomain "code.eitanity.com/kanonarion/internal/iface/domain"
 
 // This file holds curated, snake_case JSON DTOs for the CLI public surface.
 // Raw domain structs must never be marshalled directly: their Go field names

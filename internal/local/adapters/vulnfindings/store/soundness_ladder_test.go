@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	localdomain "github.com/eitanity/kanonarion/internal/local/domain"
-	vulndomain "github.com/eitanity/kanonarion/internal/vuln/domain"
+	localdomain "code.eitanity.com/kanonarion/internal/local/domain"
+	vulndomain "code.eitanity.com/kanonarion/internal/vuln/domain"
 )
 
 // The local context does not depend on the vulnerability context, so the rungs

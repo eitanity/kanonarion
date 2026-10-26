@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/composition/storage"
-	sqlitestorage "github.com/eitanity/kanonarion/internal/composition/storage/sqlite"
-	"github.com/eitanity/kanonarion/internal/config"
+	"code.eitanity.com/kanonarion/internal/composition/storage"
+	sqlitestorage "code.eitanity.com/kanonarion/internal/composition/storage/sqlite"
+	"code.eitanity.com/kanonarion/internal/config"
 )
 
 func TestBackend_IsTheSQLiteBackendUnderItsOwnSection(t *testing.T) {

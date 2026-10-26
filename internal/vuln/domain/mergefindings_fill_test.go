@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/vuln/domain"
+	"code.eitanity.com/kanonarion/internal/vuln/domain"
 )
 
 // TestMergeCoordinateMatches_FillsEveryEmptyFieldFromTheMatch. The analysis

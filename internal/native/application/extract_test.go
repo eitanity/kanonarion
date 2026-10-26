@@ -6,12 +6,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
-	nativegosource "github.com/eitanity/kanonarion/internal/native/adapters/gosource"
-	"github.com/eitanity/kanonarion/internal/native/application"
-	"github.com/eitanity/kanonarion/internal/native/domain"
-	"github.com/eitanity/kanonarion/internal/native/ports"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/fetch/fetchtest"
+	nativegosource "code.eitanity.com/kanonarion/internal/native/adapters/gosource"
+	"code.eitanity.com/kanonarion/internal/native/application"
+	"code.eitanity.com/kanonarion/internal/native/domain"
+	"code.eitanity.com/kanonarion/internal/native/ports"
 )
 
 // cgoWrapper is the Go file that makes a directory's C sources compiled: the

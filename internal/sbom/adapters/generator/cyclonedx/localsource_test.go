@@ -3,9 +3,9 @@ package cyclonedx_test
 import (
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	"github.com/eitanity/kanonarion/internal/sbom/adapters/generator/cyclonedx"
-	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/sbom/adapters/generator/cyclonedx"
+	walkdomain "code.eitanity.com/kanonarion/internal/walk/domain"
 )
 
 // propertyValues returns a component's properties by name.

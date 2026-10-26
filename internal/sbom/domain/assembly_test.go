@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/sbom/domain"
+	"code.eitanity.com/kanonarion/internal/sbom/domain"
 )
 
 func TestLicenseClause(t *testing.T) {

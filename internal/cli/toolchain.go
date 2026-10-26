@@ -7,8 +7,8 @@ import (
 	"os"
 	"strings"
 
-	vulndomain "github.com/eitanity/kanonarion/internal/vuln/domain"
-	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
+	vulndomain "code.eitanity.com/kanonarion/internal/vuln/domain"
+	walkdomain "code.eitanity.com/kanonarion/internal/walk/domain"
 )
 
 // toolchainVersionOf returns the toolchain version a walk record states it was

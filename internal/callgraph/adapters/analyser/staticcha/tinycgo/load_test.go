@@ -10,9 +10,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/adapters/goenv"
-	"github.com/eitanity/kanonarion/internal/callgraph/adapters/analyser/staticcha/tinycgo"
-	"github.com/eitanity/kanonarion/internal/callgraph/adapters/analyser/staticcha/tinycgo/tinycgotest"
+	"code.eitanity.com/kanonarion/internal/adapters/goenv"
+	"code.eitanity.com/kanonarion/internal/callgraph/adapters/analyser/staticcha/tinycgo"
+	"code.eitanity.com/kanonarion/internal/callgraph/adapters/analyser/staticcha/tinycgo/tinycgotest"
 	"golang.org/x/tools/go/packages"
 )
 

@@ -4,7 +4,7 @@ import (
 	"runtime/debug"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/callgraph/domain"
+	"code.eitanity.com/kanonarion/internal/callgraph/domain"
 )
 
 // TestAnalyserFromBuildInfo measures the extraction against build info handed

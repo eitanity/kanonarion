@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"testing"
 
-	domain2 "github.com/eitanity/kanonarion/internal/callgraph/domain"
+	domain2 "code.eitanity.com/kanonarion/internal/callgraph/domain"
 )
 
 // storedShell is what a store keeps for r: the record marshalled with no edges,

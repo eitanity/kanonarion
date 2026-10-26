@@ -19,9 +19,9 @@ import (
 
 	"golang.org/x/mod/sumdb/dirhash"
 
-	proxyadapter "github.com/eitanity/kanonarion/internal/adapters/proxy/direct"
-	staleretry "github.com/eitanity/kanonarion/internal/staleness/adapters/proxy/retrying"
-	staleports "github.com/eitanity/kanonarion/internal/staleness/ports"
+	proxyadapter "code.eitanity.com/kanonarion/internal/adapters/proxy/direct"
+	staleretry "code.eitanity.com/kanonarion/internal/staleness/adapters/proxy/retrying"
+	staleports "code.eitanity.com/kanonarion/internal/staleness/ports"
 )
 
 // shortenStalenessSchedule swaps the shared 20s/240s re-ask schedule for a

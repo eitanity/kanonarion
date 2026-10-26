@@ -7,12 +7,12 @@ import (
 	"strings"
 	"testing"
 
-	blobstorefs "github.com/eitanity/kanonarion/internal/adapters/blobstore/localfs"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
-	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
-	"github.com/eitanity/kanonarion/internal/vendortree/adapters/scanner/localfs"
-	zipsource "github.com/eitanity/kanonarion/internal/vendortree/adapters/zipsource/blobstore"
-	"github.com/eitanity/kanonarion/internal/vendortree/domain"
+	blobstorefs "code.eitanity.com/kanonarion/internal/adapters/blobstore/localfs"
+	fetchdomain "code.eitanity.com/kanonarion/internal/fetch/domain"
+	fetchports "code.eitanity.com/kanonarion/internal/fetch/ports"
+	"code.eitanity.com/kanonarion/internal/vendortree/adapters/scanner/localfs"
+	zipsource "code.eitanity.com/kanonarion/internal/vendortree/adapters/zipsource/blobstore"
+	"code.eitanity.com/kanonarion/internal/vendortree/domain"
 	"golang.org/x/mod/sumdb/dirhash"
 )
 

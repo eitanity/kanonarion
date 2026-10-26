@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/recordstamp"
+	"code.eitanity.com/kanonarion/internal/recordstamp"
 )
 
 // canonicalStamp is the shape a stored record's timestamp has: UTC, with a

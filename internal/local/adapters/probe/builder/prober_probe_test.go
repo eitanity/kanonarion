@@ -2,11 +2,12 @@ package builder
 
 import (
 	"context"
-	"github.com/eitanity/kanonarion/internal/adapters/goenv"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"code.eitanity.com/kanonarion/internal/adapters/goenv"
 )
 
 // These tests exercise the toolchain-backed paths (New/goBin, findMainPackages,

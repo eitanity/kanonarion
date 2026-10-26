@@ -4,7 +4,7 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/eitanity/kanonarion/internal/adapters/interrupt"
+	"code.eitanity.com/kanonarion/internal/adapters/interrupt"
 )
 
 // SourceDirsProbe asks the Go toolchain the analysis is about to drive to name

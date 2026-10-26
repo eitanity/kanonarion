@@ -8,8 +8,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
-	extextractor "github.com/eitanity/kanonarion/internal/extract/adapters/extractor/local"
+	cgports "code.eitanity.com/kanonarion/internal/callgraph/ports"
+	extextractor "code.eitanity.com/kanonarion/internal/extract/adapters/extractor/local"
 )
 
 // callgraphTimeoutUsage is the one help string every --callgraph-timeout

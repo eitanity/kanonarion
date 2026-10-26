@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 )
 
 // NoticeSource records where an attribution record came from, so the document

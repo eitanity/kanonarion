@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/walk/adapters/gomod/xmod"
+	"code.eitanity.com/kanonarion/internal/walk/adapters/gomod/xmod"
 )
 
 // FuzzParse exercises the go.mod parser against untrusted bytes. The parser

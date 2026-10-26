@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/callgraph/ports"
+	"code.eitanity.com/kanonarion/internal/callgraph/ports"
 )
 
 // callgraph-show takes a coordinate. Naming the module path alone printed a line

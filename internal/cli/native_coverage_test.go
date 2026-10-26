@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	nativedomain "github.com/eitanity/kanonarion/internal/native/domain"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	nativedomain "code.eitanity.com/kanonarion/internal/native/domain"
 )
 
 // A module that ships SQLite and a module that ships no C at all both read

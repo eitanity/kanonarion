@@ -3,8 +3,8 @@ package osv_test
 import (
 	"testing"
 
-	coordinatetest "github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
-	"github.com/eitanity/kanonarion/internal/vuln/domain"
+	coordinatetest "code.eitanity.com/kanonarion/internal/coordinate/coordinatetest"
+	"code.eitanity.com/kanonarion/internal/vuln/domain"
 )
 
 // ginAdvisoryWithReferences is GO-2020-0001 as the pinned snapshot serves it,

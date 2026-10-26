@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
-	licdomain "github.com/eitanity/kanonarion/internal/license/domain"
+	"code.eitanity.com/kanonarion/internal/coordinate/coordinatetest"
+	licdomain "code.eitanity.com/kanonarion/internal/license/domain"
 )
 
 func makeDiffRecord(path, ver, spdx string, files ...licdomain.LicenseFileEntry) licdomain.LicenseRecord {

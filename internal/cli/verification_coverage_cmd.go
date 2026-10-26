@@ -7,7 +7,7 @@ import (
 	"io"
 	"strings"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	fetchdomain "code.eitanity.com/kanonarion/internal/fetch/domain"
 	"github.com/spf13/cobra"
 )
 

@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
-	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
+	walkdomain "code.eitanity.com/kanonarion/internal/walk/domain"
+	walkports "code.eitanity.com/kanonarion/internal/walk/ports"
 )
 
 // QueryWalksUseCase provides read-only access to stored walk records.

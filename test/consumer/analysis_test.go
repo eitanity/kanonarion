@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/pkg/kanonarion"
+	"code.eitanity.com/kanonarion/pkg/kanonarion"
 )
 
 // analysedCoordinate is a small published module with no dependencies.

@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/config/adapters/store/yaml"
+	"code.eitanity.com/kanonarion/internal/config/adapters/store/yaml"
 )
 
 // TestParse_LicenseOverrideBothForms: an entry written as a bare identifier and

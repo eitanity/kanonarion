@@ -7,8 +7,8 @@ import (
 	"context"
 	"errors"
 
-	"github.com/eitanity/kanonarion/internal/audit"
-	"github.com/eitanity/kanonarion/internal/vendortree/domain"
+	"code.eitanity.com/kanonarion/internal/audit"
+	"code.eitanity.com/kanonarion/internal/vendortree/domain"
 )
 
 // ErrNotVendored is returned by VendorScanner.ScanProject when the project

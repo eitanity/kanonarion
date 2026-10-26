@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/staleness/application"
-	"github.com/eitanity/kanonarion/internal/staleness/domain"
-	"github.com/eitanity/kanonarion/internal/staleness/ports"
+	"code.eitanity.com/kanonarion/internal/staleness/application"
+	"code.eitanity.com/kanonarion/internal/staleness/domain"
+	"code.eitanity.com/kanonarion/internal/staleness/ports"
 )
 
 // countingProxy answers like fakeProxy and records how many calls were in

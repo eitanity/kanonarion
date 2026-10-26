@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	licdomain "github.com/eitanity/kanonarion/internal/license/domain"
+	licdomain "code.eitanity.com/kanonarion/internal/license/domain"
 )
 
 // A module with no licence record and a module whose record carries no

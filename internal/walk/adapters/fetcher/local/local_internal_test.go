@@ -3,7 +3,7 @@ package local
 import (
 	"testing"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	fetchdomain "code.eitanity.com/kanonarion/internal/fetch/domain"
 )
 
 // The per-walk clones must not mutate the fetcher they were derived from: the

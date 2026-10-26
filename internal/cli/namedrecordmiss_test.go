@@ -8,16 +8,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/cli/testfakes"
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	exapplication "github.com/eitanity/kanonarion/internal/example/application"
-	exdomain "github.com/eitanity/kanonarion/internal/example/domain"
-	exports "github.com/eitanity/kanonarion/internal/example/ports"
-	licdomain "github.com/eitanity/kanonarion/internal/license/domain"
-	vulnapp "github.com/eitanity/kanonarion/internal/vuln/application"
-	vulndomain "github.com/eitanity/kanonarion/internal/vuln/domain"
-	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
-	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
+	"code.eitanity.com/kanonarion/internal/cli/testfakes"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	exapplication "code.eitanity.com/kanonarion/internal/example/application"
+	exdomain "code.eitanity.com/kanonarion/internal/example/domain"
+	exports "code.eitanity.com/kanonarion/internal/example/ports"
+	licdomain "code.eitanity.com/kanonarion/internal/license/domain"
+	vulnapp "code.eitanity.com/kanonarion/internal/vuln/application"
+	vulndomain "code.eitanity.com/kanonarion/internal/vuln/domain"
+	walkdomain "code.eitanity.com/kanonarion/internal/walk/domain"
+	walkports "code.eitanity.com/kanonarion/internal/walk/ports"
 )
 
 // The defect this file pins: a caller who names one record — a walk id, a run

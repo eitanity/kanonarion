@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	proxyadapter "github.com/eitanity/kanonarion/internal/adapters/proxy/direct"
-	staleapp "github.com/eitanity/kanonarion/internal/staleness/application"
+	proxyadapter "code.eitanity.com/kanonarion/internal/adapters/proxy/direct"
+	staleapp "code.eitanity.com/kanonarion/internal/staleness/application"
 )
 
 func TestLatestCmd_Help(t *testing.T) {

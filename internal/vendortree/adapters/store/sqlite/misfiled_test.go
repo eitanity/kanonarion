@@ -6,11 +6,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/adapters/blobcodec"
-	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
-	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
-	vendorstore "github.com/eitanity/kanonarion/internal/vendortree/adapters/store/sqlite"
-	"github.com/eitanity/kanonarion/internal/vendortree/domain"
+	"code.eitanity.com/kanonarion/internal/adapters/blobcodec"
+	"code.eitanity.com/kanonarion/internal/adapters/recordseal"
+	"code.eitanity.com/kanonarion/internal/adapters/sqlitestore"
+	vendorstore "code.eitanity.com/kanonarion/internal/vendortree/adapters/store/sqlite"
+	"code.eitanity.com/kanonarion/internal/vendortree/domain"
 )
 
 // A vendor_records row filed under a project or pipeline_version its record does not state is

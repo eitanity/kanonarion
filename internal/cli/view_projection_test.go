@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	licdomain "github.com/eitanity/kanonarion/internal/license/domain"
-	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
+	licdomain "code.eitanity.com/kanonarion/internal/license/domain"
+	vuldomain "code.eitanity.com/kanonarion/internal/vuln/domain"
 )
 
 // This is the structural guard on every CLI view that replaced a published
@@ -66,7 +66,7 @@ func projectionViews() []projectionView {
 // packages, whichever one — the guard is about the class, not about licences.
 func isDomainType(rt reflect.Type) bool {
 	pkg := rt.PkgPath()
-	return strings.HasPrefix(pkg, "github.com/eitanity/kanonarion/internal/") && path.Base(pkg) == "domain"
+	return strings.HasPrefix(pkg, "code.eitanity.com/kanonarion/internal/") && path.Base(pkg) == "domain"
 }
 
 // isIntegerKind reports whether a type's underlying kind is an integer, the

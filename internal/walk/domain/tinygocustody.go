@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
-	"github.com/eitanity/kanonarion/internal/recordstamp"
+	fetchdomain "code.eitanity.com/kanonarion/internal/fetch/domain"
+	"code.eitanity.com/kanonarion/internal/recordstamp"
 )
 
 // TinyGoSourceFile is one file a TinyGo build compiles out of TINYGOROOT/src:

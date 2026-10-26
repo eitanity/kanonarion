@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/example/domain"
-	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
+	"code.eitanity.com/kanonarion/internal/example/domain"
+	"code.eitanity.com/kanonarion/internal/fetch/fetchtest"
 )
 
 // TestNamesAnalysedContent_AbsenceIsNotAValueTwoRecordsShare covers every way a

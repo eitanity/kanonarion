@@ -428,7 +428,7 @@ It does **not** carry `nodes` or `edges`. The graph is a property of the record
 rather than of the run that wrote it, and it is large:
 `github.com/spf13/pflag@v1.0.10` holds 1,512 nodes and 5,172 edges — 84 bytes as
 the summary line, and about 2 MB as a node-and-edge document.
-`github.com/eitanity/kanonarion@local`, at 17,940 nodes and 255,135 edges, is
+`code.eitanity.com/kanonarion@local`, at 17,940 nodes and 255,135 edges, is
 about 81 MB. A document that size is one to ask for deliberately, and `--json`
 is not a deliberate enough ask: it is inherited from
 [`preferences.json`](config.md), so it can be in force with no flag typed.
@@ -501,7 +501,7 @@ it. The causes that recur:
 | `no packages found for <frame> …` | The module ships no Go source the record's frame compiles — `linux/amd64`, or `tinygo/pico (linux/arm)` under a TinyGo declaration. A Windows-only module has no graph on Linux, and that is a joint fact about the module and the frame |
 | `none of the N package(s) under <path> type-checked: …` | The packages were found and the type-check failed; the loader's own errors follow |
 | `the loader reported: … missing go.sum entry for module providing package …; to add: …` | The tree's `go.sum` does not cover a module the load needs. `go mod tidy`, then re-analyse. A local analysis is read-only: it reports the gap rather than closing it in the tree it was asked to measure |
-| `package requires newer Go version goX (application built with goY)`, or `This application uses version goY of the source-processing packages but runs version goX of 'go list'` | This kanonarion was built with goY and the code requires goX. It type-checks with the Go compiled into the binary, so the `go` on `PATH` and `GOTOOLCHAIN` do not change it. Use a kanonarion built with goX or newer — a newer release, or `go install github.com/eitanity/kanonarion@latest` run with that Go — and re-analyse. The cause is `environment`, the record is never served as a cache hit, and the run exits `20`. `callers`, `callees`, `usage`, `capability` and `interface-diff --used-by` say the package was not analysed, rather than that it did not typecheck |
+| `package requires newer Go version goX (application built with goY)`, or `This application uses version goY of the source-processing packages but runs version goX of 'go list'` | This kanonarion was built with goY and the code requires goX. It type-checks with the Go compiled into the binary, so the `go` on `PATH` and `GOTOOLCHAIN` do not change it. Use a kanonarion built with goX or newer — a newer release, or `go install code.eitanity.com/kanonarion@latest` run with that Go — and re-analyse. The cause is `environment`, the record is never served as a cache hit, and the run exits `20`. `callers`, `callees`, `usage`, `capability` and `interface-diff --used-by` say the package was not analysed, rather than that it did not typecheck |
 | `this host could not supply N module(s) the analysed module needs … : <path> <version>, …` | The module's dependency closure could not be assembled — the store does not hold those versions and the fetch for them failed (no network, a withdrawn version, a private module). The cause is `environment`, so the record is never served as a cache hit and a later run re-establishes the answer |
 
 #### What the load resolves against
@@ -1234,7 +1234,7 @@ recently extracted one:
 $ kanonarion callgraph-list
 golang.org/x/text@v0.42.0              0.8.0  Extracted  5931 nodes 48484 edges
 github.com/spf13/cobra@v1.10.2         0.8.0  Extracted  1404 nodes  6583 edges  [2 generations; counts from 2026-09-20T11:30:56.168419348Z]
-github.com/eitanity/kanonarion@local   0.8.0  18 generations state different counts, status or completeness; run: kanonarion callgraph-show github.com/eitanity/kanonarion@local --history
+code.eitanity.com/kanonarion@local     0.8.0  18 generations state different counts, status or completeness; run: kanonarion callgraph-show code.eitanity.com/kanonarion@local --history
 listing call graph records at pipeline 0.10.0, the version this build serves; records from a superseded pipeline version are not shown (--all-generations)
 ```
 

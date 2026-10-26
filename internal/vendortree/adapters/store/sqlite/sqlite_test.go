@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
-	vendorstore "github.com/eitanity/kanonarion/internal/vendortree/adapters/store/sqlite"
-	"github.com/eitanity/kanonarion/internal/vendortree/domain"
+	"code.eitanity.com/kanonarion/internal/adapters/sqlitestore"
+	vendorstore "code.eitanity.com/kanonarion/internal/vendortree/adapters/store/sqlite"
+	"code.eitanity.com/kanonarion/internal/vendortree/domain"
 )
 
 func openTestStore(t *testing.T) *vendorstore.Store {

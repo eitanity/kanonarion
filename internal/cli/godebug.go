@@ -7,7 +7,7 @@ import (
 	"io"
 	"text/tabwriter"
 
-	gddomain "github.com/eitanity/kanonarion/internal/godebug/domain"
+	gddomain "code.eitanity.com/kanonarion/internal/godebug/domain"
 	"github.com/spf13/cobra"
 )
 

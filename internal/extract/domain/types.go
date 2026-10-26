@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-	"github.com/eitanity/kanonarion/internal/failurecause"
+	"code.eitanity.com/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/failurecause"
 )
 
 // ExtractionRunStatus summarises the overall outcome of an ExtractionRun.

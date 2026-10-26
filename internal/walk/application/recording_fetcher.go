@@ -8,11 +8,11 @@ import (
 	"runtime/debug"
 	"sync"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
-	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
-	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
+	fetchdomain "code.eitanity.com/kanonarion/internal/fetch/domain"
+	fetchports "code.eitanity.com/kanonarion/internal/fetch/ports"
+	walkports "code.eitanity.com/kanonarion/internal/walk/ports"
 )
 
 // recordingFetcher wraps a walkports.ModuleFetcher to capture the first-call

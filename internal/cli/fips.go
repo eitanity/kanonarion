@@ -7,7 +7,7 @@ import (
 	"io"
 	"text/tabwriter"
 
-	fipsdomain "github.com/eitanity/kanonarion/internal/fips/domain"
+	fipsdomain "code.eitanity.com/kanonarion/internal/fips/domain"
 	"github.com/spf13/cobra"
 )
 

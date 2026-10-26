@@ -24,10 +24,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/adapters/childproc"
-	"github.com/eitanity/kanonarion/internal/adapters/goenv"
-	"github.com/eitanity/kanonarion/internal/adapters/vcs/gitenv"
-	"github.com/eitanity/kanonarion/internal/stdlib/ports"
+	"code.eitanity.com/kanonarion/internal/adapters/childproc"
+	"code.eitanity.com/kanonarion/internal/adapters/goenv"
+	"code.eitanity.com/kanonarion/internal/adapters/vcs/gitenv"
+	"code.eitanity.com/kanonarion/internal/stdlib/ports"
 )
 
 // defaultTimeout bounds the ls-remote call so an unreachable or drip-feeding

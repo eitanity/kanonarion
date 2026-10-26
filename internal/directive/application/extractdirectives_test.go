@@ -4,11 +4,11 @@ import (
 	"context"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/adapters/clock"
-	"github.com/eitanity/kanonarion/internal/audit"
-	configdomain "github.com/eitanity/kanonarion/internal/config/domain"
-	"github.com/eitanity/kanonarion/internal/directive/application"
-	"github.com/eitanity/kanonarion/internal/directive/domain"
+	"code.eitanity.com/kanonarion/internal/adapters/clock"
+	"code.eitanity.com/kanonarion/internal/audit"
+	configdomain "code.eitanity.com/kanonarion/internal/config/domain"
+	"code.eitanity.com/kanonarion/internal/directive/application"
+	"code.eitanity.com/kanonarion/internal/directive/domain"
 )
 
 type fakeParser struct{ res domain.ParseResult }

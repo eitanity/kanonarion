@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/staleness/domain"
+	"code.eitanity.com/kanonarion/internal/staleness/domain"
 )
 
 func TestParseFamily_PathForMajor(t *testing.T) {
