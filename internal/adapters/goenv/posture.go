@@ -212,7 +212,7 @@ var EnvBuilders = map[string]string{
 		"removes after it exits, neither of which decides anything about how a build resolves",
 	"internal/callgraph/adapters/analyser/staticcha isolatedModuleEnv": "extracted-module",
 	"internal/callgraph/adapters/analyser/staticcha stdlibAnalysisEnv": "toolchain-stdlib",
-	"internal/cli toolchainAt": "not an analysis child: a probe asking one named go command which GOROOT and " +
+	"internal/composition/cgchild toolchainAt": "not an analysis child: a probe asking one named go command which GOROOT and " +
 		"version it is, pinned to GOTOOLCHAIN=local so it answers about itself rather than switching",
 	"internal/adapters/proxy/modcache download":   "not an analysis child: populates a module cache",
 	"internal/staleness/adapters/golist childEnv": "not an analysis child: an update probe that must reach a proxy",

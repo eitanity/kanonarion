@@ -1,4 +1,4 @@
-package cli
+package cgchild
 
 import (
 	"context"
@@ -11,11 +11,11 @@ import (
 	"code.eitanity.com/kanonarion/internal/gotoolchain"
 )
 
-// goToolchainVersionProbe asks the go command on PATH to state its own version,
+// GoToolchainVersionProbe asks the go command on PATH to state its own version,
 // and returns it.
 //
 // It is the production implementation of the staticcha analyser's toolchain
-// probe, wired in by the container: the analyser is an extraction package and
+// probe, wired in by the composition roots: the analyser is an extraction package and
 // must not carry process-spawning capability itself, so the one command it
 // needs the environment to answer lives here, at the composition root.
 //
@@ -31,7 +31,7 @@ import (
 // resolves the toolchain from a version file in the tree it is invoked in, so a
 // probe left to inherit the CLI process's own working directory can report a
 // usable toolchain for a load that had none.
-func goToolchainVersionProbe(ctx context.Context, dir string, env []string) (string, error) {
+func GoToolchainVersionProbe(ctx context.Context, dir string, env []string) (string, error) {
 	// Through childproc, like every other child an analysis spawns: the go command
 	// resolved here is whatever the analysis PATH offers, and a shim that hangs
 	// rather than answering must die with the run instead of outliving it.
@@ -64,7 +64,7 @@ func goToolchainVersionProbe(ctx context.Context, dir string, env []string) (str
 // zero without naming a version.
 var errEmptyToolchainVersion = errors.New("go env GOVERSION produced no version")
 
-// runToolchainNamer names the Go this process analyses under, for the extraction
+// ToolchainNamer names the Go this process analyses under, for the extraction
 // cache lookup that has to decide whether a stored generation was measured under
 // it.
 //
@@ -77,19 +77,19 @@ var errEmptyToolchainVersion = errors.New("go env GOVERSION produced no version"
 //
 // A probe that fails names nothing, and the caller then leaves the disagreement
 // unresolved and measures — which is what it did before this existed.
-func runToolchainNamer(ctx context.Context) gotoolchain.Version {
-	v, err := goToolchainVersionProbe(ctx, "", nil)
+func ToolchainNamer(ctx context.Context) gotoolchain.Version {
+	v, err := GoToolchainVersionProbe(ctx, "", nil)
 	if err != nil {
 		return gotoolchain.Unrecorded
 	}
 	return gotoolchain.Version(v)
 }
 
-// goSourceDirsProbe asks the go command on PATH to name the directories it
+// GoSourceDirsProbe asks the go command on PATH to name the directories it
 // resolves source files from, and returns them.
 //
 // It is the production implementation of the staticcha analyser's source-dirs
-// probe, wired in by the container for the same reason the toolchain probe is:
+// probe, wired in by the composition roots for the same reason the toolchain probe is:
 // the analyser is an extraction package and must not carry process-spawning
 // capability itself, so the one command it needs the environment to answer lives
 // here.
@@ -100,8 +100,8 @@ func runToolchainNamer(ctx context.Context) gotoolchain.Version {
 // answered by three different toolchains — a switch between them would spell one
 // record's paths against a GOROOT that never held the standard library it loaded.
 //
-// dir and env are the load's own, for the reason goToolchainVersionProbe states.
-func goSourceDirsProbe(ctx context.Context, dir string, env []string) (cganalyser.SourceDirs, error) {
+// dir and env are the load's own, for the reason GoToolchainVersionProbe states.
+func GoSourceDirsProbe(ctx context.Context, dir string, env []string) (cganalyser.SourceDirs, error) {
 	// Through childproc, like every other child an analysis spawns.
 	// GOARM is not last: off arm it prints an empty line, which the trailing trim
 	// would otherwise drop.

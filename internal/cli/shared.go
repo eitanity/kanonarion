@@ -30,22 +30,17 @@ import (
 	proxyadapter "code.eitanity.com/kanonarion/internal/adapters/proxy/direct"
 	"code.eitanity.com/kanonarion/internal/adapters/recordseal"
 	"code.eitanity.com/kanonarion/internal/composition"
+	"code.eitanity.com/kanonarion/internal/composition/cgchild"
 	"code.eitanity.com/kanonarion/internal/composition/storage"
 	configstore "code.eitanity.com/kanonarion/internal/config/adapters/store/yaml"
 	"code.eitanity.com/kanonarion/internal/config/domain"
+	"code.eitanity.com/kanonarion/internal/exitcode"
 	fetchapp "code.eitanity.com/kanonarion/internal/fetch/application"
 
 	cgports "code.eitanity.com/kanonarion/internal/callgraph/ports"
-	exampleports "code.eitanity.com/kanonarion/internal/example/ports"
-	extractports "code.eitanity.com/kanonarion/internal/extract/ports"
-	ifaceports "code.eitanity.com/kanonarion/internal/iface/ports"
-	licenceports "code.eitanity.com/kanonarion/internal/license/ports"
-	nativeports "code.eitanity.com/kanonarion/internal/native/ports"
-	stdlibports "code.eitanity.com/kanonarion/internal/stdlib/ports"
 	vulnports "code.eitanity.com/kanonarion/internal/vuln/ports"
 	walkadapterpolicy "code.eitanity.com/kanonarion/internal/walk/adapters/policy/localfile"
 	walkdomain "code.eitanity.com/kanonarion/internal/walk/domain"
-	walkports "code.eitanity.com/kanonarion/internal/walk/ports"
 )
 
 // parseModuleArg splits "module[@version]" into path and version without
@@ -84,36 +79,13 @@ func parseCoordinate(arg string) (coordinate.ModuleCoordinate, error) {
 // from the single global --json flag, never a per-call argument, so every
 // subsystem in one invocation emits exactly one format on stderr.
 func buildLogger(level string, stderr io.Writer) *slog.Logger {
-	var lvl slog.Level
-	switch strings.ToLower(level) {
-	case "debug":
-		lvl = slog.LevelDebug
-	case "warn":
-		lvl = slog.LevelWarn
-	case "error":
-		lvl = slog.LevelError
-	default:
-		lvl = slog.LevelInfo
-	}
-	opts := &slog.HandlerOptions{Level: lvl, ReplaceAttr: canonicalTimeAttr}
-	if jsonOut {
-		return slog.New(slog.NewJSONHandler(stderr, opts))
-	}
-	return slog.New(slog.NewTextHandler(stderr, opts))
+	return cgchild.NewLogger(level, jsonOut, stderr)
 }
 
 // canonicalTimeAttr rewrites a log line's time into the encoding the ledgers
-// write, so a line and a record can be laid beside each other directly.
-//
-// slog's default is the local offset at millisecond precision, and every record
-// in the store is UTC at nanosecond precision. Correlating the two then costs a
-// timezone conversion and a precision reconciliation before the comparison even
-// starts, which is exactly the work a shared encoding exists to remove.
+// write; see cgchild.CanonicalTimeAttr.
 func canonicalTimeAttr(groups []string, a slog.Attr) slog.Attr {
-	if len(groups) != 0 || a.Key != slog.TimeKey || a.Value.Kind() != slog.KindTime {
-		return a
-	}
-	return slog.String(slog.TimeKey, recordstamp.Format(a.Value.Time()))
+	return cgchild.CanonicalTimeAttr(groups, a)
 }
 
 // ledgerStamp renders a STORED RECORD's own timestamp, in the encoding the
@@ -1869,39 +1841,18 @@ func ExitCodeFromError(err error) (int, bool) {
 	if ee, ok := errors.AsType[*exitError](err); ok {
 		return ee.code, true
 	}
+	if ee, ok := errors.AsType[*exitcode.Error](err); ok {
+		return ee.Code, true
+	}
 	return 0, false
 }
 
-// evidenceInDoubt is every sentinel meaning the recorded evidence cannot be
-// trusted: a stored record whose content hash does not verify, or two records
-// for one coordinate that disagree. The table gives both to ExitIntegrity and
-// does not qualify either by which domain raised it.
-//
-// Only the walk sentinel was mapped, so the other twelve reached ExitConfig by
-// the fallback — which says the invocation itself was wrong, and routes a
-// store-integrity problem to whoever fixes broken command lines. A sentinel
-// added to a ports package must be added here; the contract test reads the
-// ports packages and fails if one is missing.
-var evidenceInDoubt = []error{
-	walkports.ErrWalkIntegrity,
-	cgports.ErrCallGraphIntegrity, cgports.ErrCallGraphConflict,
-	ifaceports.ErrInterfaceIntegrity, ifaceports.ErrInterfaceConflict,
-	licenceports.ErrLicenceIntegrity, licenceports.ErrLicenceConflict,
-	exampleports.ErrExampleIntegrity, exampleports.ErrExampleConflict,
-	extractports.ErrExtractionRunIntegrity,
-	vulnports.ErrVulnIntegrity, vulnports.ErrVulnConflict, vulnports.ErrSnapshotIntegrity,
-	stdlibports.ErrFactsIntegrity, stdlibports.ErrFactsConflict,
-	fetchports.ErrFetchRecordIntegrity,
-	nativeports.ErrNativeConflict,
-}
-
-// moduleNotFetched is every producer's refusal for a module whose bytes the
-// store does not hold. The printed 'kanonarion fetch' runs as given and supplies
-// them, so it is an absent record (4), not a malformed invocation (20).
-var moduleNotFetched = []error{
-	cgports.ErrModuleNotFetched, ifaceports.ErrModuleNotFetched, licenceports.ErrModuleNotFetched,
-	exampleports.ErrModuleNotFetched, nativeports.ErrModuleNotFetched,
-}
+// The sentinel tables ExitCodeForError reads, under the names this package's
+// contract tests use.
+var (
+	evidenceInDoubt  = exitcode.EvidenceInDoubt
+	moduleNotFetched = exitcode.ModuleNotFetched
+)
 
 // ExitCodeForError maps a Run error onto the process exit code. It honours an
 // explicit exit-code carrier on the chain first (so categories like ExitNotFound
@@ -1918,54 +1869,7 @@ var moduleNotFetched = []error{
 // must not be reported as ExitIntegrity, which says the recorded evidence is in
 // doubt.
 func ExitCodeForError(err error) int {
-	if err == nil {
-		return ExitOK
-	}
-	// A stored artefact refused as altered outranks whatever the command made of
-	// the gap it left: every answer the run gave stands on the store's bytes.
-	if errors.Is(err, fetchports.ErrBlobTampered) {
-		return ExitIntegrity
-	}
-	if code, ok := ExitCodeFromError(err); ok {
-		return code
-	}
-	for _, sentinel := range evidenceInDoubt {
-		if errors.Is(err, sentinel) {
-			return ExitIntegrity
-		}
-	}
-	// A genuine record filed under a key its seal does not carry, raised by a
-	// store with no integrity sentinel of its own.
-	if recordseal.IsMisfiled(err) {
-		return ExitIntegrity
-	}
-	for _, sentinel := range moduleNotFetched {
-		if errors.Is(err, sentinel) {
-			return ExitNotFound
-		}
-	}
-	// A walk id that reached a use case without the up-front lookup is still an
-	// absent record, not a malformed invocation; so is a walk never scanned.
-	if isWalkNotFound(err) || errors.Is(err, vulnports.ErrWalkNotScanned) {
-		return ExitNotFound
-	}
-	// Every stored generation was set aside, or a refusal was decided without
-	// one: nothing this build can serve to answer, which is an absence. A
-	// set-aside reaches here only as a failure, since reads return it beside an
-	// answer; checked after the sentinels so an altered row still wins.
-	if errors.As(err, new(*recordseal.SetAside)) {
-		return ExitNotFound
-	}
-	// A divergence — two records for one coordinate disagreeing on a hash they
-	// both carry — is an integrity failure, not a configuration error. A
-	// consuming command fails closed on it, matching modcacheWalkGate and
-	// goSumWalkGate; a store-inspection command reports it and exits 0 (see
-	// reportDivergence), so the tool used to diagnose the problem is not the one
-	// that refuses to run.
-	if errors.As(err, new(*fetchdomain.Divergence)) {
-		return ExitIntegrity
-	}
-	return ExitConfig
+	return exitcode.Of(err, ExitCodeFromError)
 }
 
 // divergenceMessage renders err as an operator-facing divergence report,

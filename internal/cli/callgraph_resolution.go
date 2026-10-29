@@ -299,7 +299,7 @@ func classifyEmptyEdgeResult(ctx context.Context, symbolID string, uc QueryCallG
 	if known {
 		return nil // analysed, genuinely zero edges
 	}
-	versions := analysedVersionsOf(modulePath, coords)
+	versions := cgapp.AnalysedVersions(modulePath, coords)
 	// A module analysed only under other frames was never searched for the
 	// symbol, so the typo diagnostic below would misstate what ran.
 	if !served {
@@ -417,7 +417,7 @@ func notePartialRecord(out *partialRoot, failedSet map[string]bool, rec domain.C
 	if _, lim := gotoolchain.ReadAnalyserLimit(rec.FailureDetail); lim && out.limitDetail == "" {
 		out.limitDetail = rec.FailureDetail
 	}
-	if fp, hit := symbolFailedPackage(symbolID, rec.FailedPackages); hit && out.failedPkg == "" {
+	if fp, hit := domain.SymbolFailedPackage(symbolID, rec.FailedPackages); hit && out.failedPkg == "" {
 		out.failedPkg = fp
 		out.coord = coord
 		out.cause = rec.FailureCause
@@ -615,25 +615,6 @@ func writeCallAnswer(stdout io.Writer, kind, symbolID string, v domain.Answer, o
 		}
 	}
 	return nil
-}
-
-// symbolFailedPackage reports whether symbolID belongs to one of failedPkgs,
-// matching by import path. A symbol "<pkg>.<Name>" (or "<pkg>.(*T).M") belongs
-// to package pkg exactly when the character after the package path is '.', so a
-// sub-package ("<pkg>/sub.Fn", where the next char is '/') is correctly
-// excluded. This works even when the symbol never became a graph node — a
-// package that fails to typecheck produces no SSA and no nodes, so a node-index
-// lookup would miss exactly the symbols this must catch.
-func symbolFailedPackage(symbolID string, failedPkgs []string) (string, bool) {
-	for _, p := range failedPkgs {
-		if p == "" || !strings.HasPrefix(symbolID, p) {
-			continue
-		}
-		if len(symbolID) > len(p) && symbolID[len(p)] == '.' {
-			return p, true
-		}
-	}
-	return "", false
 }
 
 // droppedEdgesNotice states that the queried symbol's own package failed to
@@ -860,7 +841,7 @@ func stdlibFrameMiss(ctx context.Context, uc QueryCallGraphUseCase, symbolID str
 	if elem == "" || strings.Contains(elem, ".") {
 		return nil
 	}
-	return moduleFrameMiss(ctx, uc, coordinate.StdlibPath, analysedVersionsOf(coordinate.StdlibPath, stored))
+	return moduleFrameMiss(ctx, uc, coordinate.StdlibPath, cgapp.AnalysedVersions(coordinate.StdlibPath, stored))
 }
 
 // symbolIsKnownNode reports whether symbolID is a node in any analysed call
@@ -916,23 +897,6 @@ func unknownNodeMessage(symbolID, modulePath string, versions []string) string {
 			"symbol, or list the module's known symbols:\n"+
 			"  kanonarion callgraph-show %s@%s",
 		symbolID, modulePath, held, modulePath, versions[0])
-}
-
-// analysedVersionsOf are the versions of modulePath among coords, newest first.
-func analysedVersionsOf(modulePath string, coords []ports.CallGraphCoordinate) []string {
-	seen := make(map[string]bool)
-	var out []string
-	for _, c := range coords {
-		if c.ModulePath != modulePath || seen[c.ModuleVersion] {
-			continue
-		}
-		seen[c.ModuleVersion] = true
-		out = append(out, c.ModuleVersion)
-	}
-	sort.Slice(out, func(i, j int) bool {
-		return versionorder.CompareModuleVersions(out[i], out[j]) > 0
-	})
-	return out
 }
 
 // unresolvedSymbolError builds the intent-aware diagnostic for a symbol whose

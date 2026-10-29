@@ -12,7 +12,6 @@ import (
 	cgapp "code.eitanity.com/kanonarion/internal/callgraph/application"
 	"code.eitanity.com/kanonarion/internal/callgraph/domain"
 	"code.eitanity.com/kanonarion/internal/callgraph/ports"
-	"code.eitanity.com/kanonarion/internal/coordinate"
 )
 
 // Reasons a coordinate was not searched, as the JSON document states them.
@@ -232,25 +231,4 @@ func edgeGaps(uc QueryCallGraphUseCase, symbolID string, callers bool, opts port
 // knownGaps hands over what a traversal already named, level by level.
 func knownGaps(touching []ports.UnservedCoordinate) edgeGapsFunc {
 	return func(context.Context, buildScope) ([]ports.UnservedCoordinate, error) { return touching, nil }
-}
-
-// supersededCoordinatesOf lists the coordinates of modulePath that stored holds
-// and served does not: the generations an implementers answer could not read.
-func supersededCoordinatesOf(modulePath string, stored, served []ports.CallGraphCoordinate) ([]coordinate.ModuleCoordinate, error) {
-	isServed := map[string]bool{}
-	for _, s := range served {
-		isServed[s.ModulePath+"@"+s.ModuleVersion] = true
-	}
-	var out []coordinate.ModuleCoordinate
-	for _, s := range stored {
-		if s.ModulePath != modulePath || isServed[s.ModulePath+"@"+s.ModuleVersion] {
-			continue
-		}
-		c, err := coordinate.NewModuleCoordinate(s.ModulePath, s.ModuleVersion)
-		if err != nil {
-			return nil, fmt.Errorf("call graph record %s@%s names no module: %w", s.ModulePath, s.ModuleVersion, err)
-		}
-		out = append(out, c)
-	}
-	return out, nil
 }

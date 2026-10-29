@@ -454,7 +454,10 @@ func TestEveryPrintedFlagIsOneTheCommandDefines(t *testing.T) {
 // insideCLI reports whether a file is in the package that knows which command
 // is running.
 func insideCLI(file string) bool {
-	return strings.Contains(filepath.ToSlash(file), "/internal/cli/")
+	// The call-graph child's package runs the callgraph command's own code, so
+	// it knows the command too.
+	return strings.Contains(filepath.ToSlash(file), "/internal/cli/") ||
+		strings.Contains(filepath.ToSlash(file), "/internal/composition/cgchild/")
 }
 
 // flagViolations is the flag verdict on one message, pure so the control below

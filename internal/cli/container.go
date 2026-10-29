@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -31,6 +32,7 @@ import (
 	cgports "code.eitanity.com/kanonarion/internal/callgraph/ports"
 
 	"code.eitanity.com/kanonarion/internal/composition"
+	"code.eitanity.com/kanonarion/internal/composition/cgchild"
 	"code.eitanity.com/kanonarion/internal/composition/storage"
 	sqlitestorage "code.eitanity.com/kanonarion/internal/composition/storage/sqlite"
 
@@ -433,13 +435,13 @@ func NewContainerFrom(st *storage.Storage, storeRoot, goproxy, goBinary string, 
 		Facts: factStore, Blobs: blobs, Store: ifaceStore,
 		Extractor: ifaceext.New("0.1.0", clk), Clock: clk, Stopwatch: stopwatch, Logger: logger,
 	}).WithAudit(auditSink)
-	cganalyser.SetToolchainProbe(goToolchainVersionProbe)
+	cganalyser.SetToolchainProbe(cgchild.GoToolchainVersionProbe)
 	// Where the analysis's own toolchain keeps the standard library, the module
 	// cache and the files it generates. The analyser renders every recorded source
 	// position against those roots, so that nothing about this host reaches the
 	// seal and a build-cache entry — content-addressed, and a different path every
 	// time it is rebuilt — is given no position at all.
-	cganalyser.SetSourceDirsProbe(goSourceDirsProbe)
+	cganalyser.SetSourceDirsProbe(cgchild.GoSourceDirsProbe)
 	// The analyser narrates its phases to the same place the spawners copy a
 	// child's to. This process is one or the other, never both: as a child it
 	// writes the lines its parent's stall detector reads, and as a parent it
@@ -458,7 +460,7 @@ func NewContainerFrom(st *storage.Storage, storeRoot, goproxy, goBinary string, 
 		Analyser: cgAnalyser, Clock: clk, Logger: logger,
 		Stopwatch:  stopwatch,
 		Exclusions: cfg.Callgraph.Exclude,
-		Toolchain:  runToolchainNamer,
+		Toolchain:  cgchild.ToolchainNamer,
 	}).WithAudit(auditSink)
 	cgLocalExtractUC := cgapp.NewExtractLocalCallGraphUseCase(cgapp.LocalConfig{
 		Store: cgStore, Analyser: cgAnalyser, Clock: clk, Stopwatch: stopwatch, Logger: logger,
@@ -468,8 +470,8 @@ func NewContainerFrom(st *storage.Storage, storeRoot, goproxy, goBinary string, 
 	stdlibCustody := st.Stdlib
 	cgStdlibExtractUC := cgapp.NewExtractStdlibCallGraphUseCase(cgapp.StdlibConfig{
 		Store: cgStore, Analyser: cgAnalyser,
-		Toolchains: newToolchainLocator(goBinary),
-		Custody:    stdlibCustodyProjection{reader: stdlibCustody},
+		Toolchains: cgchild.NewToolchainLocator(goBinary),
+		Custody:    cgchild.StdlibCustodyProjection{Reader: stdlibCustody},
 		Clock:      clk, Stopwatch: stopwatch, Logger: logger,
 	}).WithAudit(auditSink)
 	exExtractUC := exapp.NewExtractExampleUseCase(exapp.Config{
@@ -504,7 +506,7 @@ func NewContainerFrom(st *storage.Storage, storeRoot, goproxy, goBinary string, 
 	// The child selects its backend from the same file, or it would write its
 	// records into a different store from the one this process reads.
 	if path, ok := explicitConfigPath(); ok {
-		cgExtraArgs = append(cgExtraArgs, "--config="+absOrSelf(path))
+		cgExtraArgs = append(cgExtraArgs, "--"+cgports.ChildFlagConfig+"="+absOrSelf(path))
 	}
 	adapterExtractor := extextractor.NewAdapterExtractor(licExtractUC, ifaceExtractUC, cgSubprocessExec, st.CallGraphOutcomes, cgapp.PipelineVersion, cgExtraArgs, exExtractUC).
 		WithLogger(logger).
@@ -1104,4 +1106,14 @@ func declaredReadFrame() (cgdomain.BuildFrame, string) {
 // invocationFrame is the build frame this invocation's call-graph reads select.
 func invocationFrame() cgdomain.BuildFrame {
 	return cganalyser.DeclaredFrame(declaredTarget, declaredTinyGo)
+}
+
+// callGraphChildDeps is what the callgraph command's extraction runs against:
+// this container's walks and extractions, under the invocation's frame.
+func (c *Container) callGraphChildDeps(stderr io.Writer) cgchild.Deps {
+	return cgchild.Deps{
+		Walks: c.QueryWalks, Module: c.ExtractCallGraph.Execute, Stdlib: c.ExtractStdlibCallGraph.Execute,
+		Frame:  cgchild.Frame{Current: invocationFrame, Declare: declare},
+		Stderr: stderr,
+	}
 }

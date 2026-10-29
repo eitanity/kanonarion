@@ -15,6 +15,7 @@ code.eitanity.com/kanonarion/internal/adapters/interrupt os/exec
 code.eitanity.com/kanonarion/internal/adapters/vcs/gitexec os/exec
 code.eitanity.com/kanonarion/internal/cli os/exec
 code.eitanity.com/kanonarion/internal/cli syscall
+code.eitanity.com/kanonarion/internal/composition/cgchild syscall
 code.eitanity.com/kanonarion/internal/local/adapters/importer/golist os/exec
 code.eitanity.com/kanonarion/internal/local/adapters/probe/builder os/exec
 code.eitanity.com/kanonarion/internal/local/localtest os/exec

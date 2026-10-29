@@ -53,18 +53,18 @@ func assertEveryWriteGuardFires(t *testing.T, render func(w *stallingWriter) err
 }
 
 func TestWriteImplementersText_ReportsEveryFailedWrite(t *testing.T) {
-	impls := []scopedImplementer{{
-		impl: cgdomain.InterfaceImplementation{
+	impls := []cgapp.Implementer{{
+		Implementation: cgdomain.InterfaceImplementation{
 			InterfaceID: implPortID, TypeID: implFake, IsTest: true,
 			Methods: []cgdomain.ImplementedMethod{{Method: "Put", NodeID: implFake + ".Put"}},
 		},
-		modulePath: implModule, moduleVersion: "v1.0.0",
+		ModulePath: implModule, ModuleVersion: "v1.0.0",
 	}}
-	v := cgdomain.Answer{Outcome: cgdomain.AnswerResolvedPresent}
+	res := cgapp.ImplementersResult{Implementers: impls, Answer: cgdomain.Answer{Outcome: cgdomain.AnswerResolvedPresent}}
 	scope := implementersScopeLine(implModule, cgports.EdgeQueryOptions{})
 
 	assertEveryWriteGuardFires(t, func(w *stallingWriter) error {
-		return writeImplementersText(w, implPortID, "", false, impls, v, scope, buildScope{}, foreignDrawOfImplementers(impls))
+		return writeImplementersText(w, implPortID, res, false, scope, buildScope{}, foreignDrawOfImplementers(impls))
 	})
 }
 
@@ -75,7 +75,7 @@ func TestWriteImplementersText_ReportsFailedWritesOnEmptyAndUnresolved(t *testin
 	}
 	scope := implementersScopeLine(implModule, cgports.EdgeQueryOptions{})
 	assertEveryWriteGuardFires(t, func(w *stallingWriter) error {
-		return writeImplementersText(w, implPortID, "", false, nil, v, scope, buildScope{}, foreignDraw{})
+		return writeImplementersText(w, implPortID, cgapp.ImplementersResult{Answer: v}, false, scope, buildScope{}, foreignDraw{})
 	})
 }
 
@@ -83,13 +83,14 @@ func TestWriteImplementersText_ReportsFailedWritesOnAbsent(t *testing.T) {
 	v := cgdomain.Answer{Outcome: cgdomain.AnswerResolvedAbsent}
 	scope := implementersScopeLine(implModule, cgports.EdgeQueryOptions{})
 	assertEveryWriteGuardFires(t, func(w *stallingWriter) error {
-		return writeImplementersText(w, implPortID, "", false, nil, v, scope, buildScope{}, foreignDraw{})
+		return writeImplementersText(w, implPortID, cgapp.ImplementersResult{Answer: v}, false, scope, buildScope{}, foreignDraw{})
 	})
 }
 
 func TestWriteImplementersJSON_ReportsFailedWrite(t *testing.T) {
-	err := writeImplementersJSON(&stallingWriter{}, implPortID, "Put", true, nil,
-		cgdomain.Answer{Outcome: cgdomain.AnswerResolvedAbsent}, "scope", implModule, cgports.EdgeQueryOptions{}, foreignDraw{})
+	res := cgapp.ImplementersResult{InterfaceID: implPortID, Method: "Put", ModulePath: implModule,
+		Answer: cgdomain.Answer{Outcome: cgdomain.AnswerResolvedAbsent}}
+	err := writeImplementersJSON(&stallingWriter{}, res, true, "scope", cgports.EdgeQueryOptions{}, foreignDraw{})
 	if err == nil {
 		t.Fatal("a failed JSON write was swallowed")
 	}
@@ -280,17 +281,6 @@ func TestImplementers_ErrorFromTheStoreIsPropagated(t *testing.T) {
 	}
 }
 
-// TestMethodNodeID_MissReturnsEmpty: an implementation that records no node for
-// the queried method must not fabricate one.
-func TestMethodNodeID_MissReturnsEmpty(t *testing.T) {
-	impl := cgdomain.InterfaceImplementation{
-		Methods: []cgdomain.ImplementedMethod{{Method: "Put", NodeID: "x.Put"}},
-	}
-	if got := methodNodeID(impl, "Get"); got != "" {
-		t.Errorf("methodNodeID for an unrecorded method = %q, want empty", got)
-	}
-}
-
 // TestModuleOfScopeLine_FallsBackWhenUnparseable keeps the absent verdict
 // readable even if the scope line is not in the expected shape.
 func TestModuleOfScopeLine_FallsBackWhenUnparseable(t *testing.T) {
@@ -326,15 +316,15 @@ func TestNewImplementersCmd_RequiresOneArgument(t *testing.T) {
 	}
 }
 
-// TestGatherImplementers_RejectsARecordNamingNoModule guards the coordinate
+// TestFindImplementers_RejectsARecordNamingNoModule guards the coordinate
 // reconstruction: a summary that cannot name a module is a corrupt row, and
 // answering from it would attribute implementations to nothing.
-func TestGatherImplementers_RejectsARecordNamingNoModule(t *testing.T) {
+func TestFindImplementers_RejectsARecordNamingNoModule(t *testing.T) {
 	uc := testfakes.NewFakeQueryCallGraph()
 	uc.SetList([]cgports.CallGraphSummary{
 		{ModulePath: implModule, ModuleVersion: "", PipelineVersion: implPipeline},
 	})
-	_, err := gatherImplementers(context.Background(), implPortID, uc, buildScope{})
+	_, err := cgapp.FindImplementers(context.Background(), uc, cgapp.ImplementersRequest{InterfaceID: implPortID})
 	if err == nil || !strings.Contains(err.Error(), "names no module") {
 		t.Fatalf("want a names-no-module error, got %v", err)
 	}

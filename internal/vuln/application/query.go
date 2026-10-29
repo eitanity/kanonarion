@@ -12,6 +12,9 @@ import (
 )
 
 // QueryVulnUseCase provides read-only access to vulnerability records.
+//
+// Every method that takes a pipeline version reads PipelineVersion when given
+// an empty one.
 type QueryVulnUseCase struct {
 	store ports.VulnerabilityStore
 }
@@ -42,6 +45,7 @@ func (uc *QueryVulnUseCase) ListRecordsForModuleInWalk(
 	pipelineVersion string,
 	walkID string,
 ) ([]domain.VulnerabilityRecord, error) {
+	pipelineVersion = servedPipeline(pipelineVersion)
 	recs, err := uc.store.ListVulnerabilityRecordsForModuleInWalk(ctx, coord, pipelineVersion, walkID)
 	if err != nil {
 		return recs, fmt.Errorf("listing vulnerability records for %s (walk %s): %w", coord, walkID, err)
@@ -55,6 +59,7 @@ func (uc *QueryVulnUseCase) ListRecordsForModule(
 	coord coordinate.ModuleCoordinate,
 	pipelineVersion string,
 ) ([]domain.VulnerabilityRecord, error) {
+	pipelineVersion = servedPipeline(pipelineVersion)
 	recs, err := uc.store.ListVulnerabilityRecordsForModule(ctx, coord, pipelineVersion)
 	if err != nil {
 		return recs, fmt.Errorf("listing vulnerability records for %s: %w", coord, err)
@@ -256,4 +261,14 @@ func (uc *QueryScanRunsUseCase) GetLatestSnapshot(ctx context.Context) (domain.D
 		return domain.DatabaseSnapshot{}, false, fmt.Errorf("getting latest database snapshot: %w", err)
 	}
 	return snap, found, nil
+}
+
+// servedPipeline is pv, or PipelineVersion when pv is empty. No record is
+// stored at an empty version, so an empty one would read nothing and answer
+// as if nothing were recorded.
+func servedPipeline(pv string) string {
+	if pv == "" {
+		return PipelineVersion
+	}
+	return pv
 }

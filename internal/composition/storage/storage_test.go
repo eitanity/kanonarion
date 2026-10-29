@@ -1,6 +1,7 @@
 package storage_test
 
 import (
+	"strings"
 	"testing"
 
 	callgraphports "code.eitanity.com/kanonarion/internal/callgraph/ports"
@@ -25,7 +26,10 @@ import (
 // Each stub is a non-nil value of one port; Validate only asks whether a
 // field is set, so no method is ever called.
 type (
-	facts        struct{ fetchports.FactStore }
+	facts struct {
+		fetchports.FactStore
+		fetchports.FactRecordComposer
+	}
 	attestations struct{ fetchports.AttestationStore }
 	auditSink    struct{ fetchports.AuditSink }
 	blobs        struct{ fetchports.BlobStore }
@@ -90,5 +94,16 @@ func TestValidate_RefusesANilValue(t *testing.T) {
 	var st *storage.Storage
 	if err := st.Validate(); err == nil || err.Error() != "storage: no storage value" {
 		t.Fatalf("Validate() = %v, want the nil-value refusal", err)
+	}
+}
+
+// A fact store that cannot compose its measurements is refused when the
+// value is checked, naming the capability, rather than by every extraction
+// stage later.
+func TestValidate_RefusesAFactStoreThatCannotCompose(t *testing.T) {
+	st := full()
+	st.Facts = struct{ fetchports.FactStore }{}
+	if err := st.Validate(); err == nil || !strings.Contains(err.Error(), "Facts does not implement FactRecordComposer") {
+		t.Fatalf("Validate() = %v, want the FactRecordComposer refusal", err)
 	}
 }

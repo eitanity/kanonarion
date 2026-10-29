@@ -52,3 +52,20 @@ func ResolveSymbolModule(symbolID string, analysedModulePaths []string) (string,
 	}
 	return best, best != ""
 }
+
+// SymbolFailedPackage reports which of failedPkgs symbolID belongs to,
+// matching by import path: "<pkg>.<Name>" or "<pkg>.(*T).M" belongs to pkg
+// exactly when the character after the path is '.', so "<pkg>/sub.Fn" does not.
+// It works for a symbol that never became a node, which is every symbol of a
+// package that failed to typecheck.
+func SymbolFailedPackage(symbolID string, failedPkgs []string) (string, bool) {
+	for _, p := range failedPkgs {
+		if p == "" || !strings.HasPrefix(symbolID, p) {
+			continue
+		}
+		if len(symbolID) > len(p) && symbolID[len(p)] == '.' {
+			return p, true
+		}
+	}
+	return "", false
+}

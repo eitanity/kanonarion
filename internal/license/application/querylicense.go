@@ -20,6 +20,9 @@ type DepLicenseResult struct {
 }
 
 // QueryLicenseUseCase provides read-only access to stored license records.
+//
+// Every method that takes a pipeline version reads PipelineVersion when given
+// an empty one.
 type QueryLicenseUseCase struct {
 	store licenseports.LicenseStore
 	walks walkports.WalkStore // nil when walk resolution is not needed
@@ -38,6 +41,7 @@ func NewQueryLicenseUseCaseWithWalks(store licenseports.LicenseStore, walks walk
 
 // GetLicenseRecord retrieves the license record for a module coordinate.
 func (uc *QueryLicenseUseCase) GetLicenseRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (domain.LicenseRecord, bool, error) {
+	pipelineVersion = servedPipeline(pipelineVersion)
 	rec, found, err := uc.store.GetLicenseRecord(ctx, coord, pipelineVersion)
 	if err != nil {
 		return domain.LicenseRecord{}, false, fmt.Errorf("getting license record for %s: %w", coord, err)
@@ -58,6 +62,7 @@ var ErrNoLicenceHistory = errors.New("this license store keeps no generation his
 // record says what is believed now; this says what was believed before, each
 // entry naming the artefact it was computed from.
 func (uc *QueryLicenseUseCase) LicenseHistory(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) ([]domain.LicenseRecord, error) {
+	pipelineVersion = servedPipeline(pipelineVersion)
 	lister, ok := uc.store.(licenseports.LicenceRecordLister)
 	if !ok {
 		return nil, ErrNoLicenceHistory
@@ -134,4 +139,14 @@ func (uc *QueryLicenseUseCase) ResolveForWalk(
 		results = append(results, DepLicenseResult{Coordinate: node.Coordinate, PrimarySPDX: spdx})
 	}
 	return results, nil
+}
+
+// servedPipeline is pv, or PipelineVersion when pv is empty. No record is
+// stored at an empty version, so an empty one would read nothing and answer
+// as if nothing were recorded.
+func servedPipeline(pv string) string {
+	if pv == "" {
+		return PipelineVersion
+	}
+	return pv
 }
