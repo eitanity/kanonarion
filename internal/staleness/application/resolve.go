@@ -69,6 +69,9 @@ type Resolver struct {
 	// their latest instead. Set via WithPrivate.
 	isPrivate func(path string) bool
 	private   ports.LatestResolver
+	// isLocal names the paths the scope compiles from a directory. Set via
+	// WithLocal; checked before isPrivate, since no lookup of any kind applies.
+	isLocal func(path string) bool
 }
 
 // ErrBatchUnavailable wraps a batched resolution that could not be made.
@@ -117,6 +120,18 @@ func (r *Resolver) WithPrivate(isPrivate func(path string) bool, private ports.L
 	return r
 }
 
+// WithLocal refuses every path isLocal names with ports.ErrLocalModule and
+// keeps it out of the batch and the prefetch, so no network question or go
+// command child is ever put about a module compiled from a directory.
+func (r *Resolver) WithLocal(isLocal func(path string) bool) *Resolver {
+	r.isLocal = isLocal
+	return r
+}
+
+func (r *Resolver) localPath(path string) bool {
+	return r.isLocal != nil && r.isLocal(path)
+}
+
 // resolvePrivate answers a private path's same-major latest; any failure is
 // ports.ErrPrivateModule, so the row reads unmeasured rather than current.
 func (r *Resolver) resolvePrivate(ctx context.Context, path string) (Answer, error) {
@@ -149,6 +164,9 @@ func (r *Resolver) privatePath(path string) bool {
 // newest release is a +incompatible v2 is planned the same way an explicit
 // +incompatible pin is: /v2 asked about first, then the walk from /v3.
 func (r *Resolver) Resolve(ctx context.Context, path, pinnedVersion string) (Answer, error) {
+	if r.localPath(path) {
+		return Answer{}, fmt.Errorf("resolving %s: %w", path, ports.ErrLocalModule)
+	}
 	if r.privatePath(path) {
 		return r.resolvePrivate(ctx, path)
 	}
@@ -323,11 +341,11 @@ func (r *Resolver) primeBatch(ctx context.Context) error {
 		return r.batchErr
 	}
 	r.batchPrimed = true
-	// A private path is answered per path and never probed, so it leaves the set
-	// the batch and the prefetch are asked about.
+	// A private path is answered per path and a local one not at all; neither is
+	// probed, so both leave the set the batch and the prefetch are asked about.
 	public := make([]ports.PinnedModule, 0, len(r.batchCoords))
 	for _, mod := range r.batchCoords {
-		if !r.privatePath(mod.Path) {
+		if !r.privatePath(mod.Path) && !r.localPath(mod.Path) {
 			public = append(public, mod)
 		}
 	}

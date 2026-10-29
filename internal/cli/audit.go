@@ -446,7 +446,7 @@ func runAudit(ctx context.Context, f auditFlags, stdout, stderr io.Writer) error
 	// level govern both. A probe that waits out a transient proxy failure is the
 	// longest silence in an otherwise second-long command.
 	stalenessProgress := newStalenessProgressReporter(stderr, f.noProgress, activeConfig, logLevel)
-	staleness, serr := auditStalenessLookup(f.goproxy, ctr.StalenessLedger, logger, f.gomodPath, coords, stalenessProgress, stderr)
+	staleness, serr := auditStalenessLookup(f.goproxy, ctr.StalenessLedger, logger, f.gomodPath, mods, stalenessProgress, stderr)
 	if serr != nil {
 		return serr
 	}
@@ -1110,7 +1110,13 @@ func buildAuditResult(ctx context.Context, node walkdomain.GraphNode, anchor vul
 		LicenseStatus: "(not run)",
 		VulnStatus:    "(not run)",
 	}
-	applyAuditStaleness(ctx, &res, coord, staleness, stderr)
+	// A module read from disk has no published version to compare against, so
+	// its row is answered from the walk and nothing is asked about it.
+	if reason, local := localStalenessReason(node); local {
+		res.markStalenessUnmeasured(reason)
+	} else {
+		applyAuditStaleness(ctx, &res, coord, staleness, stderr)
+	}
 
 	if anchor.walkID == "" {
 		return res, nil
@@ -1255,7 +1261,7 @@ const (
 // has to fetch module bytes it has not got still fails — with its own error,
 // naming that obstacle, which is the one the operator can act on.
 func auditStalenessLookup(goproxy string, ledger staleports.Ledger, logger *slog.Logger,
-	gomodPath string, coords []string, progress staleports.ProgressReporter, stderr io.Writer) (stalenessLookup, error) {
+	gomodPath string, mods []scopeModule, progress staleports.ProgressReporter, stderr io.Writer) (stalenessLookup, error) {
 	offline := newOfflineStalenessLookup(ledger, activeConfig.Staleness.TTL)
 	if modcacheMode {
 		return offline, nil
@@ -1276,8 +1282,10 @@ func auditStalenessLookup(goproxy string, ledger staleports.Ledger, logger *slog
 	// serially, for a fact the go command answers for the whole set in one call.
 	// The two commands share the defect as they share the ledger, so they are
 	// fixed together rather than leaving `audit` on the sweep `latest` left.
+	// A local-path replacement is left out of the batch and refused per path.
 	return newReportOnceLookup(newGomodStalenessResolver(newProxyLatestResolver(proxy, logger, progress), ledger,
-		activeConfig.Staleness.TTL, false, gomodPath, goproxy, pinnedModulesOf(coords)), stderr), nil
+		activeConfig.Staleness.TTL, false, gomodPath, goproxy, pinnedModulesOf(publishedCoords(mods)),
+		localScopeOf(mods, nil)), stderr), nil
 }
 
 // applyAuditStaleness fills a row's staleness columns from one lookup.
@@ -1368,6 +1376,18 @@ func applyAuditStaleness(ctx context.Context, res *auditModuleResult, coord coor
 	res.RepublishedModule = ans.Republication.Path
 	res.RepublishedLatest = ans.Republication.Version
 	res.Deprecated = deprecationField(ans.Deprecation)
+}
+
+// localStalenessReason is the unmeasured reason of a walk node compiled from a
+// directory, by its resolution source.
+func localStalenessReason(node walkdomain.GraphNode) (string, bool) {
+	switch node.ResolutionSource {
+	case walkdomain.ResolutionLocalReplace, walkdomain.ResolutionLocalAnalysed:
+		return stalenessLocalReplace, true
+	case walkdomain.ResolutionLocalWorkspaceMember:
+		return stalenessLocalWorkspaceMember, true
+	}
+	return "", false
 }
 
 // markStalenessUnmeasured records that the column was not answered, and why. It
@@ -1613,8 +1633,8 @@ func auditCoordinateStrings(results []auditModuleResult) []string {
 
 // auditVerificationCoverage aggregates the run's own rows. It reads the
 // observations captured alongside each row's Verification column rather than
-// consulting the store again, so the acceptance the ticket asks for — that the
-// counts equal the per-module statuses in the same run — holds by construction
+// consulting the store again, so the requirement that the counts equal the
+// per-module statuses in the same run holds by construction
 // instead of by two reads agreeing.
 func auditVerificationCoverage(results []auditModuleResult) fetchdomain.VerificationCoverage {
 	obs := make([]fetchdomain.CoverageObservation, 0, len(results))

@@ -12,6 +12,7 @@ import (
 
 	"code.eitanity.com/kanonarion/internal/adapters/interrupt"
 	proxyadapter "code.eitanity.com/kanonarion/internal/adapters/proxy/direct"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 	staleapp "code.eitanity.com/kanonarion/internal/staleness/application"
 	staledomain "code.eitanity.com/kanonarion/internal/staleness/domain"
 	staleports "code.eitanity.com/kanonarion/internal/staleness/ports"
@@ -40,8 +41,8 @@ func newLatestCmd(stdout, stderr io.Writer) *cobra.Command {
 		Long: `latest queries the Go module proxy for the latest published version of one or
 more modules.
 
-With --gomod, it reports the pinned version from go.mod against the latest
-available for every direct dependency, letting you see staleness at a glance.
+With --gomod, it reports the pinned version of every module in the scope
+against the latest available, letting you see staleness at a glance.
 
 Separate facts are reported for each module, never merged. The latest version at
 the module path itself, and — because a Go module's next MAJOR version lives at
@@ -449,12 +450,12 @@ func runLatestFromGoMod(ctx context.Context, f latestFlags, offline bool, lookup
 	// keeps the ledger it already had: `go list -m -u` under a declared air
 	// gap reports every module as having no update, which is not an answer,
 	// so the batch refuses there rather than manufacturing one.
-	return runLatestGomod(ctx, gomodPath, scope, f.excludeTests, func(coords []string) stalenessLookup {
+	return runLatestGomod(ctx, gomodPath, scope, f.excludeTests, func(coords []string, local localScope) stalenessLookup {
 		if offline {
 			return lookup
 		}
 		return newGomodStalenessResolver(commandStalenessPort(proxy, stderr, f.noProgress),
-			ledger, activeConfig.Staleness.TTL, f.fresh, gomodPath, f.goproxy, pinnedModulesOf(coords))
+			ledger, activeConfig.Staleness.TTL, f.fresh, gomodPath, f.goproxy, pinnedModulesOf(coords), local)
 	}, stdout, stderr)
 }
 
@@ -700,7 +701,7 @@ func latestRowFor(ctx context.Context, lookup stalenessLookup, path, pinned stri
 // function's own result. Building the lookup before the scope is resolved would
 // have meant either a batch over the wrong set or a second scope resolution.
 func runLatestGomod(ctx context.Context, gomodPath string, scope depScope, excludeTests bool,
-	newLookup func(coords []string) stalenessLookup, stdout, stderr io.Writer) error {
+	newLookup func(coords []string, local localScope) stalenessLookup, stdout, stderr io.Writer) error {
 	type pinnedDep struct {
 		path    string
 		version string
@@ -712,22 +713,23 @@ func runLatestGomod(ctx context.Context, gomodPath string, scope depScope, exclu
 	}
 	var deps []pinnedDep
 
-	mods, res, err := resolveScopeModules(ctx, gomodPath, scope, excludeTests)
+	mods, members, res, err := resolveLatestScope(ctx, gomodPath, scope, excludeTests)
 	if err != nil {
-		return fmt.Errorf("resolving %s scope: %w", scope, err)
+		return err
 	}
+	rows := len(mods) + len(members)
 	// Which set these rows are the whole of, stated before them and on the same
 	// channel as every other statement about the run. The empty case states it
 	// too: a table with no rows is answered by naming the set that was empty.
-	if nerr := writeDepScopeNotice(stderr, res, len(mods), true); nerr != nil {
+	if nerr := writeDepScopeNotice(stderr, res, rows, true); nerr != nil {
 		return nerr
 	}
 	scopeField := newScopeJSON(res)
 	// The same facts as the notice above, in the envelope the rows are framed in,
 	// built from the same resolution and the same count so the two cannot
 	// disagree.
-	envelope := newEnvelopeScope(res, len(mods), true)
-	if len(mods) == 0 {
+	envelope := newEnvelopeScope(res, rows, true)
+	if rows == 0 {
 		// The empty answer is the same object with an empty modules array, keeping
 		// the empty and populated results the same type. Prose stays on the text
 		// path only.
@@ -753,8 +755,8 @@ func runLatestGomod(ctx context.Context, gomodPath string, scope depScope, exclu
 	// batched call, for every module in the scope. A replaced module's row is
 	// therefore answered by the per-path resolver, which asks about the module the
 	// build actually compiles — the same route `audit` already takes for the same
-	// coordinates.
-	lookup := newLookup(requiredCoords(mods))
+	// coordinates. A local-path replacement is not asked about at all.
+	lookup := newLookup(publishedCoords(mods), localScopeOf(mods, members))
 
 	results := make([]latestResult, 0, len(deps))
 	for _, dep := range deps {
@@ -794,6 +796,7 @@ func runLatestGomod(ctx context.Context, gomodPath string, scope depScope, exclu
 		}
 		results = append(results, row)
 	}
+	results = append(results, workspaceMemberRows(members, scopeField)...)
 
 	if jsonOut {
 		enc := json.NewEncoder(stdout)
@@ -805,6 +808,34 @@ func runLatestGomod(ctx context.Context, gomodPath string, scope depScope, exclu
 	}
 
 	return printLatestTable(stdout, results)
+}
+
+// resolveLatestScope resolves the scope's modules and, since its module records
+// drop every main module, the go.work members its build reaches.
+func resolveLatestScope(ctx context.Context, gomodPath string, scope depScope, excludeTests bool) ([]scopeModule, []string, scopeResolution, error) {
+	mods, res, err := resolveScopeModules(ctx, gomodPath, scope, excludeTests)
+	if err == nil {
+		var members []string
+		if members, err = workspaceMembersInScope(ctx, gomodPath, scope, res.Tests); err == nil {
+			return mods, members, res, nil
+		}
+	}
+	return nil, nil, res, fmt.Errorf("resolving %s scope: %w", scope, err)
+}
+
+// workspaceMemberRows answers each go.work member from the scope alone: it is
+// compiled from its directory, so nothing published is asked about it.
+func workspaceMemberRows(members []string, scopeField *scopeJSON) []latestResult {
+	rows := make([]latestResult, 0, len(members))
+	for _, path := range members {
+		rows = append(rows, latestResult{
+			Module:              path,
+			Pinned:              coordinate.LocalVersion,
+			StalenessUnmeasured: stalenessLocalWorkspaceMember,
+			DependencyScope:     scopeField,
+		})
+	}
+	return rows
 }
 
 func printLatestTable(stdout io.Writer, results []latestResult) error {

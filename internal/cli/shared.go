@@ -480,6 +480,42 @@ func requiredCoords(mods []scopeModule) []string {
 	return coords
 }
 
+// publishedCoords is requiredCoords without the local-path replacements: the
+// set a command may name to a proxy, the checksum database or the go command.
+// Locality is a property of the scope, so no GOPRIVATE setting is needed.
+func publishedCoords(mods []scopeModule) []string {
+	coords := make([]string, 0, len(mods))
+	for _, m := range mods {
+		if m.localPath == "" {
+			coords = append(coords, m.required())
+		}
+	}
+	return coords
+}
+
+// localScope maps each module path a scope compiles from a directory to the
+// staleness reason its row states. A go.work member wins over a replace of the
+// same path, as it does for the go command.
+type localScope map[string]string
+
+func localScopeOf(mods []scopeModule, members []string) localScope {
+	local := localScope{}
+	for _, m := range mods {
+		if m.localPath != "" && !m.original.IsZero() {
+			local[m.original.Path()] = stalenessLocalReplace
+		}
+	}
+	for _, path := range members {
+		local[path] = stalenessLocalWorkspaceMember
+	}
+	return local
+}
+
+func (l localScope) has(path string) bool {
+	_, ok := l[path]
+	return ok
+}
+
 // resolveScopeModules returns the modules of scope, resolved by the Go toolchain
 // in the directory containing gomodPath: what the build compiles, paired with
 // the require entry a replace directive routed it away from. The main module is
@@ -1464,7 +1500,7 @@ var allowVerificationDowngrade bool
 // transparency log.
 func registerAllowVerificationDowngradeFlag(cmd *cobra.Command) {
 	cmd.Flags().BoolVar(&allowVerificationDowngrade, "allow-verification-downgrade", false,
-		"permit a re-measurement to REPLACE A STRONGER VERIFICATION ANCHOR WITH A WEAKER ONE (e.g. let a --from-modcache record verified only against local go.sum overwrite one verified against the checksum-database transparency log); without this, the stronger record is kept and the run logs a warning")
+		"permit a weaker re-measurement (e.g. a --from-modcache record verified only against local go.sum) to be recorded beside a stronger one verified against the checksum-database transparency log, which is kept and still answers; without this, the weaker one is refused and the run logs a warning")
 }
 
 // modcacheFlagSentinel is the NoOptDefVal for --from-modcache: it distinguishes
