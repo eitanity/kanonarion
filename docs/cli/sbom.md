@@ -685,10 +685,9 @@ inspect the intermediate records), run them by hand first:
 
 ```bash
 # 1. Walk the current project (creates a walk rooted at the local module)
-kanonarion walk --gomod ./go.mod
+WALK_ID=$(kanonarion walk --gomod ./go.mod --json | jq -r '.id')
 
 # 2. Extract licence data for all walked modules
-WALK_ID=$(kanonarion walk-list --latest-success --json | jq -r '.id')
 kanonarion extract "$WALK_ID"
 
 # 3. Generate the binary-scoped SBOM from that walk
