@@ -45,32 +45,12 @@ const (
 	// source. It repeats when more than one module ships the same library at the
 	// same version; CycloneDX permits a property name to recur.
 	nativeHostProperty = "kanonarion:native:host_module"
-	// nativeGenerationProperty records the detection generation the measurement
-	// was taken at — the detection logic and the recipe catalogue together — so a
-	// reader can tell a component named by an older catalogue from one named now.
-	nativeGenerationProperty = "kanonarion:native:generation"
 	// nativeArtefactProperty names the verified module zip the declaration was
 	// read out of. It is what this component's integrity actually rests on: the
 	// bytes were extracted from an artefact the fetch ledger had already hashed,
 	// so the component inherits that artefact's verification and needs no trust
 	// story of its own.
 	nativeArtefactProperty = "kanonarion:native:host_artefact"
-	// nativeAdvisoriesProperty states that no advisory database was searched for
-	// this component. An SBOM asserts no vulnerabilities either way — that is a
-	// standing decision and this does not change it — but a reader who finds a C
-	// library in a Go inventory will ask, and the honest answer is that
-	// kanonarion has no non-Go advisory source and did not look.
-	nativeAdvisoriesProperty = "kanonarion:native:advisories_searched"
-	// nativeLicenceProperty states that this component's licence was not
-	// determined. The licence pipeline reads the LICENSE files of a Go module's
-	// artefact; a C library inside one of those artefacts was never in its scope,
-	// so the silence here is a limit of what was measured and not a finding that
-	// the library is unlicensed. It is said on the component because the
-	// document-level licence statement counts the Go components it covers.
-	nativeLicenceProperty = "kanonarion:native:licence_determined"
-	// nativeConfidenceProperty records how the version was established, in the
-	// vocabulary the measurement itself uses.
-	nativeConfidenceProperty = "kanonarion:native:confidence"
 )
 
 // nativeComponent is one identified native library, gathered across every Go
@@ -236,8 +216,10 @@ func dedupeNativeEvidence(in []nativeEvidence) []nativeEvidence {
 // It carries no hashes. A <hashes> block on a component states the digest of
 // THAT component's artefact, and kanonarion never held one: it read a
 // declaration inside a Go module's zip. The zip it was read from is named in a
-// property instead, where it says what it is.
-func buildNativeComponent(n nativeComponent, pipelineVersion string) cdx.Component {
+// property instead, where it says what it is. How the version was established
+// is stated in the evidence block, and the missing licence by the
+// licence-completeness annotation.
+func buildNativeComponent(n nativeComponent) cdx.Component {
 	purl := nativedomain.ComponentPURL(n.comp)
 	comp := cdx.Component{
 		BOMRef:      purl,
@@ -246,32 +228,28 @@ func buildNativeComponent(n nativeComponent, pipelineVersion string) cdx.Compone
 		Version:     n.comp.Version,
 		PackageURL:  purl,
 		Description: nativeDescription(n),
-		Properties:  nativeProperties(n, pipelineVersion),
+		Properties:  nativeProperties(n),
 		Evidence:    nativeEvidenceBlock(n),
 	}
 	return comp
 }
 
-// nativeDescription says, in one sentence, what this component is and how it
-// got into the binary — because a C library in a list of Go modules is the one
-// entry a reader will not expect and cannot place.
+// nativeDescription says what this component is and which Go module ships it;
+// how its version was established is the evidence block's.
 func nativeDescription(n nativeComponent) string {
-	hosts := strings.Join(n.hosts, ", ")
 	noun := "module"
 	if len(n.hosts) != 1 {
 		noun = "modules"
 	}
 	return "Native library compiled into the binary from source shipped inside the published zip of Go " +
-		noun + " " + hosts + ". Not a Go module and not fetched from any registry: its version was read " +
-		"verbatim from a declaration in that source. Its advisories were not searched."
+		noun + " " + strings.Join(n.hosts, ", ") + "."
 }
 
-// nativeProperties records what the measurement established and what it did
-// not, in a fixed order so the document is deterministic.
-func nativeProperties(n nativeComponent, pipelineVersion string) *[]cdx.Property {
+// nativeProperties records where the component was read from, in a fixed
+// order so the document is deterministic.
+func nativeProperties(n nativeComponent) *[]cdx.Property {
 	props := []cdx.Property{
 		{Name: "kanonarion:ecosystem", Value: domain.EcosystemNative},
-		{Name: "kanonarion:pipeline_version", Value: pipelineVersion},
 		{Name: nativeComponentProperty, Value: "true"},
 	}
 	for _, h := range n.hosts {
@@ -282,21 +260,6 @@ func nativeProperties(n nativeComponent, pipelineVersion string) *[]cdx.Property
 			props = append(props, cdx.Property{Name: nativeArtefactProperty, Value: a})
 		}
 	}
-	props = append(props,
-		// The domain's own word for how the version was established, not a number.
-		// CycloneDX's evidence confidence is a 0-to-1 float, and there is no
-		// measured probability here to put in one: "declared" means the version was
-		// read verbatim out of a named macro in compiled source, and inventing 0.9
-		// for it would publish a precision nobody measured.
-		cdx.Property{Name: nativeConfidenceProperty, Value: string(n.comp.Confidence)},
-		cdx.Property{Name: nativeGenerationProperty, Value: nativedomain.PipelineFingerprint()},
-		// False on every component this build emits. It is stated rather than
-		// omitted because an absent key reads as a producer that does not track
-		// the question, and the question — "was this library checked against an
-		// advisory database?" — is exactly the one a reader arrives with.
-		cdx.Property{Name: nativeAdvisoriesProperty, Value: "false"},
-		cdx.Property{Name: nativeLicenceProperty, Value: "false"},
-	)
 	return &props
 }
 

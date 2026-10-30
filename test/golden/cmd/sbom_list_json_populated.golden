@@ -4,24 +4,24 @@ exit 0
 --- stdout ---
 [
   {
-    "id": "sbom-0ed0d446e8b1df79da9df249",
+    "id": "sbom-4e21a22cee7cb094152f22e1",
     "ecosystem": "go",
     "walk_id": "01ARZ3NDEKTSV4RRFFQ69G5FB3",
     "format": "cyclonedx-1.6",
-    "pipeline_version": "0.10.0",
+    "pipeline_version": "0.11.0",
     "generated_at": "2026-02-03T11:30:00Z",
-    "content_hash": "7ac366bf64e4301d63d80d288b1782f965b4478a61f5f35bc48042c7ce66b7d0",
+    "content_hash": "709720e5b4ed5606e4ab7b34e90a2cc657050c60bfba67a2937470f64d0898c0",
     "operator": "",
     "licenses_incomplete": false
   },
   {
-    "id": "sbom-6ab110cfbe74526bbc14ccc9",
+    "id": "sbom-0bcbba1e2ba0fbae268b806e",
     "ecosystem": "go",
     "walk_id": "01ARZ3NDEKTSV4RRFFQ69G5FB1",
     "format": "cyclonedx-1.6",
-    "pipeline_version": "0.10.0",
+    "pipeline_version": "0.11.0",
     "generated_at": "2026-02-03T11:30:00Z",
-    "content_hash": "e7bbb7d9a6c46d3e0f4f8bc4cbf8e58bf02478e993ddbcb443c6c89b00acd1ae",
+    "content_hash": "8e10a212b99a73401e0a5fc9db82c42dd61c802a81df17731857818c24e8617a",
     "operator": "",
     "licenses_incomplete": false
   }

@@ -50,63 +50,30 @@ func tinygoComponentProperties(t *testing.T, custody *walkdomain.TinyGoCustody) 
 	return nil
 }
 
-func TestGenerate_TinyGoCustodyProperties(t *testing.T) {
-	props := tinygoComponentProperties(t, &walkdomain.TinyGoCustody{
-		Module: "github.com/tinygo-org/tinygo@v0.42.0", ModuleVerification: "Verified",
-		ReleaseAsset: "tinygo0.42.0.linux-amd64.tar.gz", ReleaseOutcome: walkdomain.TinyGoReleaseDigestMatched,
-		ReleasePublishedDigest: "b876", ReleaseObservedDigest: "b876",
-		ReleaseMeasuredAt: time.Date(2026, 10, 23, 2, 23, 15, 0, time.UTC),
-		VerifiedByModule:  184, VerifiedByRelease: 2,
-		Differs: []walkdomain.TinyGoFileDiffers{
-			{Path: "machine/machine.go", Anchor: walkdomain.TinyGoAnchorModule},
-			{Path: "device/rp/rp2040.go", Anchor: walkdomain.TinyGoAnchorRelease},
+// The TinyGo source check is kanonarion's own measurement and vocabulary, so
+// none of it reaches the TinyGo component, whatever the check reached.
+func TestGenerate_TinyGoComponentStatesNoCustody(t *testing.T) {
+	for name, custody := range map[string]*walkdomain.TinyGoCustody{
+		"full": {
+			Module: "github.com/tinygo-org/tinygo@v0.42.0", ModuleVerification: "Verified",
+			ReleaseAsset: "tinygo0.42.0.linux-amd64.tar.gz", ReleaseOutcome: walkdomain.TinyGoReleaseDigestMatched,
+			ReleasePublishedDigest: "b876", ReleaseObservedDigest: "b876",
+			ReleaseMeasuredAt: time.Date(2026, 10, 23, 2, 23, 15, 0, time.UTC),
+			VerifiedByModule:  184, VerifiedByRelease: 2,
+			Differs:        []walkdomain.TinyGoFileDiffers{{Path: "machine/machine.go", Anchor: walkdomain.TinyGoAnchorModule}},
+			NotEstablished: []walkdomain.TinyGoFileNotEstablished{{Path: "x.c", Reason: "absent from both"}},
 		},
-		NotEstablished: []walkdomain.TinyGoFileNotEstablished{{Path: "x.c", Reason: "absent from both"}},
-	})
-	const p = "kanonarion:tinygo:custody:"
-	for name, want := range map[string]string{
-		p + "module":                   "github.com/tinygo-org/tinygo@v0.42.0",
-		p + "module_verification":      "Verified",
-		p + "verified_by_module":       "184",
-		p + "verified_by_release":      "2",
-		p + "release_asset":            "tinygo0.42.0.linux-amd64.tar.gz",
-		p + "release_outcome":          "digest_matched",
-		p + "release_published_sha256": "b876",
-		p + "release_observed_sha256":  "b876",
-		p + "release_measured_at":      "2026-10-23T02:23:15Z",
-		p + "differs_from_module":      "machine/machine.go",
-		p + "differs_from_release":     "device/rp/rp2040.go",
-		p + "not_established":          "absent from both: x.c",
+		"module only": {Module: "github.com/tinygo-org/tinygo@v0.42.0", VerifiedByModule: 3},
+		"none":        nil,
 	} {
-		if got := props[name]; len(got) != 1 || got[0] != want {
-			t.Errorf("%s = %v, want %q", name, got, want)
+		props := tinygoComponentProperties(t, custody)
+		for prop := range props {
+			if strings.Contains(prop, "custody") {
+				t.Errorf("%s: the TinyGo component states %s", name, prop)
+			}
 		}
-	}
-	if got := props[p+"anchor_limitation"]; len(got) != 1 || !strings.Contains(got[0], "184 of 189 compiled TinyGo file(s) match the module zip") {
-		t.Errorf("anchor limitation = %v", got)
-	}
-}
-
-func TestGenerate_TinyGoCustodyStatesOnlyWhatWasReached(t *testing.T) {
-	props := tinygoComponentProperties(t, &walkdomain.TinyGoCustody{Module: "github.com/tinygo-org/tinygo@v0.42.0", VerifiedByModule: 3})
-	for name := range props {
-		if strings.Contains(name, ":release_") || strings.Contains(name, ":differs_") || strings.HasSuffix(name, ":not_established") {
-			t.Errorf("%s stated with no release consulted and nothing differing", name)
-		}
-	}
-	if got := props["kanonarion:tinygo:custody:anchor_limitation"]; len(got) != 1 || !strings.Contains(got[0], "no release archive was consulted") {
-		t.Errorf("anchor limitation = %v", got)
-	}
-	unmeasured := tinygoComponentProperties(t, &walkdomain.TinyGoCustody{Module: "m", ReleaseAsset: "a", ReleaseOutcome: walkdomain.TinyGoReleaseUnavailable})
-	if _, ok := unmeasured["kanonarion:tinygo:custody:release_published_sha256"]; ok {
-		t.Error("a release with no published digest states one")
-	}
-	if _, ok := unmeasured["kanonarion:tinygo:custody:release_measured_at"]; ok {
-		t.Error("an unmeasured release states a measurement time")
-	}
-	for name := range tinygoComponentProperties(t, nil) {
-		if strings.HasPrefix(name, "kanonarion:tinygo:custody:") {
-			t.Errorf("%s stated on a TinyGo walk without custody", name)
+		if got := props["kanonarion:component:tinygo"]; len(got) != 1 || got[0] != "true" {
+			t.Errorf("%s: kanonarion:component:tinygo = %v, want true", name, got)
 		}
 	}
 }

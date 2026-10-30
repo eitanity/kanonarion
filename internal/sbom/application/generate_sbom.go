@@ -94,12 +94,12 @@ func (uc *GenerateSBOMUseCase) WithVendorTree(r ports.VendorTreeReader) *Generat
 // to look up licence records for the walk's modules.
 //
 // It takes NO CLOCK, and that is the decision rather than an omission. The
-// document's metadata.timestamp is either a creation time the caller supplied
-// via --generated-at or the newest licence extraction time among the inputs;
-// nothing in this pipeline reads the wall clock, so re-emitting a document from
-// the same recorded inputs yields the same bytes. A clock was accepted here and
-// never read, which said the opposite of what was settled, and it is what led a
-// later reader to believe the test clock pinned the document's timestamp.
+// document's metadata.timestamp is a creation time the caller supplied via
+// --generated-at, or absent; nothing in this pipeline reads the wall clock, so
+// re-emitting a document from the same recorded inputs yields the same bytes.
+// A clock was accepted here and never read, which said the opposite of what was
+// settled, and it is what led a later reader to believe the test clock pinned
+// the document's timestamp.
 func NewGenerateSBOMUseCase(
 	walkStore walkports.WalkStore,
 	licenseStore licenseports.LicenseStore,
@@ -128,11 +128,10 @@ type SBOMRequest struct {
 	Operator string
 	// GeneratedAt is when the caller is creating this document; it becomes the
 	// document's metadata timestamp. Zero means none was supplied, and the
-	// document falls back to a derived timestamp it labels as derived.
+	// document carries no metadata timestamp.
 	//
-	// A supplied value bypasses the cache: it is not part of the cache key, so a
-	// cached record would answer with another moment's timestamp under the
-	// caller's request.
+	// A supplied value is not part of the cache key, so the document is generated
+	// and not stored, as a subject stamp is: see SBOMRequest.ephemeral.
 	GeneratedAt time.Time
 	// AllowList restricts the component list to a specific set of modules —
 	// typically the import closure of a single binary (sbom --package).
@@ -148,23 +147,19 @@ type SBOMRequest struct {
 	MainComponentLicense string
 }
 
-// namesSubject reports whether the caller supplied a subject stamp — a version
-// or a licence for the document's metadata.component.
+// ephemeral reports whether the caller supplied a value that is not part of the
+// cache key: a subject version or licence, or a creation time.
 //
-// Neither is part of the cache key, so a request that names the subject is
-// answered by generating rather than by serving what is stored, and what it
-// generates is not stored. Both halves are needed, and each answers one
-// direction of the same defect:
+// Such a request is answered by generating rather than by serving what is
+// stored, and what it generates is not stored. Both halves are needed:
 //
-//   - Serving a stored document under such a request would answer with another
-//     run's subject, silently discarding the stamp the caller supplied. This is
-//     the GeneratedAt argument above, applied to the subject's identity.
-//   - Storing the result would put one caller's stamp in the slot every later
-//     caller reads, so a caller who names no subject at all would be handed a
-//     version that is not theirs — a plausible one, in a distributed artefact.
-//     A stamped document belongs to the run that asked for it, not to the walk.
-func (r SBOMRequest) namesSubject() bool {
-	return r.MainComponentVersion != "" || r.MainComponentLicense != ""
+//   - Serving a stored document would answer with another run's subject or
+//     time, silently discarding what the caller supplied.
+//   - Storing the result would put one caller's value in the slot every later
+//     caller reads, so a caller who supplied none would be handed one that is
+//     not theirs. Such a document belongs to the run that asked for it.
+func (r SBOMRequest) ephemeral() bool {
+	return r.MainComponentVersion != "" || r.MainComponentLicense != "" || !r.GeneratedAt.IsZero()
 }
 
 // Generate produces and persists an SBOM for the given walk.
@@ -173,9 +168,9 @@ func (r SBOMRequest) namesSubject() bool {
 // MainComponentLicense) is set, the cached record is returned without
 // re-generation.
 // When req.AllowList is non-empty the SBOM is scoped to only those modules;
-// the result is ephemeral (cache skipped, not persisted). A request that names
-// the subject is ephemeral for the same reason: the stored document answers for
-// the walk, and a stamped one answers only for the run that asked for it.
+// the result is ephemeral (cache skipped, not persisted). A request carrying a
+// subject stamp or a creation time is ephemeral for the same reason: the stored
+// document answers for the walk, and such a one only for the run that asked.
 func (uc *GenerateSBOMUseCase) Generate(ctx context.Context, req SBOMRequest) (domain.SBOMRecord, error) {
 	format := req.Format
 	if format == "" {
@@ -185,13 +180,11 @@ func (uc *GenerateSBOMUseCase) Generate(ctx context.Context, req SBOMRequest) (d
 	// Package-scoped requests are ephemeral: skip cache entirely.
 	scoped := len(req.AllowList) > 0
 
-	// A named subject is generated, never served, and never stored: see
-	// SBOMRequest.namesSubject.
-	stamped := req.namesSubject()
+	// A named subject or creation time is generated, never served, and never
+	// stored: see SBOMRequest.ephemeral.
+	stamped := req.ephemeral()
 
-	// Cache lookup. A caller-supplied creation time is not part of the key, so
-	// serving a cached document under one would date it to another generation.
-	if !req.Force && !scoped && !stamped && req.GeneratedAt.IsZero() {
+	if !req.Force && !scoped && !stamped {
 		if cached, ok, err := uc.sbomStore.FindSBOMRecord(ctx, req.WalkID, format, uc.pipelineVersion); err != nil {
 			return domain.SBOMRecord{}, fmt.Errorf("checking sbom cache: %w", err)
 		} else if ok {
@@ -226,10 +219,10 @@ func (uc *GenerateSBOMUseCase) Generate(ctx context.Context, req SBOMRequest) (d
 	}
 
 	// 4. Persist — skipped for scoped (package-filtered) requests, and for a
-	// request that named the subject, whose document describes that request
-	// rather than the walk.
+	// request that named the subject or the creation time, whose document
+	// describes that request rather than the walk.
 	if !scoped && !stamped {
-		if err := uc.persistSBOM(ctx, req, record); err != nil {
+		if err := uc.persistSBOM(ctx, record); err != nil {
 			return domain.SBOMRecord{}, err
 		}
 	}
@@ -339,7 +332,7 @@ func (uc *GenerateSBOMUseCase) generateDocument(ctx context.Context, req SBOMReq
 }
 
 // persistSBOM stores the document and appends the event that witnesses it.
-func (uc *GenerateSBOMUseCase) persistSBOM(ctx context.Context, req SBOMRequest, record domain.SBOMRecord) error {
+func (uc *GenerateSBOMUseCase) persistSBOM(ctx context.Context, record domain.SBOMRecord) error {
 	if err := uc.sbomStore.PutSBOMRecord(ctx, record); err != nil {
 		return fmt.Errorf("persisting sbom record: %w", err)
 	}
@@ -347,7 +340,7 @@ func (uc *GenerateSBOMUseCase) persistSBOM(ctx context.Context, req SBOMRequest,
 	// so a failed append reports an unlogged write rather than undoing it. A
 	// package-scoped request persisted nothing and so appends nothing — the
 	// event states that a record exists, and an ephemeral document leaves none.
-	if err := emitSBOMGenerated(uc.audit, record, !req.GeneratedAt.IsZero()); err != nil {
+	if err := emitSBOMGenerated(uc.audit, record); err != nil {
 		return err
 	}
 	return nil

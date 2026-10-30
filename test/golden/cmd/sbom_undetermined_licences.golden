@@ -12,14 +12,15 @@ execute root command: sbom generated with undetermined licences: 1 component(s) 
         "component": {
           "name": "kanonarion",
           "type": "application",
-          "version": "0.10.0"
+          "version": "dev"
         }
       },
       "bom-ref": "kanonarion:licence-completeness",
       "subjects": [
-        "pkg:golang/example.com/unlicensed@v1.0.0"
+        "pkg:golang/example.com/unlicensed@v1.0.0",
+        "pkg:generic/sqlite@3.45.1"
       ],
-      "text": "Licence completeness of this document: 1 of the 4 component(s) inventoried here carry no licence identity, and are named as this annotation's subjects. A component with no licences block is one whose licence kanonarion could not determine — no licence file was found for it, or the files that were found match no known SPDX licence text. It is not a statement that the component is unlicensed, and it must not be read as permission to use it: pkg:golang/example.com/unlicensed@v1.0.0;",
+      "text": "Licence completeness of this document: 2 of the 5 component(s) inventoried here carry no licence identity, and are named as this annotation's subjects. It is not a statement that a component is unlicensed: pkg:golang/example.com/unlicensed@v1.0.0; pkg:generic/sqlite@3.45.1;",
       "timestamp": "2026-02-03T11:30:00Z"
     }
   ],
@@ -54,10 +55,6 @@ execute root command: sbom generated with undetermined licences: 1 component(s) 
         {
           "name": "kanonarion:ecosystem",
           "value": "go"
-        },
-        {
-          "name": "kanonarion:pipeline_version",
-          "value": "0.10.0"
         }
       ],
       "purl": "pkg:golang/example.com/cgolib@v0.4.2",
@@ -100,10 +97,6 @@ execute root command: sbom generated with undetermined licences: 1 component(s) 
         {
           "name": "kanonarion:ecosystem",
           "value": "go"
-        },
-        {
-          "name": "kanonarion:pipeline_version",
-          "value": "0.10.0"
         }
       ],
       "purl": "pkg:golang/example.com/plainlib@v1.1.0",
@@ -139,10 +132,6 @@ execute root command: sbom generated with undetermined licences: 1 component(s) 
         {
           "name": "kanonarion:ecosystem",
           "value": "go"
-        },
-        {
-          "name": "kanonarion:pipeline_version",
-          "value": "0.10.0"
         }
       ],
       "purl": "pkg:golang/example.com/product@v1.4.0",
@@ -156,10 +145,6 @@ execute root command: sbom generated with undetermined licences: 1 component(s) 
         {
           "name": "kanonarion:ecosystem",
           "value": "go"
-        },
-        {
-          "name": "kanonarion:pipeline_version",
-          "value": "0.10.0"
         }
       ],
       "purl": "pkg:golang/example.com/unlicensed@v1.0.0",
@@ -168,7 +153,7 @@ execute root command: sbom generated with undetermined licences: 1 component(s) 
     },
     {
       "bom-ref": "pkg:generic/sqlite@3.45.1",
-      "description": "Native library compiled into the binary from source shipped inside the published zip of Go module example.com/cgolib@v0.4.2. Not a Go module and not fetched from any registry: its version was read verbatim from a declaration in that source. Its advisories were not searched.",
+      "description": "Native library compiled into the binary from source shipped inside the published zip of Go module example.com/cgolib@v0.4.2.",
       "evidence": {
         "identity": [
           {
@@ -198,10 +183,6 @@ execute root command: sbom generated with undetermined licences: 1 component(s) 
           "value": "native"
         },
         {
-          "name": "kanonarion:pipeline_version",
-          "value": "0.10.0"
-        },
-        {
           "name": "kanonarion:component:native",
           "value": "true"
         },
@@ -212,22 +193,6 @@ execute root command: sbom generated with undetermined licences: 1 component(s) 
         {
           "name": "kanonarion:native:host_artefact",
           "value": "zip:h1:5AEBzJNMZ8lwvRAbBIkz3xjCCw3wlSXyoVW/8hI9+1k="
-        },
-        {
-          "name": "kanonarion:native:confidence",
-          "value": "declared"
-        },
-        {
-          "name": "kanonarion:native:generation",
-          "value": "0.5.0+recipes.1"
-        },
-        {
-          "name": "kanonarion:native:advisories_searched",
-          "value": "false"
-        },
-        {
-          "name": "kanonarion:native:licence_determined",
-          "value": "false"
         }
       ],
       "purl": "pkg:generic/sqlite@3.45.1",
@@ -276,38 +241,23 @@ execute root command: sbom generated with undetermined licences: 1 component(s) 
         {
           "name": "kanonarion:ecosystem",
           "value": "go"
-        },
-        {
-          "name": "kanonarion:pipeline_version",
-          "value": "0.10.0"
         }
       ],
       "purl": "pkg:golang/example.com/product@v1.4.0",
       "type": "library",
       "version": "v1.4.0"
     },
-    "properties": [
-      {
-        "name": "kanonarion:document:timestamp_basis",
-        "value": "derived: newest licence extraction time among this document's inputs; no creation time was supplied, and this generator reads no clock"
-      },
-      {
-        "name": "kanonarion:licence:newest_extraction",
-        "value": "2026-02-03T11:30:00Z"
-      }
-    ],
-    "timestamp": "2026-02-03T11:30:00Z",
     "tools": {
       "components": [
         {
           "name": "kanonarion",
           "type": "application",
-          "version": "0.10.0"
+          "version": "dev"
         }
       ]
     }
   },
-  "serialNumber": "urn:uuid:3b13ceee-0cec-145f-7a54-48a0db7e0200",
+  "serialNumber": "urn:uuid:fe2d05b3-324f-539a-8171-2a439b33d04a",
   "specVersion": "1.6",
   "version": 1
 }

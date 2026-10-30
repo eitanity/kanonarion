@@ -635,21 +635,17 @@ func NewContainerFrom(st *storage.Storage, storeRoot, goproxy, goBinary string, 
 	// cache keyed on it, so every stored document of a previous shape simply
 	// stops being reachable and is regenerated on demand.
 	//
-	// 0.10.0 adds a kind of component the document could not previously contain.
-	// A cgo module ships C source inside its own zip and compiles it into the
-	// binary; where that library has been identified, it is now emitted as a
-	// pkg:generic component carrying the declaration it was read from, with a
-	// dependency edge from the Go module that ships it. A 0.9.0 document of the
-	// same walk lists the Go module and not the library inside it, so it
-	// understates what the binary contains and may not be served for a 0.10.0
-	// request. A walk with no identified native component produces byte-identical
-	// bytes either way.
+	// 0.11.0 drops kanonarion's internal state from the document (pipeline
+	// versions, status enums, explanatory prose), names the binary's release as
+	// the tool and annotator version, renames the build platform to the
+	// registered cdx:gomod names, keys serialNumber on the document's content and
+	// writes metadata.timestamp only when --generated-at supplies one. A 0.10.0
+	// document states the internal fields, so it may not be served for a 0.11.0
+	// request.
 	//
-	// The preceding bump, for the record: 0.9.0 built a component's external
-	// references only from what the fetch ledger recorded, instead of assembling
-	// them from the module path, and carried the subject's --main-version and
-	// --main-license stamp into the subject's own entry in the component list.
-	const sbomPipelineVersion = "0.10.0"
+	// The preceding bump, for the record: 0.10.0 added identified native
+	// libraries as pkg:generic components.
+	const sbomPipelineVersion = "0.11.0"
 	// Built here rather than with the other native wiring below, because the SBOM
 	// use case reads it: a C library a cgo module ships inside its own zip is part
 	// of what the binary contains, so it belongs in the document that lists what
@@ -657,7 +653,7 @@ func NewContainerFrom(st *storage.Storage, storeRoot, goproxy, goBinary string, 
 	nativeStore := st.Native
 	generateSBOMUC := sbomapp.NewGenerateSBOMUseCase(
 		walkStore, licStore, sbomStore,
-		sbomcdx.New(sbomPipelineVersion),
+		sbomcdx.New(resolveVersion()),
 		sbomPipelineVersion, licapp.PipelineVersion, logger,
 	).WithVendorTree(sbomvendortree.New(venlocalfs.New(nil))).
 		// What a component's external references may assert. Without it a

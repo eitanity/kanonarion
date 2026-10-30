@@ -3,7 +3,8 @@
 Generate and inspect Software Bills of Materials (SBOMs) for walks.
 SBOMs are produced in CycloneDX 1.6 JSON format and are deterministic:
 the same walk, licence and `--generated-at` inputs always produce byte-identical
-output.
+output, with the same `serialNumber`. Any other document gets a different one: the
+serial is an RFC 4122 version-5 UUID over the document's content.
 
 > **The document is an inventory.** It describes components, their identity,
 > hashes, licences and dependency graph. It carries **no `vulnerabilities` list**
@@ -44,14 +45,12 @@ artefact's verification.
 What it carries:
 
 - **`evidence`** — the CycloneDX evidence block. `identity` states the concluded
-  version, the technique (`source-code-analysis`) and the verbatim declaration;
-  `occurrences` names every file it was read in, prefixed by the host module.
+  version, the technique (`source-code-analysis`, confidence `1`) and the
+  verbatim declaration; `occurrences` names every file it was read in, prefixed
+  by the host module.
 - **`properties`** — `kanonarion:component:native = true`, one
-  `kanonarion:native:host_module` per Go module whose artefact ships it, the
-  verified zip it was read from (`kanonarion:native:host_artefact`), the
-  detection generation, `kanonarion:native:confidence`, and two statements of
-  what was **not** established: `kanonarion:native:advisories_searched = false`
-  and `kanonarion:native:licence_determined = false`.
+  `kanonarion:native:host_module` per Go module whose artefact ships it, and the
+  verified zip it was read from (`kanonarion:native:host_artefact`).
 - **A `dependencies` edge** from the Go module that ships it, so a consumer
   walking the graph from the subject reaches it.
 
@@ -78,10 +77,9 @@ caveat injected into the document would be a claim the format does not support.
 
 **A native component's licence is not counted.** The licence pipeline reads the
 LICENSE files of a Go module's artefact; a library inside one of those artefacts
-was never in its scope. So it is excluded from the licence-completeness
-annotation and from the non-zero exit that gate produces — otherwise the command
-would fail with a remedy that cannot change the outcome. The component states
-its own undetermined licence on itself.
+was never in its scope. The licence-completeness annotation names it, but it does
+not set the non-zero exit, which would name a remedy that cannot change the
+outcome.
 
 **The SBOM still asserts no vulnerabilities.** This adds a component, not a
 finding. Whether that component's advisories were searched is reported by
@@ -128,48 +126,34 @@ in addition to the flat component list, carries:
   identity. See below.
 - **A vendor scope statement**, whenever the walk was rooted at a project that
   carries a `vendor/` tree. See below.
-- **Metadata properties stating what `metadata.timestamp` means** and, separately,
-  the newest licence extraction time among the document's inputs. See
-  [Document timestamp](#document-timestamp).
+- **The build platform** as `metadata.properties`: `cdx:gomod:build:env:GOOS`,
+  `GOARCH` and `GOVERSION`, plus `kanonarion:build:goarm` on `arm` and the
+  TinyGo frame where set.
+- **The generator**: `metadata.tools` and every annotation's annotator name
+  `kanonarion` at the version `kanonarion --version` prints.
 
 ### Document timestamp
 
-`metadata.timestamp` is what CycloneDX defines it to be: when the document was
-created. Pass `--generated-at <RFC3339>` to supply that moment. Two generations
-with the same `--generated-at` and the same store inputs are byte-identical; two
-with different values differ only in that field.
+`metadata.timestamp` is when the document was created, so it is present only when
+you pass `--generated-at <RFC3339>`. The generator reads no clock: without the
+flag the document has no `metadata.timestamp`. Two generations with the same
+`--generated-at` and the same store inputs are byte-identical; two with
+different values differ in that field and the serial.
 
-The generator reads no clock of its own — one that did could not re-emit a
-document byte for byte from the same recorded inputs. With no `--generated-at`,
-the document falls back to the newest licence extraction time among its inputs
-and says so, rather than presenting a derived value as a creation time:
+A document generated with `--generated-at` is not stored, because the value is
+not part of the cache key; a later `sbom` without the flag never receives it.
 
-```json
-"metadata": {
-  "timestamp": "2026-07-29T04:44:15Z",
-  "properties": [
-    { "name": "kanonarion:document:timestamp_basis",
-      "value": "derived: newest licence extraction time among this document's inputs; no creation time was supplied, and this generator reads no clock" },
-    { "name": "kanonarion:licence:newest_extraction", "value": "2026-07-29T04:44:15Z" }
-  ]
-}
-```
-
-With `--generated-at`, `kanonarion:document:timestamp_basis` reads
-`caller-supplied document creation time`. `kanonarion:licence:newest_extraction`
-is emitted either way, so a reader never has to work out whether the timestamp is
-the extraction time.
-
-A supplied `--generated-at` bypasses the SBOM cache: the value is not part of the
-cache key, so a cached document would answer with another generation's timestamp.
+CycloneDX requires a timestamp on every annotation. Without `--generated-at`, an
+annotation carries the newest licence extraction time among the document's
+inputs.
 
 ### Licence completeness in the document
 
 A component carrying no `licenses` block is one whose licence kanonarion could
 not determine — no licence file was found for it, or the files found match no
-known SPDX licence text. Whenever a document carries any such component, it says
-so where a reader meets the component list, as a CycloneDX `annotation` whose
-`subjects` name each of them:
+known SPDX licence text — or a native component. Whenever a document carries any
+such component, it says so as a CycloneDX `annotation` whose `subjects` name each
+of them:
 
 ```json
 {
@@ -177,7 +161,7 @@ so where a reader meets the component list, as a CycloneDX `annotation` whose
     "bom-ref": "kanonarion:licence-completeness",
     "subjects": ["pkg:golang/github.com/example/mod@v1.0.0"],
     "annotator": { "component": { "type": "application", "name": "kanonarion" } },
-    "text": "Licence completeness of this document: 1 of the 19 component(s) inventoried here carry no licence identity ... It is not a statement that the component is unlicensed, and it must not be read as permission to use it: ..."
+    "text": "Licence completeness of this document: 1 of the 19 component(s) inventoried here carry no licence identity, and are named as this annotation's subjects. It is not a statement that a component is unlicensed: ..."
   }]
 }
 ```
@@ -237,21 +221,6 @@ comma-separated) and, when a package holds files of both, `kanonarion:tinygo:mix
 (`pkg:file,file;pkg:file`, naming the files Go supplies). The `stdlib` component
 gains `kanonarion:stdlib:packages`: the standard packages Go supplies.
 
-When the walk checked TinyGo's source (see
-[the TinyGo walk](walk.md#declaring-a-tinygo-target---tinygo)), the component
-also carries the result, under `kanonarion:tinygo:custody:`:
-
-- `module`, `module_verification`, `verified_by_module`;
-- `release_asset`, `release_outcome`, `release_published_sha256`,
-  `release_observed_sha256` and `release_measured_at`, each only when the walk
-  reached it;
-- `verified_by_release`;
-- `differs_from_module` and `differs_from_release`: the differing files,
-  comma-separated, present only when a file differs;
-- `not_established`, once per reason: `<reason>: <file>,<file>`;
-- `anchor_limitation`: one sentence saying what the files were checked against
-  and with what result, written from what the walk reached.
-
 The TinyGo component carries no hashes, licence or external references. It is
 therefore named in the licence-completeness statement like any component with
 no licence identity.
@@ -277,35 +246,20 @@ equivalent, necessarily different-anchored chain and emits it on the component:
 - **`hashes`** — `SHA-256`/`SHA-384`/`SHA-512` over the canonical
   `go{VERSION}.src.tar.gz` acquired from `https://go.dev/dl/`. The `SHA-256`
   equals the checksum Go publishes for that tarball.
-- **`externalReferences`** — the `go.dev/dl` source tarball (`distribution`), the
+- **`externalReferences`** — the `go.dev/dl` source tarball (`distribution`),
+  whose `hashes` carry the `SHA-256` Go publishes for it, the
   `go.googlesource.com/go` repository (`vcs`), and a second `vcs` reference whose
   comment records the release tag → commit.
 - **`licenses`** — `BSD-3-Clause`, **extracted from the tarball's `LICENSE`
   file**, not asserted from a constant.
-- **`properties`** — `kanonarion:stdlib:verification`
-  (`VerifiedGoDevChecksum` when the tarball SHA-256 matched the published
-  checksum), `kanonarion:stdlib:verification_detail`,
-  `kanonarion:stdlib:published_sha256`, and `kanonarion:stdlib:anchor_limitation`.
-
-`anchor_limitation` states what this component's integrity actually rests on. It
-is **derived from the verification status the measurement reached**, not a fixed
-sentence: it names the anchor that was established, says separately whether the
-`go.googlesource.com/go` tag/commit anchor was established, and ends with the
-ceiling that holds on every route — weaker than a module's sumdb
-transparency-log entry, and never present in the project's `go.sum`. So a
-document generated offline says integrity rests on the locally-held toolchain
-source with the published checksum not consulted, and a connected one names the
-published checksum it matched. A status this build does not recognise names no
-anchor at all. The verification status is deliberately distinct from the module
-sumdb statuses so the two are never read as equivalent.
 
 The tarball is acquired once per Go version and cached; `--force` re-acquires and
 re-verifies it. On a fully offline run (`--from-modcache`) the offline acquirer
-runs instead: it anchors to the installed toolchain's `$GOROOT/src` and
-`$GOROOT/LICENSE`, records `VerifiedLocalToolchain`, and consults neither
-go.dev/dl nor googlesource. Skipping VCS cross-verification (`--skip-vcs-verify`)
-omits the commit anchor but keeps the checksum verification, and the limitation
-property says so.
+runs instead: it reads the installed toolchain's `$GOROOT/src` and
+`$GOROOT/LICENSE` and consults neither go.dev/dl nor googlesource. The
+component then carries no `hashes` and no `distribution` reference: there is no
+published artefact to hash. Skipping VCS cross-verification (`--skip-vcs-verify`) omits the commit
+anchor but keeps the checksum verification.
 
 Both anchors are recorded per measurement, and a read composes them by strength
 rather than recency: once a connected run has recorded `VerifiedGoDevChecksum`
@@ -346,7 +300,7 @@ re-run when `--force` is passed.
 | `--force` | `false` | Re-generate even if a cached SBOM exists |
 | `--target` | _(this host's platform)_ | Build target as `GOOS/GOARCH`, e.g. `wasip1/wasm`. Both the `--package` allow-list and the project walk are resolved for this platform, so the closure matches the binary built for it. Unknown pairs are refused against `go tool dist list`. `--goos`/`--goarch` set the two halves separately. See [Declaring the build target](walk.md#declaring-the-build-target---target). |
 | `--tinygo` | _(none)_ | TinyGo target, e.g. `pico` or `wasip1`, as the `tinygo` command on `PATH` defines it. Mutually exclusive with `--target`, `--goos` and `--goarch`. See [Declaring a TinyGo target](walk.md#declaring-a-tinygo-target---tinygo). |
-| `--generated-at <time>` | _(derived)_ | RFC3339 time the document is being created; becomes `metadata.timestamp`. Omitted, the document is stamped with the newest licence extraction time among its inputs and says so. Supplying it bypasses the cache |
+| `--generated-at <time>` | _(none)_ | RFC3339 time the document is being created; becomes `metadata.timestamp`. Omitted, the document has no `metadata.timestamp`. Supplying it bypasses the cache, and the document is not stored |
 | `--operator` | _(empty)_ | Identity of the operator requesting generation |
 | `--stdlib-from-gomod` | `false` | Version the `stdlib` component from the `go.mod` directive, not the live toolchain. Applies when `sbom` builds a project walk (`--package` with no walk id); refused by name when a walk id is given, because that walk's `stdlib` node is already pinned. See [Standard-library version](walk.md#standard-library-version---stdlib-from-gomod). |
 | `--package <pattern>` | _(none)_ | Go package pattern (e.g. `./cmd/foo`); scopes `components` to modules in that binary's import closure |
@@ -399,7 +353,7 @@ Because nothing is stored, the `ID:` and `Content-Hash:` lines printed under
 answers with the stored one instead. The run says so on stderr:
 
 ```
-note: --main-version/--main-license name this document's subject, so it was
+note: --main-version/--main-license/--generated-at name this document, so it was
 generated now and not stored; the stored SBOM for walk <walk-id> is unchanged
 ```
 
@@ -466,9 +420,8 @@ measured at **48 ms** for a 128-module walk, rather than a regeneration.
 Use `--force` to bypass the cache. `--generated-at`, `--main-version` and
 `--main-license` also bypass it: none of the three is part of the key, so a
 stored document would answer under a timestamp or a subject the caller did not
-ask for. Scoped (`--package`) results, and results with a `--main-version` or
-`--main-license` subject stamp, are never cached — they are generated on the
-spot and not written back.
+ask for. Scoped (`--package`) results, and results with any of the three, are
+never cached — they are generated on the spot and not written back.
 
 ### Assurance log
 
@@ -478,7 +431,7 @@ handing a stored one back are appended to the append-only assurance log
 
 | Event | When | Payload |
 |---|---|---|
-| `sbom_generated` | a document was produced and its record persisted | record id, walk id, format, pipeline version, the document's content hash, and whether the creation timestamp was caller-supplied (`--generated-at`) |
+| `sbom_generated` | a document was produced and its record persisted | record id, walk id, format, pipeline version, the document's content hash, and `caller_supplied_timestamp` (always `false`: a `--generated-at` document is not stored) |
 | `sbom_served` | a stored document was handed back from the cache | the record served (id, walk id, format, pipeline version, content hash) and `requested_by`, the `--operator` of *this* request |
 
 The two are separate types on purpose: a reader must be able to tell a document
@@ -495,9 +448,9 @@ of the artefact.
 
 A `--package` run appends nothing: the result is ephemeral (no cache lookup, no
 record persisted), and the events state that a record exists. A run with
-`--main-version` or `--main-license` is ephemeral for the same reason and
-likewise appends nothing. `--force` and `--generated-at` skip the cache but
-still persist, so they append `sbom_generated` rather than `sbom_served`.
+`--main-version`, `--main-license` or `--generated-at` is ephemeral for the same
+reason and likewise appends nothing. `--force` skips the cache but still
+persists, so it appends `sbom_generated` rather than `sbom_served`.
 `sbom-show` and `sbom-list` read stored records and append nothing.
 
 ### Licence completeness
