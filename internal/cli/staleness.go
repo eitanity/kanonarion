@@ -52,8 +52,9 @@ func privateModulePath(path string) bool {
 // newer-major probe, which asks about paths that are not in the build list at
 // all and which no batched answer can contain.
 func newGomodStalenessResolver(latest staleports.LatestResolver, ledger staleports.Ledger,
-	ttl time.Duration, fresh bool, gomodPath, goproxy string, coords []staleports.PinnedModule) *staleapp.Resolver {
+	ttl time.Duration, fresh bool, gomodPath, goproxy string, coords []staleports.PinnedModule, local localScope) *staleapp.Resolver {
 	return newStalenessResolver(latest, ledger, ttl, fresh).
+		WithLocal(local.has).
 		WithPrivate(privateModulePath, stalegolist.NewPrivate(filepath.Dir(gomodPath), goproxy)).
 		WithBatch(stalegolist.New(filepath.Dir(gomodPath), goproxy), coords,
 			activeConfig.Staleness.ProbeConcurrency)
@@ -140,6 +141,10 @@ const (
 	// compiles, and the requirement's own latest is not an answer about this
 	// build, because no published version is adopted while the directive stands.
 	stalenessLocalReplace = "local_replace"
+	// stalenessLocalWorkspaceMember: the module is a go.work member, compiled
+	// from its directory in the workspace; as for a local replace, nothing
+	// published answers for it.
+	stalenessLocalWorkspaceMember = "local_workspace_member"
 	// stalenessPrivateModule: the module matches GOPRIVATE/GONOPROXY, so no
 	// proxy is asked about it, and the go command, asked as the user, did not
 	// resolve its latest version.
@@ -169,6 +174,8 @@ func stalenessUnmeasuredLabel(reason string) string {
 		return "unmeasured (not asked)"
 	case stalenessLocalReplace:
 		return "unmeasured (local replace)"
+	case stalenessLocalWorkspaceMember:
+		return "unmeasured (workspace member)"
 	case stalenessPrivateModule:
 		return "unmeasured (private module)"
 	}

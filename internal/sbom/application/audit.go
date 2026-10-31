@@ -17,11 +17,11 @@ import (
 // A package-scoped (--package) request persists nothing and so never reaches
 // here: the event says a record was written, and emitting for an ephemeral
 // document would put a record in the log that no store holds.
-func emitSBOMGenerated(sink ports.AuditSink, record domain.SBOMRecord, callerSuppliedTimestamp bool) error {
+func emitSBOMGenerated(sink ports.AuditSink, record domain.SBOMRecord) error {
 	if sink == nil {
 		return nil
 	}
-	if err := sink.RecordEvent(sbomGeneratedEvent(record, callerSuppliedTimestamp)); err != nil {
+	if err := sink.RecordEvent(sbomGeneratedEvent(record)); err != nil {
 		return fmt.Errorf("recording sbom generated audit event: %w", err)
 	}
 	return nil
@@ -47,15 +47,15 @@ func emitSBOMServed(sink ports.AuditSink, record domain.SBOMRecord, requestedBy 
 // document.
 //
 // The payload identifies the artefact — which walk it describes, in which
-// format, under which pipeline version, and the hash of the bytes produced —
-// and states whether the caller supplied the document's creation time, because
-// a caller-supplied time bypasses the cache and is the one input that makes two
-// otherwise identical requests produce different documents. It carries none of
+// format, under which pipeline version, and the hash of the bytes produced. A
+// document with a caller-supplied creation time is never stored, so
+// caller_supplied_timestamp is false on every event and kept so the payload
+// shape does not change for a log reader. It carries none of
 // the document's own claims: the component list, the licences and the
 // completeness statements are the DOCUMENT's, and the content hash is what
 // reaches them. Restating them here would make the log an unsealed second copy
 // of the artefact rather than a witness that the artefact was made.
-func sbomGeneratedEvent(record domain.SBOMRecord, callerSuppliedTimestamp bool) audit.Event {
+func sbomGeneratedEvent(record domain.SBOMRecord) audit.Event {
 	return audit.Event{
 		Type: audit.EventSBOMGenerated,
 		Payload: map[string]any{
@@ -64,7 +64,7 @@ func sbomGeneratedEvent(record domain.SBOMRecord, callerSuppliedTimestamp bool) 
 			"format":                    string(record.Format),
 			"pipeline_version":          record.PipelineVersion,
 			"content_hash":              record.ContentHash,
-			"caller_supplied_timestamp": callerSuppliedTimestamp,
+			"caller_supplied_timestamp": false,
 		},
 	}
 }

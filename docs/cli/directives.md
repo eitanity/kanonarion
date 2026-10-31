@@ -87,11 +87,12 @@ stocked store reads differently from a store nothing has ever been scanned into:
 $ kanonarion directives list --project example.com/typo
 no directive scan matched project "example.com/typo" — the value is compared for exact equality
 against the project module path of all 7 directive scan(s) in the store
-  to list every directive scan: kanonarion directives list --project <module-path>
+  to list one project's directive scan(s): kanonarion directives list --project example.com/proj
+  or: kanonarion directives list --project example.com/svc
 ```
 
-Every read is keyed on a project, so there is no invocation that lists the store
-unfiltered; the remedy names the `--project` slot instead.
+Every read is keyed on a project, so the remedy is one listing per project the
+store holds scans of, up to three.
 
 One scan is read by id, and two are compared by id:
 
@@ -100,7 +101,7 @@ kanonarion directives show <scan-id>
 kanonarion directives diff <scan-id-a> <scan-id-b>
 ```
 
-`directives show` answers a scan id it does not hold the same way `list` does, on
+`directives show` and `diff` answer a scan id they do not hold as `list` does, on
 one line, exiting `4`.
 
 ## Scope notes
@@ -108,8 +109,6 @@ one line, exiting `4`.
 - The scan records each replace's `reachability_target` (the module/local path
   whose code actually compiles). Re-targeting walk/callgraph reachability to
   it is a planned follow-up.
-- The scan-to-scan directive diff (added/removed change events) is available
-  via `directives diff`.
 - Resolved versions used for `exclude` newer/older come from the project
   `go.mod` require set; full MVS-closure resolution is a planned follow-up.
 

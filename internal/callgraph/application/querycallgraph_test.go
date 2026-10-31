@@ -252,3 +252,20 @@ func TestQueryCallGraphUseCase_TraverseCallees(t *testing.T) {
 		t.Error("an unbounded traversal reported itself truncated")
 	}
 }
+
+// AnalysedVersions is what puts the version in reach of both builders.
+func TestAnalysedVersions_IsNewestFirstAndDeduplicated(t *testing.T) {
+	coords := []cgports.CallGraphCoordinate{
+		{ModulePath: "example.com/a", ModuleVersion: "v1.9.0"},
+		{ModulePath: "example.com/b", ModuleVersion: "v2.0.0"},
+		{ModulePath: "example.com/a", ModuleVersion: "v1.10.0"},
+		{ModulePath: "example.com/a", ModuleVersion: "v1.9.0", PipelineVersion: "0.5.0"},
+	}
+	got := application.AnalysedVersions("example.com/a", coords)
+	if len(got) != 2 || got[0] != "v1.10.0" || got[1] != "v1.9.0" {
+		t.Errorf("got %v, want [v1.10.0 v1.9.0] — a text sort ranks v1.9.0 above v1.10.0", got)
+	}
+	if application.AnalysedVersions("example.com/absent", coords) != nil {
+		t.Error("a module with no analysed version reported one")
+	}
+}

@@ -1,12 +1,12 @@
 package cli
 
 import (
+	"code.eitanity.com/kanonarion/internal/composition/cgchild"
 	"context"
 	"fmt"
 	"io"
 	"strings"
 
-	"code.eitanity.com/kanonarion/internal/adapters/goenv"
 	cgapp "code.eitanity.com/kanonarion/internal/callgraph/application"
 	cgdomain "code.eitanity.com/kanonarion/internal/callgraph/domain"
 	"code.eitanity.com/kanonarion/internal/coordinate"
@@ -90,83 +90,9 @@ func toFrameJSON(f cgdomain.BuildFrame) *frameJSON {
 	}
 }
 
-// walkFrameMatches reports whether a walk's build environment is the frame f.
-// A standard walk records no GOARM, so GOARM is compared only where the walk
-// states one.
-func walkFrameMatches(env walkdomain.BuildEnv, f cgdomain.BuildFrame) bool {
-	if env.GOOS != f.GOOS || env.GOARCH != f.GOARCH || env.TinyGoTarget != f.TinyGoTarget {
-		return false
-	}
-	return env.GOARM == "" || env.GOARM == f.GOARM
-}
-
-// walkFrameText names a walk's frame in the spelling a record uses.
-func walkFrameText(env walkdomain.BuildEnv) string {
-	if env.TinyGoTarget != "" {
-		return walkdomain.TinyGoFrameText(env.TinyGoTarget, env.GOOS, env.GOARCH)
-	}
-	return env.GOOS + "/" + env.GOARCH
-}
-
-// adoptWalkFrame makes the walk --from-walk names the extraction frame.
-//
-// A declared frame that disagrees with the walk is refused by name: the build
-// list is a property of that walk's frame, and analysing it under another would
-// record a graph of a build nobody resolved. With no declaration the walk's
-// frame is adopted, and a non-host one is announced.
-func adoptWalkFrame(ctx context.Context, ctr *Container, coord coordinate.ModuleCoordinate, walkID string, declared bool, stderr io.Writer) error {
-	// The standard library resolves no build list, so a walk names no frame for it.
-	if walkID == "" || coord.IsStdlib() {
-		return nil
-	}
-	rec, err := ctr.QueryWalks.GetWalk(ctx, walkID)
-	if err != nil {
-		return fmt.Errorf("--from-walk: loading walk %q: %w", walkID, err)
-	}
-	env := rec.Graph.BuildEnv
-	if env.GOOS == "" || env.GOARCH == "" {
-		// A walk that resolved no platform names no frame to adopt or contradict.
-		return nil
-	}
-	current := invocationFrame()
-	if walkFrameMatches(env, current) {
-		return nil
-	}
-	if declared {
-		return &exitError{code: ExitConfig, msg: fmt.Sprintf(
-			"walk %s was resolved for %s, and this invocation declares %s; the build list is that walk's, "+
-				"so declare its frame or drop the flag:\n  kanonarion callgraph %s --from-walk %s%s",
-			walkID, walkFrameText(env), current, coord, walkID, walkFlagSpelling(env))}
-	}
-	if err := adoptBuildEnv(ctx, env); err != nil {
-		return err
-	}
-	_, _ = fmt.Fprintf(stderr, "notice: walk %s was resolved for %s, so the analysis runs under that frame\n",
-		walkID, walkFrameText(env))
-	return nil
-}
-
-// walkFlagSpelling is the declaration that names a walk's frame.
-func walkFlagSpelling(env walkdomain.BuildEnv) string {
-	if env.TinyGoTarget != "" {
-		return " --tinygo " + env.TinyGoTarget
-	}
-	return " --target " + env.GOOS + "/" + env.GOARCH
-}
-
-// adoptBuildEnv sets the invocation's declaration from a walk's frame. A TinyGo
-// frame is asked of the tinygo command again: its GOROOT is this host's, and
-// the walk does not record it.
+// adoptBuildEnv sets the invocation's declaration from a walk's frame.
 func adoptBuildEnv(ctx context.Context, env walkdomain.BuildEnv) error {
-	if env.TinyGoTarget != "" {
-		return resolveTinyGoTarget(ctx, env.TinyGoTarget)
-	}
-	t, err := goenv.NewTarget(env.GOOS, env.GOARCH)
-	if err != nil {
-		return fmt.Errorf("the walk's frame: %w", err)
-	}
-	declare(t, goenv.TinyGo{})
-	return nil
+	return asExitError(cgchild.AdoptBuildEnv(ctx, env, declare))
 }
 
 // frameReanalysis is the re-analysis line for coord under this invocation's

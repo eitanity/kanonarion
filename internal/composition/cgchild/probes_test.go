@@ -1,4 +1,4 @@
-package cli
+package cgchild
 
 import (
 	"context"
@@ -15,7 +15,7 @@ import (
 // ever cache.
 func TestGoToolchainVersionProbe_AnswersOnThisBox(t *testing.T) {
 	dir := t.TempDir()
-	version, err := goToolchainVersionProbe(context.Background(), dir, nil)
+	version, err := GoToolchainVersionProbe(context.Background(), dir, nil)
 	if err != nil {
 		t.Fatalf("the real toolchain probe failed in an environment running the test suite: %v", err)
 	}
@@ -54,14 +54,14 @@ func TestGoToolchainVersionProbe_AsksTheGivenDirectory(t *testing.T) {
 
 	t.Setenv("PATH", binDir)
 
-	version, err := goToolchainVersionProbe(context.Background(), usable, nil)
+	version, err := GoToolchainVersionProbe(context.Background(), usable, nil)
 	if err != nil {
 		t.Fatalf("the probe failed in a directory whose toolchain resolves: %v", err)
 	}
 	if version != "go1.0.0" {
 		t.Errorf("the probe reported %q; the stand-in named go1.0.0", version)
 	}
-	if _, err := goToolchainVersionProbe(context.Background(), unusable, nil); err == nil {
+	if _, err := GoToolchainVersionProbe(context.Background(), unusable, nil); err == nil {
 		t.Error("the probe reported a usable toolchain for a directory that cannot resolve one")
 	}
 }
@@ -71,7 +71,7 @@ func TestGoToolchainVersionProbe_AsksTheGivenDirectory(t *testing.T) {
 // the suite, every recorded position falls back to the host's own absolute paths
 // and the build cache goes back inside the seal.
 func TestGoSourceDirsProbe_AnswersOnThisBox(t *testing.T) {
-	dirs, err := goSourceDirsProbe(context.Background(), t.TempDir(), nil)
+	dirs, err := GoSourceDirsProbe(context.Background(), t.TempDir(), nil)
 	if err != nil {
 		t.Fatalf("the real source-dirs probe failed in an environment running the test suite: %v", err)
 	}
@@ -101,7 +101,7 @@ func TestGoSourceDirsProbe_ReadsTheValuesInTheOrderAsked(t *testing.T) {
 	}
 	t.Setenv("PATH", binDir)
 
-	dirs, err := goSourceDirsProbe(context.Background(), t.TempDir(), nil)
+	dirs, err := GoSourceDirsProbe(context.Background(), t.TempDir(), nil)
 	if err != nil {
 		t.Fatalf("the probe failed against a stand-in that answered: %v", err)
 	}
@@ -125,7 +125,7 @@ func TestGoSourceDirsProbe_ShortAnswerIsRefused(t *testing.T) {
 	}
 	t.Setenv("PATH", binDir)
 
-	if dirs, err := goSourceDirsProbe(context.Background(), t.TempDir(), nil); err == nil {
+	if dirs, err := GoSourceDirsProbe(context.Background(), t.TempDir(), nil); err == nil {
 		t.Errorf("the probe accepted a two-line answer as three directories: %+v", dirs)
 	}
 }
@@ -141,7 +141,7 @@ func TestGoSourceDirsProbe_UnusableToolchainIsReported(t *testing.T) {
 	}
 	t.Setenv("PATH", binDir)
 
-	if _, err := goSourceDirsProbe(context.Background(), t.TempDir(), nil); err == nil {
+	if _, err := GoSourceDirsProbe(context.Background(), t.TempDir(), nil); err == nil {
 		t.Error("the probe named roots from a toolchain that could not run")
 	}
 }
@@ -154,7 +154,7 @@ func TestGoSourceDirsProbe_UnusableToolchainIsReported(t *testing.T) {
 // wearing a different hat.
 func TestGoSourceDirsProbe_AnswersUnderTheGivenEnvironment(t *testing.T) {
 	cache := t.TempDir()
-	dirs, err := goSourceDirsProbe(context.Background(), t.TempDir(), append(os.Environ(), "GOCACHE="+cache))
+	dirs, err := GoSourceDirsProbe(context.Background(), t.TempDir(), append(os.Environ(), "GOCACHE="+cache))
 	if err != nil {
 		t.Fatalf("the probe failed under an environment naming a build cache: %v", err)
 	}

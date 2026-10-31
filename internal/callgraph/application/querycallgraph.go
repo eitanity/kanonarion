@@ -17,8 +17,20 @@ import (
 )
 
 // QueryCallGraphUseCase provides read-only access to stored call graph records.
+// Every method that takes a pipeline version reads PipelineVersion when given
+// an empty one.
 type QueryCallGraphUseCase struct {
 	store cgports.CallGraphStore
+}
+
+// servedPipeline is pv, or PipelineVersion when pv is empty. No generation is
+// stored at an empty version, so an empty one would read nothing and answer as
+// if nothing were recorded.
+func servedPipeline(pv string) string {
+	if pv == "" {
+		return PipelineVersion
+	}
+	return pv
 }
 
 // NewQueryCallGraphUseCase constructs a QueryCallGraphUseCase.
@@ -28,6 +40,7 @@ func NewQueryCallGraphUseCase(store cgports.CallGraphStore) *QueryCallGraphUseCa
 
 // GetCallGraphRecord retrieves the call graph record for a module coordinate.
 func (uc *QueryCallGraphUseCase) GetCallGraphRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (domain.CallGraphRecord, bool, error) {
+	pipelineVersion = servedPipeline(pipelineVersion)
 	rec, found, err := uc.store.GetCallGraphRecord(ctx, coord, pipelineVersion)
 	if err != nil {
 		return domain.CallGraphRecord{}, false, fmt.Errorf("getting call graph record for %s: %w", coord, err)
@@ -50,6 +63,7 @@ var ErrNoCallGraphHistory = errors.New("this call graph store does not keep a re
 // survive" is a claim about a table nobody can see, and a reported
 // non-determination names two records a reader has no way to look at.
 func (uc *QueryCallGraphUseCase) CallGraphHistory(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) ([]domain.CallGraphRecord, error) {
+	pipelineVersion = servedPipeline(pipelineVersion)
 	lister, ok := uc.store.(cgports.CallGraphRecordLister)
 	if !ok {
 		return nil, ErrNoCallGraphHistory
@@ -67,6 +81,7 @@ func (uc *QueryCallGraphUseCase) CallGraphHistory(ctx context.Context, coord coo
 // back to the unscoped read — there is nothing to restrict when only one value
 // of each dimension can exist.
 func (uc *QueryCallGraphUseCase) GetCallGraphRecordFrom(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string, req domain.ComposeRequest) (domain.CallGraphRecord, bool, error) {
+	pipelineVersion = servedPipeline(pipelineVersion)
 	reader, ok := uc.store.(cgports.CallGraphSourceReader)
 	if !ok {
 		return uc.GetCallGraphRecord(ctx, coord, pipelineVersion)
@@ -86,6 +101,7 @@ func (uc *QueryCallGraphUseCase) GetCallGraphRecordFrom(ctx context.Context, coo
 // implement the read, and the caller then prints no notice rather than inventing
 // one that says the answer came from somewhere it cannot know.
 func (uc *QueryCallGraphUseCase) WorktreeRouting(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (cgports.WorktreeRouting, bool, error) {
+	pipelineVersion = servedPipeline(pipelineVersion)
 	router, ok := uc.store.(cgports.CallGraphWorktreeRouter)
 	if !ok {
 		return cgports.WorktreeRouting{}, false, nil
@@ -106,6 +122,7 @@ func (uc *QueryCallGraphUseCase) WorktreeRouting(ctx context.Context, coord coor
 // from a store that was not asked would be a claim about which record answered
 // that nothing established.
 func (uc *QueryCallGraphUseCase) ForeignModulesBuilt(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string, toolchain gotoolchain.Version) ([]domain.ForeignModule, bool, error) {
+	pipelineVersion = servedPipeline(pipelineVersion)
 	reader, ok := uc.store.(cgports.CallGraphForeignModuleReader)
 	if !ok {
 		return nil, false, nil
@@ -167,6 +184,7 @@ func (uc *QueryCallGraphUseCase) ListCallGraphCoordinates(ctx context.Context, f
 // FindCallers returns all edges where the callee matches symbolID, restricted
 // to the modules in scope (the zero ModuleSet imposes no restriction).
 func (uc *QueryCallGraphUseCase) FindCallers(ctx context.Context, symbolID, pipelineVersion string, scope coordinate.ModuleSet, opts cgports.EdgeQueryOptions) ([]cgports.CallEdgeRef, error) {
+	pipelineVersion = servedPipeline(pipelineVersion)
 	refs, err := uc.store.FindCallers(ctx, symbolID, pipelineVersion, scope, opts)
 	if err != nil {
 		return nil, fmt.Errorf("finding callers of %q: %w", symbolID, err)
@@ -177,6 +195,7 @@ func (uc *QueryCallGraphUseCase) FindCallers(ctx context.Context, symbolID, pipe
 // FindCallees returns all edges where the caller matches symbolID, restricted
 // to the modules in scope (the zero ModuleSet imposes no restriction).
 func (uc *QueryCallGraphUseCase) FindCallees(ctx context.Context, symbolID, pipelineVersion string, scope coordinate.ModuleSet, opts cgports.EdgeQueryOptions) ([]cgports.CallEdgeRef, error) {
+	pipelineVersion = servedPipeline(pipelineVersion)
 	refs, err := uc.store.FindCallees(ctx, symbolID, pipelineVersion, scope, opts)
 	if err != nil {
 		return nil, fmt.Errorf("finding callees of %q: %w", symbolID, err)
@@ -197,6 +216,7 @@ func (uc *QueryCallGraphUseCase) NotSearchedByCallees(ctx context.Context, symbo
 }
 
 func (uc *QueryCallGraphUseCase) notSearched(ctx context.Context, symbolIDs []string, pipelineVersion string, scope coordinate.ModuleSet, opts cgports.EdgeQueryOptions, callers bool) ([]cgports.UnservedCoordinate, error) {
+	pipelineVersion = servedPipeline(pipelineVersion)
 	r, ok := uc.store.(cgports.CallGraphUnservedReader)
 	if !ok {
 		return nil, nil
@@ -215,6 +235,7 @@ func (uc *QueryCallGraphUseCase) notSearched(ctx context.Context, symbolIDs []st
 // UnservedCoordinates returns those of coords with no generation at
 // pipelineVersion. A store without the capability names none.
 func (uc *QueryCallGraphUseCase) UnservedCoordinates(ctx context.Context, coords []coordinate.ModuleCoordinate, pipelineVersion string) ([]cgports.UnservedCoordinate, error) {
+	pipelineVersion = servedPipeline(pipelineVersion)
 	r, ok := uc.store.(cgports.CallGraphUnservedReader)
 	if !ok || len(coords) == 0 {
 		return nil, nil
@@ -235,7 +256,8 @@ func (uc *QueryCallGraphUseCase) UnservedCoordinates(ctx context.Context, coords
 type TraversalRequest struct {
 	// SymbolID is the root. It is never among the returned nodes.
 	SymbolID string
-	// PipelineVersion selects which generation of each module's graph answers.
+	// PipelineVersion selects which generation of each module's graph answers;
+	// empty is PipelineVersion.
 	PipelineVersion string
 	// MaxDepth is how many levels may be expanded; 0 is unlimited and is the
 	// only value that guarantees the whole closure.
@@ -463,6 +485,7 @@ func startTraversalNarration(p cgports.TraversalProgressReporter, interval time.
 // waiting. Non-empty therefore means "this is not all of them", exactly, for
 // both directions, without a second traversal to compare against.
 func (uc *QueryCallGraphUseCase) traverseTransitive(ctx context.Context, req TraversalRequest, leg traversalLeg) (TraversalResult, error) {
+	req.PipelineVersion = servedPipeline(req.PipelineVersion)
 	root := req.SymbolID
 	visited := map[string]bool{root: true}
 	queue := []string{root}

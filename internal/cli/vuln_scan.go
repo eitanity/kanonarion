@@ -340,8 +340,8 @@ func selectProjectWalkToScan(
 		return walkports.WalkSummary{}, fmt.Errorf("listing %s project walks for %s: %w", scope, coord.Path(), err)
 	}
 	if len(walks) == 0 {
-		return walkports.WalkSummary{}, fmt.Errorf("no succeeded %s project walk for %s on %s — run: kanonarion walk --gomod %s%s%s",
-			scope, coord.Path(), env, gomodPath, scopeWalkFlagHint(scope), targetFlagHint())
+		return walkports.WalkSummary{}, noProjectWalkError{fmt.Errorf("no succeeded %s project walk for %s on %s — run: kanonarion walk --gomod %s%s%s",
+			scope, coord.Path(), env, gomodPath, scopeWalkFlagHint(scope), targetFlagHint())}
 	}
 	return walks[0], nil
 }

@@ -60,9 +60,8 @@ type GenerateRequest struct {
 	// Making it an input keeps both properties: the caller holds the clock, and
 	// the same inputs still produce the same bytes.
 	//
-	// Zero means the caller supplied none. The document then falls back to the
-	// newest licence extraction time among its inputs and labels the timestamp as
-	// derived, so a reader is never told a document was created at a moment it
+	// Zero means the caller supplied none, and the document carries no metadata
+	// timestamp, so a reader is never told a document was created at a moment it
 	// was not.
 	DocumentTimestamp time.Time
 	// MainComponentVersion overrides the version stamped on the subject

@@ -19,6 +19,7 @@ import (
 
 	"code.eitanity.com/kanonarion/internal/sbom/application"
 	"code.eitanity.com/kanonarion/internal/sbom/domain"
+	sbomports "code.eitanity.com/kanonarion/internal/sbom/ports"
 	walkdomain "code.eitanity.com/kanonarion/internal/walk/domain"
 	walkports "code.eitanity.com/kanonarion/internal/walk/ports"
 )
@@ -105,7 +106,7 @@ Exit codes:
 	cmd.Flags().StringVar(&f.policyPath, "policy", "", "path to depth policy YAML (default: search for .kanonarion/policy.yaml)")
 	cmd.Flags().StringVar(&f.mainVersion, "main-version", "", "version to stamp on the SBOM subject instead of the synthetic \"local\"; use a release tag (e.g. v0.1.1) so the subject is a resolvable coordinate. It stamps both places the document describes the subject: metadata.component and the subject's own entry in the component list")
 	cmd.Flags().StringVar(&f.mainLicense, "main-license", "", "SPDX id/expression (e.g. Apache-2.0) to attach to the SBOM subject when the subject's own extraction reached no licence. It reaches the subject's entry in the component list too, which is the copy the undetermined-licence exit reads")
-	cmd.Flags().StringVar(&f.generatedAt, "generated-at", "", "RFC3339 time this document is being created (e.g. 2026-01-31T09:00:00Z); becomes metadata.timestamp. Omitted, the document is stamped with the newest licence extraction time among its inputs and says so")
+	cmd.Flags().StringVar(&f.generatedAt, "generated-at", "", "RFC3339 time this document is being created (e.g. 2026-01-31T09:00:00Z); becomes metadata.timestamp. Omitted, the document carries no metadata.timestamp")
 	registerStdlibFromGoModFlag(cmd, &f.stdlibFromGoMod)
 	registerFromModcacheFlag(cmd, &f.fromModcache)
 	registerAllowVerificationDowngradeFlag(cmd)
@@ -279,14 +280,13 @@ func sbomGenerateWith(
 		return fmt.Errorf("writing sbom to stdout: %w", err)
 	}
 
-	// A subject stamp names this document rather than the walk, so it was
-	// generated fresh and left unstored — the walk's stored SBOM still carries
-	// the subject the walk itself resolved. Say so: the operator is handed a
-	// content hash and an ID for a document the store does not hold, and a
-	// later 'sbom-show' of that ID would answer with a different document.
-	if f.mainVersion != "" || f.mainLicense != "" {
+	// A subject stamp or creation time names this document rather than the
+	// walk, so it was generated fresh and left unstored. Say so: the operator is
+	// handed a content hash and an ID for a document the store does not hold, and
+	// a later 'sbom-show' of that ID would answer with a different document.
+	if f.mainVersion != "" || f.mainLicense != "" || !generatedAt.IsZero() {
 		_, _ = fmt.Fprintf(stderr,
-			"note: --main-version/--main-license name this document's subject, so it was generated now and not stored; the stored SBOM for walk %s is unchanged\n",
+			"note: --main-version/--main-license/--generated-at name this document, so it was generated now and not stored; the stored SBOM for walk %s is unchanged\n",
 			record.WalkID)
 	}
 
@@ -357,8 +357,8 @@ func sbomPackageScope(ctx context.Context, ctr *Container, walkID string, f sbom
 }
 
 // parseGeneratedAt reads the --generated-at flag. An empty value is not an
-// error: it means the caller supplied no creation time, and the document falls
-// back to a derived timestamp it labels as derived.
+// error: it means the caller supplied no creation time, and the document
+// carries no metadata timestamp.
 func parseGeneratedAt(v string) (time.Time, error) {
 	if v == "" {
 		return time.Time{}, nil
@@ -431,17 +431,10 @@ func undeterminedLicenceSummary(content []byte, build licenceRemedyBuild) string
 	}
 	for _, c := range doc.Components {
 		// A native component — the C library a cgo module compiles in from source
-		// its own zip ships — is passed over here, and it is the same population
-		// the document's own licence-completeness annotation measures. Two
-		// reasons, and the second is the one that matters.
-		//
-		// It is not a gap in the licence extraction: that pipeline reads the
-		// LICENSE files of a Go module's artefact, and a library inside one of
-		// those artefacts was never in its scope. And this message names a remedy —
-		// analyse the project's own licence — that cannot touch it. A refusal that
-		// tells an operator to run a command which will not change the outcome is
-		// worse than the silence it replaces. The component states its own
-		// undetermined licence on itself, where the reader of the document meets it.
+		// its own zip ships — is passed over here. The licence extraction reads a
+		// Go module's LICENSE files and never covered it, so this message's remedy
+		// cannot change the outcome; the document's licence-completeness
+		// annotation names it, where the reader of the document meets it.
 		if isNativeComponentPURL(c.PackageURL) {
 			continue
 		}
@@ -468,6 +461,9 @@ func runSBOMShow(ctx context.Context, id, storeRoot string, stdout, stderr io.Wr
 	defer releaseStore(cleanup)
 
 	record, err := ctr.QuerySBOM.GetSBOMRecord(ctx, id)
+	if errors.Is(err, sbomports.ErrSBOMNotFound) {
+		return sbomRecordMiss(ctx, ctr.QuerySBOM, id, stderr)
+	}
 	if err != nil {
 		return fmt.Errorf("retrieving sbom %q: %w", id, err)
 	}
@@ -553,6 +549,34 @@ func runSBOMList(ctx context.Context, storeRoot, walkID string, jsonOut bool, st
 			r.GeneratedAt.Format("2006-01-02T15:04:05Z"))
 	}
 	return nil
+}
+
+// sbomRecordMiss answers an `sbom-show` that named an SBOM the store does not
+// hold, counted over every SBOM, since an SBOM id is not keyed on a walk.
+func sbomRecordMiss(ctx context.Context, uc QuerySBOMUseCase, id string, stderr io.Writer) error {
+	all, err := uc.ListSBOMRecords(ctx, "")
+	if err != nil {
+		return fmt.Errorf("counting sbom records for the not-found notice: %w", err)
+	}
+	scope := listZeroScope{
+		subject:     "SBOM record",
+		filterName:  "SBOM id",
+		filterValue: id,
+		field:       "SBOM id",
+		matchKind:   matchExact,
+		considered:  len(all),
+		produce:     "kanonarion sbom <walk-id>",
+		listAll:     "kanonarion sbom-list",
+	}
+	if len(all) > 0 {
+		scope.example = all[0].ID
+	}
+	if jsonOut {
+		if werr := writeListZeroNoticeJSON(stderr, scope); werr != nil {
+			return werr
+		}
+	}
+	return &exitError{code: ExitNotFound, msg: listZeroLine(scope)}
 }
 
 // sbomListZeroScope lifts the --walk filter and re-asks the store, so a zero

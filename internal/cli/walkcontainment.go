@@ -2,18 +2,18 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	cgdomain "code.eitanity.com/kanonarion/internal/callgraph/domain"
+	"code.eitanity.com/kanonarion/internal/composition/cgchild"
 	"code.eitanity.com/kanonarion/internal/coordinate"
 	walkdomain "code.eitanity.com/kanonarion/internal/walk/domain"
 	walkports "code.eitanity.com/kanonarion/internal/walk/ports"
 )
 
 // walkSearchLimit is how many of the newest walks the containment search reads.
-// It is a bound on cost — each candidate costs a whole walk record read — and
-// not a statement that older walks hold nothing.
-const walkSearchLimit = 50
+const walkSearchLimit = cgchild.WalkSearchLimit
 
 // walkContainmentRule names how a coordinate question that named no walk got
 // one, for the surfaces that have to state it.
@@ -144,26 +144,12 @@ func (e *ambiguousBuildRefusal) document(remedyFlag string) *buildListRefusalJSO
 	}
 }
 
-// ambiguousBuild builds that refusal, naming every build and the walk that
-// would answer for it.
-//
-// It refuses rather than picking the newest, on the same grounds the
-// vulnerability read does: newest is not yours. Serving whichever project was
-// walked last answers one project's question from another project's build, at
-// exit 0. The walks are named because the remedy is to pick one.
-func ambiguousBuild(coord coordinate.ModuleCoordinate, remedy string, candidates []walkports.WalkSummary) error {
-	msg := fmt.Sprintf("the store holds %s in %d builds, and this question names none:", coord, len(candidates))
-	for _, c := range candidates {
-		msg += fmt.Sprintf("\n  walk %s  rooted at %s", c.ID, c.Target)
-	}
-	msg += fmt.Sprintf(
-		"\nwhat a coordinate is surrounded by is a property of one build, so name the build you mean:"+
-			"\n  %s"+
-			"\nkanonarion walk-list lists every walk in the store", remedy)
+// ambiguityRefusal is the shared search's ambiguity as this package's refusal.
+func ambiguityRefusal(a *cgchild.Ambiguity) *ambiguousBuildRefusal {
 	return &ambiguousBuildRefusal{
-		coord:      coord,
-		candidates: candidates,
-		err:        &exitError{code: ExitConfig, msg: msg},
+		coord:      a.Coord,
+		candidates: a.Candidates,
+		err:        &exitError{code: ExitConfig, msg: a.Error()},
 	}
 }
 
@@ -201,9 +187,7 @@ func findWalkContaining(
 }
 
 // findWalkContainingIn is findWalkContaining restricted to walks resolved for
-// one build frame, when frame is non-nil. A walk that resolved no platform is in
-// no frame and stays a candidate; one resolved for another frame is passed over
-// and counted, since its build list is a different build's.
+// one build frame, when frame is non-nil: the call-graph child's search.
 func findWalkContainingIn(
 	ctx context.Context,
 	uc QueryWalksUseCase,
@@ -211,82 +195,26 @@ func findWalkContainingIn(
 	remedy string,
 	frame *cgdomain.BuildFrame,
 ) (walkContainment, error) {
-	summaries, err := uc.ListWalks(ctx, walkports.WalkFilter{Limit: truncationFetchLimit(walkSearchLimit)})
+	h, err := cgchild.FindWalkHolding(ctx, uc, coord, remedy, frame)
+	if amb, ok := errors.AsType[*cgchild.Ambiguity](err); ok {
+		return walkContainment{}, ambiguityRefusal(amb)
+	}
 	if err != nil {
-		return walkContainment{}, fmt.Errorf("listing walks: %w", err)
+		return walkContainment{}, err //nolint:wrapcheck // the search's own refusal text
 	}
-	searched, bounded := truncateList(summaries, walkSearchLimit)
-
-	var consumers, selfRooted []walkports.WalkSummary
-	framePassedOver := 0
-	held := make(map[coordinate.ModuleCoordinate]bool, len(searched))
-	for _, s := range searched {
-		if frame != nil && s.GOOS != "" && !walkFrameMatches(
-			walkdomain.BuildEnv{GOOS: s.GOOS, GOARCH: s.GOARCH, TinyGoTarget: s.TinyGoTarget}, *frame) {
-			framePassedOver++
-			continue
-		}
-		if s.Target == coord {
-			// A walk's root is a node of its own graph, so a walk rooted at the
-			// coordinate holds it by construction — known from the summary, at no
-			// record read.
-			selfRooted = append(selfRooted, s)
-			continue
-		}
-		if held[s.Target] {
-			// An older walk of a build already known to hold the coordinate can
-			// neither name a build the refusal is missing nor win the recency
-			// tiebreak, so it is not worth a record read.
-			continue
-		}
-		rec, rerr := uc.GetWalk(ctx, s.ID)
-		if rerr != nil {
-			continue
-		}
-		if !graphHolds(rec.Graph, coord) {
-			continue
-		}
-		held[s.Target] = true
-		consumers = append(consumers, s)
+	rule := walkHeldByConsumer
+	if h.SelfRootedOnly {
+		rule = walkHeldSelfRootedOnly
 	}
-
-	switch {
-	case len(consumers) > 1:
-		return walkContainment{}, ambiguousBuild(coord, remedy, consumers)
-	case len(consumers) == 1:
-		return walkContainment{
-			walkID:               consumers[0].ID,
-			rule:                 walkHeldByConsumer,
-			root:                 consumers[0].Target,
-			selfRootedPassedOver: len(selfRooted),
-			framePassedOver:      framePassedOver,
-		}, nil
-	case len(selfRooted) > 0:
-		return walkContainment{walkID: selfRooted[0].ID, rule: walkHeldSelfRootedOnly, root: coord, framePassedOver: framePassedOver}, nil
-	}
-
-	if !bounded {
-		return walkContainment{}, fmt.Errorf("no walk in this store contains %s (all %d walk(s) searched)", coord, len(searched))
-	}
-	// Only now is the store's own size worth a read: it is what turns "the
-	// search stopped" into a number the caller can act on.
-	total := len(searched)
-	if all, aerr := uc.ListWalks(ctx, walkports.WalkFilter{}); aerr == nil {
-		total = len(all)
-	}
-	return walkContainment{}, fmt.Errorf("no walk containing %s among the %d most recent walks searched — the store holds %d; "+
-		"name the walk to query with --walk-id, or list them with: kanonarion walk-list --limit 0",
-		coord, walkSearchLimit, total)
+	return walkContainment{
+		walkID: h.WalkID, rule: rule, root: h.Root,
+		selfRootedPassedOver: h.SelfRootedPassedOver, framePassedOver: h.FramePassedOver,
+	}, nil
 }
 
 // graphHolds reports whether g has coord as a node.
 func graphHolds(g walkdomain.Graph, coord coordinate.ModuleCoordinate) bool {
-	for _, node := range g.Nodes {
-		if node.Coordinate == coord {
-			return true
-		}
-	}
-	return false
+	return cgchild.GraphHolds(g, coord)
 }
 
 // statement is the line a defaulting read prints above its answer to say which

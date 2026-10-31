@@ -49,6 +49,14 @@ type DirectiveStore interface {
 	CountScans(ctx context.Context) (int, error)
 }
 
+// ScanProjectLister names the projects a DirectiveStore holds scans of, at the
+// pipeline version it serves, sorted. It is optional because the published
+// port grows only by a new optional interface; without it a scan-id miss
+// cannot name a project to list.
+type ScanProjectLister interface {
+	ListScanProjects(ctx context.Context) ([]string, error)
+}
+
 // AuditSink appends an audit event to the assurance log. The shared
 // JSONL AuditLog satisfies this; the application depends only on
 // this narrow port, not on the factstore adapter.

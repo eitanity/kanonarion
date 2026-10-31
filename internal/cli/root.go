@@ -286,6 +286,16 @@ func Run(args []string, stdout, stderr io.Writer) error {
 	return fmt.Errorf("%s%w", rootErrorPrefix, err)
 }
 
+// ExitStatus prints err as the binary reports a failed command and returns the
+// process exit code; nil prints nothing and is ExitOK.
+func ExitStatus(err error, stderr io.Writer) int {
+	if err == nil {
+		return ExitOK
+	}
+	_, _ = fmt.Fprintf(stderr, "error: %v\n", err)
+	return ExitCodeForError(err)
+}
+
 // interruptCause returns the signal that cancelled ctx, or nil when no signal
 // did.
 func interruptCause(ctx context.Context) error {

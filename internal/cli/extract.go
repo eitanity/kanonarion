@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"slices"
@@ -251,6 +252,9 @@ func newExtractShowCmd(stdout, stderr io.Writer) *cobra.Command {
 			defer releaseStore(cleanup)
 
 			run, err := ctr.QueryExtract.GetExtractionRun(cmd.Context(), args[0])
+			if errors.Is(err, ports.ErrExtractionRunNotFound) {
+				return extractionRunMiss(cmd.Context(), ctr.QueryExtract, args[0], stderr)
+			}
 			if err != nil {
 				return fmt.Errorf("failed to get extraction run: %w", err)
 			}
@@ -393,4 +397,33 @@ func extractListZeroScope(ctx context.Context, offset int, uc QueryExtractionUse
 		scope.pagedPast = fmt.Sprintf("--offset %d starts past the last one", offset)
 	}
 	return scope, nil
+}
+
+// extractionRunMiss answers an `extract show` that named a run the store does
+// not hold, with the statement every single-record selector makes: the corpus
+// counted is every run, since a run id is not keyed on a walk.
+func extractionRunMiss(ctx context.Context, uc QueryExtractionUseCase, runID string, stderr io.Writer) error {
+	all, err := uc.ListExtractionRuns(ctx, ports.ExtractionRunFilter{})
+	if err != nil {
+		return fmt.Errorf("counting extraction runs for the not-found notice: %w", err)
+	}
+	scope := listZeroScope{
+		subject:     "extraction run",
+		filterName:  "run id",
+		filterValue: runID,
+		field:       "run id",
+		matchKind:   matchExact,
+		considered:  len(all),
+		produce:     "kanonarion extract <walk-id>",
+		listAll:     "kanonarion extract list --limit 0",
+	}
+	if len(all) > 0 {
+		scope.example = all[0].ID
+	}
+	if jsonOut {
+		if werr := writeListZeroNoticeJSON(stderr, scope); werr != nil {
+			return werr
+		}
+	}
+	return &exitError{code: ExitNotFound, msg: listZeroLine(scope)}
 }

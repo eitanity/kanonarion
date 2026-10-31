@@ -81,7 +81,7 @@ kanonarion notice --gomod ./go.mod > THIRD-PARTY-LICENSES
 Generates from a stored walk record (from `kanonarion walk`).
 
 ```sh
-WALK_ID=$(kanonarion walk-list --latest-success --json | jq -r '.id')
+WALK_ID=$(kanonarion walk --gomod ./go.mod --json | jq -r '.id')
 kanonarion notice --walk-id "$WALK_ID" > THIRD-PARTY-LICENSES
 ```
 

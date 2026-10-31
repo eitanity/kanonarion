@@ -150,6 +150,21 @@ var allowedPortAliases = map[string]bool{
 	// The staleness resolver's upstream, so a consumer can supply its own and
 	// still tell an absent path from a failed lookup.
 	"LatestResolver": true, "LatestInfo": true,
+	// The types QueryCallGraphUseCase's methods take and return, so every one
+	// of them can be called from another module.
+	"CallGraphCoordinate": true, "CallGraphGeneration": true, "UnservedCoordinate": true,
+	"WorktreeRouting": true, "TraversalProgressReporter": true, "InterfaceGeneration": true,
+	// The store capabilities a backend's stores may implement, each looked for
+	// by a type assertion; FactRecordComposer is required.
+	"FactRecordComposer": true, "SupersededArtefactLister": true,
+	"CallGraphCoordinateLister": true, "CallGraphForeignModuleReader": true, "CallGraphFrontierFinder": true,
+	"CallGraphRecordLister": true, "CallGraphSourceReader": true, "CallGraphUnservedReader": true,
+	"CallGraphWorktreeRouter": true, "CallGraphIdenticalGenerationReader": true, "CallGraphWorktreeGenerationReader": true,
+	"InterfaceRecordLister": true, "InterfaceGenerationLister": true, "InterfaceIdenticalGenerationReader": true,
+	"ExampleRecordLister": true, "ExamplePipelinesHeldReader": true, "ExampleIdenticalGenerationReader": true,
+	"LicenseRecordLister": true, "LicensePipelinesHeldReader": true, "LicenseIdenticalGenerationReader": true,
+	"RoundResolver": true, "RoundAnswer": true,
+	"ScanProjectLister": true,
 }
 
 // facadeAlias is one exported type-alias declaration in the façade package.

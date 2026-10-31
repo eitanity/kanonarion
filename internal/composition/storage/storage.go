@@ -150,7 +150,8 @@ type SchemaReporter interface {
 var ErrStoreSchemaNewer = errors.New("store schema is newer than this build supports")
 
 // Validate refuses a value with any required field unset, naming all of them
-// at once so a consumer fixes the value in one pass.
+// at once so a consumer fixes the value in one pass, and a Facts store that
+// does not implement FactRecordComposer.
 func (s *Storage) Validate() error {
 	if s == nil {
 		return errors.New("storage: no storage value")
@@ -189,6 +190,11 @@ func (s *Storage) Validate() error {
 	}
 	switch len(unset) {
 	case 0:
+		// Every extraction stage and the call-graph child read fetch records
+		// through it, so a store without it fails each of them later.
+		if _, ok := s.Facts.(fetchports.FactRecordComposer); !ok {
+			return errors.New("storage: Facts does not implement FactRecordComposer (ComposeFetchRecord), which every extraction reads fetch records through")
+		}
 		return nil
 	case 1:
 		return fmt.Errorf("storage: %s is unset", unset[0])

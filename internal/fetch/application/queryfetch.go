@@ -11,6 +11,9 @@ import (
 )
 
 // QueryFetchUseCase provides read-only access to stored fetch (fact) records.
+//
+// Every method that takes a pipeline version reads PipelineVersion when given
+// an empty one.
 type QueryFetchUseCase struct {
 	store ports.FactStore
 }
@@ -24,6 +27,7 @@ func NewQueryFetchUseCase(store ports.FactStore) *QueryFetchUseCase {
 // and pipeline version — the artefact as the ledger knows it, folded from every
 // measurement of it, rather than any single row.
 func (uc *QueryFetchUseCase) GetFetchRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (domain.CompositeRecord, bool, error) {
+	pipelineVersion = servedPipeline(pipelineVersion)
 	rec, found, err := uc.store.GetFetchRecord(ctx, coord, pipelineVersion)
 	if err != nil {
 		return domain.CompositeRecord{}, false, fmt.Errorf("getting fetch record for %s: %w", coord, err)
@@ -50,4 +54,14 @@ func (uc *QueryFetchUseCase) ComposeFetchRecord(ctx context.Context, coord coord
 func (uc *QueryFetchUseCase) SupersededArtefacts(ctx context.Context, coord coordinate.ModuleCoordinate) (map[string]bool, error) {
 	//nolint:wrapcheck // SupersededArtefactsOf already names the coordinate it read
 	return ports.SupersededArtefactsOf(ctx, uc.store, coord)
+}
+
+// servedPipeline is pv, or domain.PipelineVersion when pv is empty. No record is
+// stored at an empty version, so an empty one would read nothing and answer
+// as if nothing were recorded.
+func servedPipeline(pv string) string {
+	if pv == "" {
+		return domain.PipelineVersion
+	}
+	return pv
 }

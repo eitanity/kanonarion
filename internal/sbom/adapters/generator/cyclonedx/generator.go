@@ -10,13 +10,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	"net/url"
 	"slices"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
 	cdx "github.com/CycloneDX/cyclonedx-go"
+	"github.com/google/uuid"
 
 	"code.eitanity.com/kanonarion/internal/coordinate"
 
@@ -37,20 +38,28 @@ const (
 
 // Generator produces CycloneDX 1.6 JSON SBOMs.
 type Generator struct {
-	pipelineVersion string
+	toolVersion string
 }
 
-// New returns a new Generator.
-func New(pipelineVersion string) *Generator {
-	return &Generator{pipelineVersion: pipelineVersion}
+// New returns a new Generator. toolVersion is the release of the binary
+// generating the document, which CycloneDX's tools entry and every annotator
+// name; the SBOM pipeline version stays on the stored record.
+func New(toolVersion string) *Generator {
+	return &Generator{toolVersion: toolVersion}
 }
 
 // GeneratorMetadata implements ports.SBOMGenerator.
 func (g *Generator) GeneratorMetadata() ports.GeneratorMetadata {
 	return ports.GeneratorMetadata{
 		Name:    generatorName,
-		Version: g.pipelineVersion,
+		Version: g.toolVersion,
 	}
+}
+
+// tool is the component naming this generator, as the tools entry and every
+// annotation's annotator carry it.
+func (g *Generator) tool() cdx.Component {
+	return cdx.Component{Type: cdx.ComponentTypeApplication, Name: generatorName, Version: g.toolVersion}
 }
 
 // Generate implements ports.SBOMGenerator.
@@ -107,33 +116,27 @@ func (g *Generator) buildBOM(
 	subj := resolveSubject(walk.Graph.Target, licenses, req)
 
 	bom := &cdx.BOM{
-		BOMFormat:    "CycloneDX",
-		SpecVersion:  cdx.SpecVersion1_6,
-		JSONSchema:   "http://cyclonedx.org/schema/bom-1.6.schema.json",
-		Version:      1,
-		SerialNumber: "urn:uuid:" + deterministicUUID(walk.ID, req.PipelineVersion),
+		BOMFormat:   "CycloneDX",
+		SpecVersion: cdx.SpecVersion1_6,
+		JSONSchema:  "http://cyclonedx.org/schema/bom-1.6.schema.json",
+		Version:     1,
 	}
 
-	// Metadata.
+	// Metadata. metadata.timestamp is when the BOM was created, which only a
+	// caller can say: this generator reads no clock, so without one the field is
+	// left out rather than filled with an input-derived time.
 	ts, tsDerived := documentTimestamp(walk, licenses, req)
 	bom.Metadata = &cdx.Metadata{
-		Timestamp: ts.UTC().Format(timestampFormat),
-		Tools: &cdx.ToolsChoice{
-			Components: &[]cdx.Component{
-				{
-					Type:    cdx.ComponentTypeApplication,
-					Name:    generatorName,
-					Version: req.PipelineVersion,
-				},
-			},
-		},
-		Component: subj.metadataComponent(req.PipelineVersion),
+		Tools:     &cdx.ToolsChoice{Components: &[]cdx.Component{g.tool()}},
+		Component: subj.metadataComponent(),
+	}
+	if !tsDerived {
+		bom.Metadata.Timestamp = ts.UTC().Format(timestampFormat)
 	}
 	// Record the build environment the graph was resolved for. GOOS/GOARCH gate
 	// build-constraint file selection, so the component set is only valid for this
 	// platform; a consumer must know it to reproduce or trust the SBOM.
 	props := buildEnvProperties(walk.Graph.BuildEnv)
-	props = append(props, timestampBasisProperties(tsDerived, licenceExtractionTime(licenses))...)
 	if len(props) > 0 {
 		bom.Metadata.Properties = &props
 	}
@@ -166,7 +169,7 @@ func (g *Generator) buildBOM(
 	assembled, undeterminedRefs := domain.AssembleComponents(inputs)
 	components := make([]cdx.Component, 0, len(assembled))
 	for _, c := range assembled {
-		comp := buildComponent(subj.rewrite(c.Module), c.License, c.Copyright, req.PipelineVersion,
+		comp := buildComponent(subj.rewrite(c.Module), c.License, c.Copyright,
 			digestsByRef[c.Module], stdlibFactsByRef[c.Module], originFor(req, coordByRef[c.Module]))
 		if subj.isRef(c.Module) && subj.isApplication {
 			comp.Type = cdx.ComponentTypeApplication
@@ -178,20 +181,6 @@ func (g *Generator) buildBOM(
 		}
 		components = append(components, comp)
 	}
-
-	// The licence-completeness statement below is measured over THESE components
-	// — the ones assembled from the walk graph — and the count is taken before
-	// any native component joins the list.
-	//
-	// A native component carries no licence, and it is not a gap in the licence
-	// extraction: that pipeline reads the LICENSE files of a Go module's
-	// artefact, and this component is a C library inside one of those artefacts
-	// that it never set out to cover. Counting it as undetermined would move the
-	// document's licence gate — which is a non-zero exit — onto a question with
-	// no remedy the operator could run, and a refusal that names an impossible
-	// remedy is worse than the silence it replaces. The component states its own
-	// undetermined licence on itself instead.
-	goComponentCount := len(components)
 
 	// Native components — the C libraries a cgo module ships inside its own zip
 	// and compiles into the binary. They are APPENDED after the Go components,
@@ -206,12 +195,18 @@ func (g *Generator) buildBOM(
 	natives, _ := collectNativeComponents(walk.Graph.Nodes, req.NativeRecords, func(c coordinate.ModuleCoordinate) string {
 		return modulePURL(subj.rewrite(moduleRef(c)))
 	})
+	// A native component carries no licence. It is named by the licence
+	// completeness statement, which says which components lack one, but kept out
+	// of the gate: the licence pipeline reads a Go module's LICENSE files and has
+	// no remedy that could determine a C library's licence inside one.
+	nativeRefs := make([]string, 0, len(natives))
 	for _, n := range natives {
-		comp := buildNativeComponent(n, req.PipelineVersion)
+		comp := buildNativeComponent(n)
 		if err := assertNativePURL(comp.PackageURL); err != nil {
 			return nil, nil, err
 		}
 		components = append(components, comp)
+		nativeRefs = append(nativeRefs, comp.BOMRef)
 	}
 	bom.Components = &components
 
@@ -237,15 +232,18 @@ func (g *Generator) buildBOM(
 	// Scope statements. Vendor coverage is emitted whenever a tree was read, full
 	// coverage included: an artefact that describes a smaller set than the build
 	// without saying so reads as complete. Licence completeness is emitted only
-	// when something is undetermined, because the schema requires an annotation
-	// to name its subjects and a complete document has none to name; the
-	// component list saying so of every entry is the statement in that case.
+	// when something lacks a licence, because the schema requires an annotation
+	// to name its subjects and a complete document has none to name.
+	//
+	// The schema also requires an annotation timestamp, so an annotation carries
+	// the supplied creation time or, without one, the derived instant the record
+	// is ordered by.
 	var annotations []cdx.Annotation
 	if req.VendorScope != nil {
-		annotations = append(annotations, vendorScopeAnnotation(*req.VendorScope, req.ComponentsScopedToBinary, req.PipelineVersion, ts, documentSubject(bom)))
+		annotations = append(annotations, vendorScopeAnnotation(*req.VendorScope, req.ComponentsScopedToBinary, g.tool(), ts, documentSubject(bom)))
 	}
-	if len(undetermined) > 0 {
-		annotations = append(annotations, licenceCompletenessAnnotation(undetermined, goComponentCount, req.PipelineVersion, ts))
+	if unlicensed := append(slices.Clone(undetermined), nativeRefs...); len(unlicensed) > 0 {
+		annotations = append(annotations, licenceCompletenessAnnotation(unlicensed, len(components), g.tool(), ts))
 	}
 	if len(annotations) > 0 {
 		bom.Annotations = &annotations
@@ -347,40 +345,28 @@ const licenceCompletenessBOMRef = "kanonarion:licence-completeness"
 
 // licenceCompletenessAnnotation states, where a reader meets the component list,
 // how many of this document's components carry no licence identity and which
-// they are.
+// they are. A consumer holding only the document cannot otherwise tell an absent
+// licences block from one nobody filled in.
 //
-// The console that produced the document is not where the document is read. A
-// consumer who receives only the artefact has no other way to tell a component
-// whose licence is genuinely undetermined from one whose licence nobody looked
-// for, and either reading is a licensing decision made on silence. Naming them
-// with their count makes the omission part of what the document says.
-//
-// The subjects are the undetermined components themselves, so a consumer
-// resolving "what does this document say about this component" reaches the
-// statement by bom-ref rather than having to read the whole annotation list.
-func licenceCompletenessAnnotation(undetermined []string, componentCount int, pipelineVersion string, ts time.Time) cdx.Annotation {
-	subjects := make([]cdx.BOMReference, 0, len(undetermined))
-	for _, ref := range undetermined {
+// The subjects are those components themselves, so a consumer resolving "what
+// does this document say about this component" reaches the statement by
+// bom-ref.
+func licenceCompletenessAnnotation(unlicensed []string, componentCount int, tool cdx.Component, ts time.Time) cdx.Annotation {
+	subjects := make([]cdx.BOMReference, 0, len(unlicensed))
+	for _, ref := range unlicensed {
 		subjects = append(subjects, cdx.BOMReference(ref))
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "Licence completeness of this document: %d of the %d component(s) inventoried here carry no licence identity, and are named as this annotation's subjects.",
-		len(undetermined), componentCount)
-	b.WriteString(" A component with no licences block is one whose licence kanonarion could not determine — no licence file was found for it, or the files that were found match no known SPDX licence text.")
-	b.WriteString(" It is not a statement that the component is unlicensed, and it must not be read as permission to use it:")
-	for _, ref := range undetermined {
+		len(unlicensed), componentCount)
+	b.WriteString(" It is not a statement that a component is unlicensed:")
+	for _, ref := range unlicensed {
 		fmt.Fprintf(&b, " %s;", ref)
 	}
 	return cdx.Annotation{
-		BOMRef:   licenceCompletenessBOMRef,
-		Subjects: &subjects,
-		Annotator: &cdx.Annotator{
-			Component: &cdx.Component{
-				Type:    cdx.ComponentTypeApplication,
-				Name:    generatorName,
-				Version: pipelineVersion,
-			},
-		},
+		BOMRef:    licenceCompletenessBOMRef,
+		Subjects:  &subjects,
+		Annotator: &cdx.Annotator{Component: &tool},
 		Timestamp: ts.UTC().Format(timestampFormat),
 		Text:      b.String(),
 	}
@@ -409,7 +395,7 @@ const vendorScopeBOMRef = "kanonarion:vendor-scope"
 // Every field derives from inputs the document already carries — the fixed
 // bom-ref, the domain-sorted uncovered list, the generator component and the
 // document's own clock-free timestamp — so determinism is untouched.
-func vendorScopeAnnotation(scope vendordomain.VendorScope, scopedToBinary bool, pipelineVersion string, ts time.Time, subjects []cdx.BOMReference) cdx.Annotation {
+func vendorScopeAnnotation(scope vendordomain.VendorScope, scopedToBinary bool, tool cdx.Component, ts time.Time, subjects []cdx.BOMReference) cdx.Annotation {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Scope of this document against the project's vendored tree: vendor/modules.txt lists %d module(s); this document describes %d of them.",
 		scope.TreeModules, scope.Covered)
@@ -430,15 +416,9 @@ func vendorScopeAnnotation(scope vendordomain.VendorScope, scopedToBinary bool, 
 		b.WriteString(" A package line is a package `go mod vendor` wrote under the module heading across all build constraints; it is not a count of what this build compiles.")
 	}
 	return cdx.Annotation{
-		BOMRef:   vendorScopeBOMRef,
-		Subjects: &subjects,
-		Annotator: &cdx.Annotator{
-			Component: &cdx.Component{
-				Type:    cdx.ComponentTypeApplication,
-				Name:    generatorName,
-				Version: pipelineVersion,
-			},
-		},
+		BOMRef:    vendorScopeBOMRef,
+		Subjects:  &subjects,
+		Annotator: &cdx.Annotator{Component: &tool},
 		Timestamp: ts.UTC().Format(timestampFormat),
 		Text:      b.String(),
 	}
@@ -456,13 +436,13 @@ func moduleRef(coord coordinate.ModuleCoordinate) domain.ModuleRef {
 // only thing that produces an externalReference.
 func buildComponent(
 	mod domain.ModuleRef,
-	spdx, copyright, pipelineVersion string,
+	spdx, copyright string,
 	digests fetchdomain.ArtifactDigests,
 	stdlib *walkdomain.StdlibFacts,
 	origin ports.ModuleOrigin,
 ) cdx.Component {
 	if mod.Path == walkdomain.StdlibModulePath {
-		return buildStdlibComponent(mod, spdx, pipelineVersion, digests, stdlib)
+		return buildStdlibComponent(mod, spdx, digests, stdlib)
 	}
 	purl := modulePURL(mod)
 	comp := cdx.Component{
@@ -473,7 +453,6 @@ func buildComponent(
 		PackageURL: purl,
 		Properties: &[]cdx.Property{
 			{Name: "kanonarion:ecosystem", Value: domain.EcosystemGo},
-			{Name: "kanonarion:pipeline_version", Value: pipelineVersion},
 		},
 	}
 	if refs := moduleExternalReferences(origin); refs != nil {
@@ -653,29 +632,31 @@ func buildDependencies(
 // its VCS reference and no proxy-zip distribution URL (which would 404).
 //
 // When chain-of-custody facts are present it emits the source-tarball digests as
-// <hashes>, the acquired source tarball as a distribution reference, the
-// googlesource commit as a VCS reference, and properties recording the
-// verification status and the anchor limitation — which anchors that particular
-// measurement reached, which it did not, and the ceiling that holds on every
-// route: weaker than a module's sumdb transparency-log entry, and never present
-// in the project's go.sum.
-func buildStdlibComponent(mod domain.ModuleRef, spdx, pipelineVersion string, digests fetchdomain.ArtifactDigests, facts *walkdomain.StdlibFacts) cdx.Component {
+// <hashes>, the source tarball as a distribution reference carrying the checksum
+// go.dev publishes for it, and the googlesource commit as a VCS reference.
+func buildStdlibComponent(mod domain.ModuleRef, spdx string, digests fetchdomain.ArtifactDigests, facts *walkdomain.StdlibFacts) cdx.Component {
 	purl := modulePURL(mod)
 	if spdx == "" {
 		spdx = walkdomain.StdlibLicenseSPDX
 	}
 	comp := cdx.Component{
-		BOMRef:     purl,
-		Type:       cdx.ComponentTypeLibrary,
-		Name:       mod.Path,
-		Version:    mod.Version,
-		PackageURL: purl,
-		Description: "Go standard library (toolchain-provided); not a fetched module. " +
-			"Included so vulnerability and platform coverage span the standard library.",
+		BOMRef:             purl,
+		Type:               cdx.ComponentTypeLibrary,
+		Name:               mod.Path,
+		Version:            mod.Version,
+		PackageURL:         purl,
+		Description:        "The Go standard library, provided by the Go toolchain.",
 		ExternalReferences: stdlibExternalReferences(facts),
-		Properties:         stdlibProperties(pipelineVersion, facts),
+		Properties: &[]cdx.Property{
+			{Name: "kanonarion:ecosystem", Value: domain.EcosystemGo},
+			{Name: "kanonarion:component:stdlib", Value: "true"},
+		},
 	}
-	if hashes := digestHashes(digests); hashes != nil {
+	// An offline measurement's digests are over a manifest of the local
+	// $GOROOT/src, not over any published artefact, so they cannot be checked
+	// against one and are not stated as the component's hashes.
+	offline := facts != nil && facts.VerificationStatus == string(stdlibdomain.VerifiedLocalToolchain)
+	if hashes := digestHashes(digests); hashes != nil && !offline {
 		comp.Hashes = hashes
 	}
 	comp.Licenses = &cdx.Licenses{cdx.LicenseChoice{License: &cdx.License{ID: spdx}}}
@@ -684,8 +665,9 @@ func buildStdlibComponent(mod domain.ModuleRef, spdx, pipelineVersion string, di
 
 // stdlibExternalReferences builds the stdlib component's external references:
 // always the Go source repository (VCS) and website; plus, when facts are
-// present, the canonical source-tarball distribution URL and — when resolved —
-// the googlesource commit as an additional VCS anchor.
+// present, the canonical source-tarball distribution URL with its published
+// checksum and — when resolved — the googlesource commit as an additional VCS
+// anchor.
 func stdlibExternalReferences(facts *walkdomain.StdlibFacts) *[]cdx.ExternalReference {
 	vcsURL := "https://go.googlesource.com/go"
 	if facts != nil && facts.VCSURL != "" {
@@ -696,8 +678,14 @@ func stdlibExternalReferences(facts *walkdomain.StdlibFacts) *[]cdx.ExternalRefe
 		{Type: cdx.ERTypeWebsite, URL: "https://go.dev/"},
 	}
 	if facts != nil {
-		if facts.SourceURL != "" {
-			refs = append(refs, cdx.ExternalReference{Type: cdx.ERTypeDistribution, URL: facts.SourceURL})
+		// An offline measurement records the local $GOROOT/src as its source: a
+		// path on the machine that ran it, not an address anyone can download from.
+		if isDownloadURL(facts.SourceURL) {
+			dist := cdx.ExternalReference{Type: cdx.ERTypeDistribution, URL: facts.SourceURL}
+			if facts.PublishedSHA256 != "" {
+				dist.Hashes = &[]cdx.Hash{{Algorithm: cdx.HashAlgoSHA256, Value: facts.PublishedSHA256}}
+			}
+			refs = append(refs, dist)
 		}
 		if facts.VCSCommit != "" {
 			refs = append(refs, cdx.ExternalReference{
@@ -710,34 +698,11 @@ func stdlibExternalReferences(facts *walkdomain.StdlibFacts) *[]cdx.ExternalRefe
 	return &refs
 }
 
-// stdlibProperties builds the stdlib component's properties. Beyond the base
-// ecosystem/pipeline/stdlib markers it records, when facts are present, the
-// go.dev/dl verification status and detail, the published tarball checksum, and
-// the anchor limitation — what this component's integrity actually rests on,
-// derived from the status that was reached rather than stated as a fixed
-// sentence about the route a connected run happens to take.
-func stdlibProperties(pipelineVersion string, facts *walkdomain.StdlibFacts) *[]cdx.Property {
-	props := []cdx.Property{
-		{Name: "kanonarion:ecosystem", Value: domain.EcosystemGo},
-		{Name: "kanonarion:pipeline_version", Value: pipelineVersion},
-		{Name: "kanonarion:component:stdlib", Value: "true"},
-	}
-	if facts != nil {
-		if facts.VerificationStatus != "" {
-			props = append(props, cdx.Property{Name: "kanonarion:stdlib:verification", Value: facts.VerificationStatus})
-		}
-		if facts.VerificationDetail != "" {
-			props = append(props, cdx.Property{Name: "kanonarion:stdlib:verification_detail", Value: facts.VerificationDetail})
-		}
-		if facts.PublishedSHA256 != "" {
-			props = append(props, cdx.Property{Name: "kanonarion:stdlib:published_sha256", Value: facts.PublishedSHA256})
-		}
-		props = append(props, cdx.Property{
-			Name:  "kanonarion:stdlib:anchor_limitation",
-			Value: stdlibdomain.AnchorLimitation(stdlibdomain.VerificationStatus(facts.VerificationStatus), facts.VCSCommit != ""),
-		})
-	}
-	return &props
+// isDownloadURL reports whether s is an http(s) URL, which is the only kind of
+// location a distribution reference can name.
+func isDownloadURL(s string) bool {
+	u, err := url.Parse(s)
+	return err == nil && (u.Scheme == "https" || u.Scheme == "http") && u.Host != ""
 }
 
 // appendLocalSourceProperties states what a dependency read from disk stands
@@ -786,7 +751,6 @@ func appendTinyGoProperties(comp *cdx.Component, node walkdomain.GraphNode) {
 			}
 			props = append(props, cdx.Property{Name: "kanonarion:tinygo:mixed", Value: strings.Join(parts, ";")})
 		}
-		props = append(props, tinygoCustodyProperties(f.Custody)...)
 	}
 	if len(props) == 0 {
 		return
@@ -799,67 +763,29 @@ func appendTinyGoProperties(comp *cdx.Component, node walkdomain.GraphNode) {
 	comp.Properties = &all
 }
 
-// tinygoCustodyProperties states whether the installed TinyGo source the build
-// compiled is the source TinyGo released, on the TinyGo component. Nothing is
-// stated when custody was not established at all.
-func tinygoCustodyProperties(c *walkdomain.TinyGoCustody) []cdx.Property {
-	if c == nil {
-		return nil
-	}
-	const p = "kanonarion:tinygo:custody:"
-	props := []cdx.Property{
-		{Name: p + "module", Value: c.Module},
-		{Name: p + "module_verification", Value: c.ModuleVerification},
-		{Name: p + "verified_by_module", Value: strconv.Itoa(c.VerifiedByModule)},
-	}
-	if c.ReleaseAsset != "" {
-		props = append(props,
-			cdx.Property{Name: p + "release_asset", Value: c.ReleaseAsset},
-			cdx.Property{Name: p + "release_outcome", Value: string(c.ReleaseOutcome)},
-		)
-		if c.ReleasePublishedDigest != "" {
-			props = append(props, cdx.Property{Name: p + "release_published_sha256", Value: c.ReleasePublishedDigest})
-		}
-		if c.ReleaseObservedDigest != "" {
-			props = append(props, cdx.Property{Name: p + "release_observed_sha256", Value: c.ReleaseObservedDigest})
-		}
-		if !c.ReleaseMeasuredAt.IsZero() {
-			props = append(props, cdx.Property{Name: p + "release_measured_at", Value: c.ReleaseMeasuredAt.UTC().Format(time.RFC3339)})
-		}
-	}
-	props = append(props, cdx.Property{Name: p + "verified_by_release", Value: strconv.Itoa(c.VerifiedByRelease)})
-	for _, anchor := range []walkdomain.TinyGoAnchor{walkdomain.TinyGoAnchorModule, walkdomain.TinyGoAnchorRelease} {
-		if paths := c.DiffersFrom(anchor); len(paths) > 0 {
-			props = append(props, cdx.Property{Name: p + "differs_from_" + string(anchor), Value: strings.Join(paths, ",")})
-		}
-	}
-	reasons, byReason := c.NotEstablishedByReason()
-	for _, r := range reasons {
-		props = append(props, cdx.Property{Name: p + "not_established", Value: r + ": " + strings.Join(byReason[r], ",")})
-	}
-	return append(props, cdx.Property{Name: p + "anchor_limitation", Value: c.Statement()})
-}
-
 // buildEnvProperties renders the resolved build environment as CycloneDX
 // metadata properties, emitting only the values that were captured so a record
 // with no build environment (a non-project walk, or a pre-BuildEnv record)
-// contributes none. The ordering is fixed (goos, goarch, goarm, go_version,
-// then the TinyGo target, version and comma-joined tags) for deterministic
-// output; the last four exist only on a TinyGo walk.
+// contributes none. GOOS, GOARCH and GOVERSION use the names the CycloneDX
+// taxonomy registers; the rest have no registered name. The order is fixed for
+// deterministic output; the TinyGo three exist only on a TinyGo walk.
 func buildEnvProperties(env walkdomain.BuildEnv) []cdx.Property {
 	var props []cdx.Property
-	add := func(key, value string) {
+	add := func(name, value string) {
 		if value != "" {
-			props = append(props, cdx.Property{Name: "kanonarion:build:" + key, Value: value})
+			props = append(props, cdx.Property{Name: name, Value: value})
 		}
 	}
-	add("goos", env.GOOS)
-	add("goarch", env.GOARCH)
-	add("goarm", env.GOARM)
-	add("go_version", env.GoVersion)
-	add("tinygo_target", env.TinyGoTarget)
-	add("tinygo_version", env.TinyGoVersion)
-	add("tinygo_tags", strings.Join(env.TinyGoTags, ","))
+	add("cdx:gomod:build:env:GOOS", env.GOOS)
+	add("cdx:gomod:build:env:GOARCH", env.GOARCH)
+	// GOARM has meaning only on arm; tinygo reports a default for every target.
+	if env.GOARCH == "arm" {
+		add("kanonarion:build:goarm", env.GOARM)
+	}
+	add("cdx:gomod:build:env:GOVERSION", env.GoVersion)
+	add("kanonarion:build:tinygo_target", env.TinyGoTarget)
+	add("kanonarion:build:tinygo_version", env.TinyGoVersion)
+	add("kanonarion:build:tinygo_tags", strings.Join(env.TinyGoTags, ","))
 	return props
 }
 
@@ -947,8 +873,8 @@ func (s subject) rewrite(m domain.ModuleRef) domain.ModuleRef {
 // The root component is the compiled subject, not a fetched artefact, so it
 // carries no zip digests; and it asserts no origin, because the fetch ledger
 // holds no measurement of a module nobody fetched.
-func (s subject) metadataComponent(pipelineVersion string) *cdx.Component {
-	comp := buildComponent(s.ref, s.licenseSPDX, s.copyright, pipelineVersion,
+func (s subject) metadataComponent() *cdx.Component {
+	comp := buildComponent(s.ref, s.licenseSPDX, s.copyright,
 		fetchdomain.ArtifactDigests{}, nil, ports.ModuleOrigin{})
 	if s.isApplication {
 		comp.Type = cdx.ComponentTypeApplication
@@ -992,17 +918,10 @@ func modulePURL(mod domain.ModuleRef) string {
 	return "pkg:" + purlTypeGolang + "/" + mod.Path + "@" + mod.Version
 }
 
-// documentTimestamp resolves what this document's metadata timestamp carries and
-// whether that value is derived rather than a creation time.
-//
-// CycloneDX defines metadata.timestamp as when the BOM was created. A caller who
-// supplies one is answering that question, and it is used verbatim. A caller who
-// supplies none leaves the question unanswerable here — this generator holds no
-// clock, because reading one would mean the same recorded inputs stop producing
-// the same bytes — so the document falls back to the newest licence extraction
-// time among its inputs and says, in its own metadata, that it did. A derived
-// value labelled as derived is a true statement about the evidence; the same
-// value in an unlabelled creation field is a false statement about the document.
+// documentTimestamp returns the caller-supplied creation time, or, when none was
+// supplied, the derived instant (newest licence extraction time) with derived
+// set. A derived instant orders stored records and dates annotations; it is
+// never written as metadata.timestamp, which CycloneDX defines as creation time.
 func documentTimestamp(
 	walk walkdomain.WalkRecord,
 	licenses map[coordinate.ModuleCoordinate]licensedomain.LicenseRecord,
@@ -1012,29 +931,6 @@ func documentTimestamp(
 		return req.DocumentTimestamp.UTC().Truncate(time.Second), false
 	}
 	return derivedTimestamp(walk, licenses), true
-}
-
-// timestampBasisProperties record what metadata.timestamp means in this document
-// and, separately, the input-derived time it might otherwise be confused with.
-//
-// The licence extraction time is emitted whichever basis applies. It is a fact
-// about the evidence — when the licence facts under these components were last
-// measured — and a reader who wants it should not have to infer it from a field
-// that may or may not be it. CycloneDX metadata.lifecycles is the other candidate
-// home and is not one: its entries name a phase, and carry no timestamp.
-func timestampBasisProperties(derived bool, licenceExtraction time.Time) []cdx.Property {
-	basis := "caller-supplied document creation time"
-	if derived {
-		basis = "derived: newest licence extraction time among this document's inputs; no creation time was supplied, and this generator reads no clock"
-	}
-	props := []cdx.Property{{Name: "kanonarion:document:timestamp_basis", Value: basis}}
-	if !licenceExtraction.IsZero() {
-		props = append(props, cdx.Property{
-			Name:  "kanonarion:licence:newest_extraction",
-			Value: licenceExtraction.UTC().Format(timestampFormat),
-		})
-	}
-	return props
 }
 
 // licenceExtractionTime returns the newest ExtractedAt among the licence records
@@ -1082,17 +978,20 @@ func deterministicID(walkID string, pipelineVersion string) string {
 	return "sbom-" + hex.EncodeToString(sum[:])[:24]
 }
 
-// deterministicUUID returns a UUID-shaped string derived from the generation inputs.
-// It is not a proper UUID v5 but is stable and unique for the same inputs.
-func deterministicUUID(walkID string, pipelineVersion string) string {
-	key := "sbom-uuid|" + walkID + "|" + pipelineVersion
-	sum := sha256.Sum256([]byte(key))
-	h := hex.EncodeToString(sum[:])
-	// Format as 8-4-4-4-12.
-	return h[0:8] + "-" + h[8:12] + "-" + h[12:16] + "-" + h[16:20] + "-" + h[20:32]
+// serialNamespace is the RFC 4122 name-space every document serial is derived
+// in, itself a version-5 UUID in the URL name-space so it is reproducible.
+var serialNamespace = uuid.NewSHA1(uuid.NameSpaceURL, []byte("https://code.eitanity.com/kanonarion/sbom"))
+
+// documentSerial returns the serialNumber for a document whose canonical bytes,
+// serial left out, are content: an RFC 4122 version-5 UUID URN.
+func documentSerial(content []byte) string {
+	return uuid.NewSHA1(serialNamespace, content).URN()
 }
 
-// marshalBOM serialises the BOM to canonical JSON with sorted keys and consistent indentation.
+// marshalBOM serialises the BOM to canonical JSON with sorted keys and
+// consistent indentation, and sets its serialNumber: a name-based UUID over the
+// canonical bytes with the serial left out, so documents that differ anywhere
+// carry different serials and the same inputs re-emit the same one.
 func marshalBOM(bom *cdx.BOM) ([]byte, error) {
 	var buf bytes.Buffer
 	enc := cdx.NewBOMEncoder(&buf, cdx.BOMFileFormatJSON)
@@ -1102,10 +1001,17 @@ func marshalBOM(bom *cdx.BOM) ([]byte, error) {
 	}
 
 	// Re-marshal through encoding/json to guarantee sorted keys.
-	var raw any
+	var raw map[string]any
 	if err := json.Unmarshal(buf.Bytes(), &raw); err != nil {
 		return nil, fmt.Errorf("re-parsing cyclonedx json: %w", err)
 	}
+	delete(raw, "serialNumber")
+	unserialled, err := json.MarshalIndent(raw, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("canonical json marshal: %w", err)
+	}
+	bom.SerialNumber = documentSerial(unserialled)
+	raw["serialNumber"] = bom.SerialNumber
 	canonical, err := json.MarshalIndent(raw, "", "  ")
 	if err != nil {
 		return nil, fmt.Errorf("canonical json marshal: %w", err)

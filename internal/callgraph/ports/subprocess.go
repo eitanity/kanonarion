@@ -36,3 +36,35 @@ const DefaultStallWindow = 10 * time.Minute
 // real reaches this, and an operator who wants to give a module more can raise
 // it. See the --callgraph-timeout flag.
 const DefaultCeiling = 2 * time.Hour
+
+// ChildCommand is the command a call-graph child is started with: the
+// argv is ChildCommand, the coordinate, then flags from ChildFlags.
+const ChildCommand = "callgraph"
+
+// The flags a parent may put on a call-graph child's command line. Every
+// spawner spells them from here and the child parses only these, so the two
+// sides read one definition.
+const (
+	ChildFlagNarrate      = "narrate-progress"
+	ChildFlagForce        = "force"
+	ChildFlagFromWalk     = "from-walk"
+	ChildFlagStoreRoot    = "store-root"
+	ChildFlagFromModcache = "from-modcache"
+	ChildFlagConfig       = "config"
+)
+
+// ChildFlag is one flag of the child's command line; Bool flags take no value.
+type ChildFlag struct {
+	Name string
+	Bool bool
+}
+
+// ChildFlags is every flag a call-graph child accepts.
+var ChildFlags = []ChildFlag{
+	{Name: ChildFlagNarrate, Bool: true},
+	{Name: ChildFlagForce, Bool: true},
+	{Name: ChildFlagFromWalk},
+	{Name: ChildFlagStoreRoot},
+	{Name: ChildFlagFromModcache},
+	{Name: ChildFlagConfig},
+}

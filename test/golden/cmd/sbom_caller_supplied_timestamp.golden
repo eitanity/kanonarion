@@ -4,6 +4,23 @@ exit 0
 --- stdout ---
 {
   "$schema": "http://cyclonedx.org/schema/bom-1.6.schema.json",
+  "annotations": [
+    {
+      "annotator": {
+        "component": {
+          "name": "kanonarion",
+          "type": "application",
+          "version": "dev"
+        }
+      },
+      "bom-ref": "kanonarion:licence-completeness",
+      "subjects": [
+        "pkg:generic/sqlite@3.45.1"
+      ],
+      "text": "Licence completeness of this document: 1 of the 4 component(s) inventoried here carry no licence identity, and are named as this annotation's subjects. It is not a statement that a component is unlicensed: pkg:generic/sqlite@3.45.1;",
+      "timestamp": "2026-03-01T09:00:00Z"
+    }
+  ],
   "bomFormat": "CycloneDX",
   "components": [
     {
@@ -35,10 +52,6 @@ exit 0
         {
           "name": "kanonarion:ecosystem",
           "value": "go"
-        },
-        {
-          "name": "kanonarion:pipeline_version",
-          "value": "0.10.0"
         }
       ],
       "purl": "pkg:golang/example.com/cgolib@v0.4.2",
@@ -81,10 +94,6 @@ exit 0
         {
           "name": "kanonarion:ecosystem",
           "value": "go"
-        },
-        {
-          "name": "kanonarion:pipeline_version",
-          "value": "0.10.0"
         }
       ],
       "purl": "pkg:golang/example.com/plainlib@v1.1.0",
@@ -120,10 +129,6 @@ exit 0
         {
           "name": "kanonarion:ecosystem",
           "value": "go"
-        },
-        {
-          "name": "kanonarion:pipeline_version",
-          "value": "0.10.0"
         }
       ],
       "purl": "pkg:golang/example.com/product@v1.4.0",
@@ -132,7 +137,7 @@ exit 0
     },
     {
       "bom-ref": "pkg:generic/sqlite@3.45.1",
-      "description": "Native library compiled into the binary from source shipped inside the published zip of Go module example.com/cgolib@v0.4.2. Not a Go module and not fetched from any registry: its version was read verbatim from a declaration in that source. Its advisories were not searched.",
+      "description": "Native library compiled into the binary from source shipped inside the published zip of Go module example.com/cgolib@v0.4.2.",
       "evidence": {
         "identity": [
           {
@@ -162,10 +167,6 @@ exit 0
           "value": "native"
         },
         {
-          "name": "kanonarion:pipeline_version",
-          "value": "0.10.0"
-        },
-        {
           "name": "kanonarion:component:native",
           "value": "true"
         },
@@ -176,22 +177,6 @@ exit 0
         {
           "name": "kanonarion:native:host_artefact",
           "value": "zip:h1:5AEBzJNMZ8lwvRAbBIkz3xjCCw3wlSXyoVW/8hI9+1k="
-        },
-        {
-          "name": "kanonarion:native:confidence",
-          "value": "declared"
-        },
-        {
-          "name": "kanonarion:native:generation",
-          "value": "0.5.0+recipes.1"
-        },
-        {
-          "name": "kanonarion:native:advisories_searched",
-          "value": "false"
-        },
-        {
-          "name": "kanonarion:native:licence_determined",
-          "value": "false"
         }
       ],
       "purl": "pkg:generic/sqlite@3.45.1",
@@ -236,40 +221,26 @@ exit 0
         {
           "name": "kanonarion:ecosystem",
           "value": "go"
-        },
-        {
-          "name": "kanonarion:pipeline_version",
-          "value": "0.10.0"
         }
       ],
       "purl": "pkg:golang/example.com/product@v1.4.0",
       "type": "library",
       "version": "v1.4.0"
     },
-    "properties": [
-      {
-        "name": "kanonarion:document:timestamp_basis",
-        "value": "caller-supplied document creation time"
-      },
-      {
-        "name": "kanonarion:licence:newest_extraction",
-        "value": "2026-02-03T11:30:00Z"
-      }
-    ],
     "timestamp": "2026-03-01T09:00:00Z",
     "tools": {
       "components": [
         {
           "name": "kanonarion",
           "type": "application",
-          "version": "0.10.0"
+          "version": "dev"
         }
       ]
     }
   },
-  "serialNumber": "urn:uuid:32dd7bfd-92d2-b9b4-a3d4-d8f0272fab63",
+  "serialNumber": "urn:uuid:b0f0e9fc-2c7d-5482-925d-703f7191f072",
   "specVersion": "1.6",
   "version": 1
 }
 --- stderr ---
-(empty)
+note: --main-version/--main-license/--generated-at name this document, so it was generated now and not stored; the stored SBOM for walk 01ARZ3NDEKTSV4RRFFQ69G5FB1 is unchanged
