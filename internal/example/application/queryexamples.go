@@ -12,6 +12,9 @@ import (
 )
 
 // QueryExamplesUseCase provides read-only access to stored example records.
+//
+// Every method that takes a pipeline version reads PipelineVersion when given
+// an empty one.
 type QueryExamplesUseCase struct {
 	store exampleports.ExampleStore
 }
@@ -23,6 +26,7 @@ func NewQueryExamplesUseCase(store exampleports.ExampleStore) *QueryExamplesUseC
 
 // GetExampleRecord retrieves the example record for a module coordinate.
 func (uc *QueryExamplesUseCase) GetExampleRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (domain.ExampleRecord, bool, error) {
+	pipelineVersion = servedPipeline(pipelineVersion)
 	rec, found, err := uc.store.GetExampleRecord(ctx, coord, pipelineVersion)
 	if err != nil {
 		return domain.ExampleRecord{}, false, fmt.Errorf("getting example record for %s: %w", coord, err)
@@ -43,6 +47,7 @@ var ErrNoExampleHistory = errors.New("this example store keeps no generation his
 // record says what is found now; this says what was found before, each entry
 // naming the artefact it was computed from.
 func (uc *QueryExamplesUseCase) ExampleHistory(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) ([]domain.ExampleRecord, error) {
+	pipelineVersion = servedPipeline(pipelineVersion)
 	lister, ok := uc.store.(exampleports.ExampleRecordLister)
 	if !ok {
 		return nil, ErrNoExampleHistory
@@ -85,6 +90,7 @@ func (uc *QueryExamplesUseCase) ListExampleRecords(ctx context.Context, filter e
 // restricted to the modules in scope (the zero ModuleSet imposes no
 // restriction).
 func (uc *QueryExamplesUseCase) FindBySymbol(ctx context.Context, symbol, pipelineVersion string, scope coordinate.ModuleSet) ([]exampleports.ExampleRef, error) {
+	pipelineVersion = servedPipeline(pipelineVersion)
 	refs, err := uc.store.FindBySymbol(ctx, symbol, pipelineVersion, scope)
 	if errors.Is(err, exampleports.ErrExampleConflict) {
 		// Returned ALONGSIDE the refs, not instead of them: the store omits a
@@ -101,6 +107,7 @@ func (uc *QueryExamplesUseCase) FindBySymbol(ctx context.Context, symbol, pipeli
 
 // FindBySymbolInModule returns examples for a symbol scoped to a specific module@version.
 func (uc *QueryExamplesUseCase) FindBySymbolInModule(ctx context.Context, coord coordinate.ModuleCoordinate, symbol, pipelineVersion string) ([]exampleports.ExampleRef, error) {
+	pipelineVersion = servedPipeline(pipelineVersion)
 	refs, err := uc.store.FindBySymbolInModule(ctx, coord, symbol, pipelineVersion)
 	if errors.Is(err, exampleports.ErrExampleConflict) {
 		return refs, fmt.Errorf("finding examples for symbol %q in %s: %w", symbol, coord, err)
@@ -109,4 +116,14 @@ func (uc *QueryExamplesUseCase) FindBySymbolInModule(ctx context.Context, coord 
 		return nil, fmt.Errorf("finding examples for symbol %q in %s: %w", symbol, coord, err)
 	}
 	return refs, nil
+}
+
+// servedPipeline is pv, or PipelineVersion when pv is empty. No record is
+// stored at an empty version, so an empty one would read nothing and answer
+// as if nothing were recorded.
+func servedPipeline(pv string) string {
+	if pv == "" {
+		return PipelineVersion
+	}
+	return pv
 }

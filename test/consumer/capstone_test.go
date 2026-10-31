@@ -58,6 +58,12 @@ func (s *fakePostgresFactStore) PutFetchRecord(_ context.Context, sealed kanonar
 	return nil
 }
 
+// ComposeFetchRecord composes the one row held for coord at the current
+// pipeline, the read every extraction stage takes.
+func (s *fakePostgresFactStore) ComposeFetchRecord(ctx context.Context, coord kanonarion.ModuleCoordinate) (kanonarion.CompositeRecord, bool, error) {
+	return s.GetFetchRecord(ctx, coord, kanonarion.FetchPipelineVersion)
+}
+
 func (s *fakePostgresFactStore) GetFetchRecord(_ context.Context, coord kanonarion.ModuleCoordinate, pipelineVersion string) (kanonarion.CompositeRecord, bool, error) {
 	rec, ok := s.rows[factKey(coord, pipelineVersion)]
 	if !ok {
@@ -633,8 +639,8 @@ func registerMemoryBackend(t *testing.T) {
 	if err := kanonarion.RegisterBackend(memoryBackend()); err == nil {
 		t.Error("a second registration of the same name was accepted")
 	}
-	if got := kanonarion.BackendNames(); len(got) != 1 || got[0] != "memory" {
-		t.Errorf("BackendNames() = %v, want [memory]", got)
+	if got := kanonarion.BackendNames(); strings.Join(got, " ") != "files memory probe" {
+		t.Errorf("BackendNames() = %v, want [files memory probe]", got)
 	}
 }
 
@@ -694,7 +700,7 @@ func TestConsumer_AnUnregisteredBackendIsRefused(t *testing.T) {
 	writeConfig(t, root, "version: \"3\"\nstorage:\n  backend: postgres\n")
 	_, _, err := kanonarion.Open(root)
 	if !errors.Is(err, kanonarion.ErrBackendNotRegistered) ||
-		!strings.Contains(err.Error(), `backend "postgres" is not registered in this binary (registered: memory, sqlite)`) {
+		!strings.Contains(err.Error(), `backend "postgres" is not registered in this binary (registered: files, memory, probe, sqlite)`) {
 		t.Errorf("Open naming an unregistered backend = %v", err)
 	}
 }

@@ -696,13 +696,21 @@ func TestGenerate_RecordWithNoSPDXIsIncompleteAndNamed(t *testing.T) {
 }
 
 // metadata.timestamp is when the document was created. A caller who supplies
-// that moment gets it verbatim; a caller who supplies none gets the derived
-// value labelled as derived, never passed off as a creation time.
+// that moment gets it verbatim; a caller who supplies none gets no timestamp,
+// and the derived instant stays on the record, where it orders the listing.
 func TestGenerate_DocumentTimestampIsTheCallersCreationTime(t *testing.T) {
 	coord := mustCoord(t, "github.com/example/foo", "v1.0.0")
 	walk := makeWalk(t, []coordinate.ModuleCoordinate{coord})
 	licenses := map[coordinate.ModuleCoordinate]licensedomain.LicenseRecord{
 		coord: {PrimarySPDX: "MIT", ExtractedAt: mustTime("2026-07-29T04:44:15Z")},
+	}
+	metadata := func(t *testing.T, content []byte) map[string]any {
+		t.Helper()
+		var doc map[string]any
+		if err := json.Unmarshal(content, &doc); err != nil {
+			t.Fatalf("unmarshal bom: %v", err)
+		}
+		return mustAs[map[string]any](t, doc["metadata"])
 	}
 
 	created := mustTime("2026-08-01T12:00:00Z")
@@ -712,52 +720,22 @@ func TestGenerate_DocumentTimestampIsTheCallersCreationTime(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
-	var bom struct {
-		Metadata struct {
-			Timestamp  string `json:"timestamp"`
-			Properties []struct {
-				Name  string `json:"name"`
-				Value string `json:"value"`
-			} `json:"properties"`
-		} `json:"metadata"`
-	}
-	if uerr := json.Unmarshal(rec.Content, &bom); uerr != nil {
-		t.Fatalf("unmarshal bom: %v", uerr)
-	}
-	if bom.Metadata.Timestamp != "2026-08-01T12:00:00Z" {
-		t.Errorf("metadata.timestamp = %q, want the supplied creation time", bom.Metadata.Timestamp)
+	if got := metadata(t, rec.Content)["timestamp"]; got != "2026-08-01T12:00:00Z" {
+		t.Errorf("metadata.timestamp = %v, want the supplied creation time", got)
 	}
 	if !rec.GeneratedAt.Equal(created) {
 		t.Errorf("record GeneratedAt = %s, want %s", rec.GeneratedAt, created)
 	}
-	props := map[string]string{}
-	for _, p := range bom.Metadata.Properties {
-		props[p.Name] = p.Value
-	}
-	if !strings.Contains(props["kanonarion:document:timestamp_basis"], "caller-supplied") {
-		t.Errorf("timestamp basis = %q, want it to state the caller supplied it", props["kanonarion:document:timestamp_basis"])
-	}
-	// The licence extraction time is stated separately, whichever basis applies,
-	// so a reader never has to guess whether the timestamp is it.
-	if props["kanonarion:licence:newest_extraction"] != "2026-07-29T04:44:15Z" {
-		t.Errorf("newest licence extraction = %q, want 2026-07-29T04:44:15Z", props["kanonarion:licence:newest_extraction"])
-	}
 
-	// No supplied time: the derived value, said to be derived.
 	fallback, err := cyclonedx.New(testPipelineVersion).Generate(t.Context(), walk, licenses, makeGenReq())
 	if err != nil {
 		t.Fatalf("Generate (no supplied time): %v", err)
 	}
-	if err := json.Unmarshal(fallback.Content, &bom); err != nil {
-		t.Fatalf("unmarshal fallback bom: %v", err)
+	if got, ok := metadata(t, fallback.Content)["timestamp"]; ok {
+		t.Errorf("metadata.timestamp = %v with no creation time supplied, want none", got)
 	}
-	if bom.Metadata.Timestamp != "2026-07-29T04:44:15Z" {
-		t.Errorf("fallback metadata.timestamp = %q, want the derived value", bom.Metadata.Timestamp)
-	}
-	for _, p := range bom.Metadata.Properties {
-		if p.Name == "kanonarion:document:timestamp_basis" && !strings.Contains(p.Value, "derived") {
-			t.Errorf("fallback timestamp basis = %q, want it to say the value is derived", p.Value)
-		}
+	if !fallback.GeneratedAt.Equal(mustTime("2026-07-29T04:44:15Z")) {
+		t.Errorf("record GeneratedAt = %s, want the newest licence extraction time", fallback.GeneratedAt)
 	}
 }
 

@@ -34,6 +34,10 @@ var ErrLookupFailed = errors.New("module proxy lookup failed")
 // gave no answer; the row is unmeasured, never current.
 var ErrPrivateModule = errors.New("private module: the go command did not resolve its latest version")
 
+// ErrLocalModule reports a module the scope compiles from a directory. Nothing
+// published answers for it, so it is never asked of a proxy or the go command.
+var ErrLocalModule = errors.New("local module: compiled from a directory, so no published version answers for it")
+
 // LatestInfo is the proxy's @latest answer for one path.
 type LatestInfo struct {
 	Version string

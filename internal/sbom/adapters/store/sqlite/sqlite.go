@@ -118,8 +118,8 @@ FROM sbom_records WHERE id = ?`, id)
 // rather than three so the rule cannot drift between the listing and the cache
 // lookup.
 //
-// generated_at alone is not a total order. A document with no --generated-at is
-// stamped with the newest licence extraction time among its inputs (see
+// generated_at alone is not a total order. A stored record's generated_at is
+// the newest licence extraction time among its document's inputs (see
 // documentTimestamp in the CycloneDX generator), so two documents built from one
 // licence basis carry the SAME instant by construction — not by coincidence, and
 // not only when a second happens to be shared. Ordered on that column alone the

@@ -90,7 +90,7 @@ reviewed with kanonarion on the main store while you make it:
 
 ```bash
 # Upgrade: what the new version's own code calls that the old one did not.
-kanonarion capability <module>@<new> --against <module>@<old>
+kanonarion capability <module>@<old> --against <module>@<new>
 
 # New module: its whole capability set.
 kanonarion capability <module>@<version>

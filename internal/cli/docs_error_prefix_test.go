@@ -14,16 +14,25 @@ import (
 )
 
 // printedErrorPrefix is how an error from Run reaches the terminal: the format
-// main gives fmt.Fprintf, up to its verb, then the prefix Run puts on every error.
-// It is read from cmd/kanonarion/main.go so a change there moves the guard too.
+// ExitStatus gives fmt.Fprintf, up to its verb, then the prefix Run puts on every
+// error. It is read from ExitStatus's source so a change there moves the guard too.
 func printedErrorPrefix(t *testing.T) string {
 	t.Helper()
-	file, err := parser.ParseFile(token.NewFileSet(), filepath.Join("..", "..", "cmd", "kanonarion", "main.go"), nil, 0)
+	file, err := parser.ParseFile(token.NewFileSet(), "root.go", nil, 0)
 	if err != nil {
-		t.Fatalf("parsing main.go: %v", err)
+		t.Fatalf("parsing root.go: %v", err)
+	}
+	var exitStatus ast.Node
+	for _, d := range file.Decls {
+		if fn, ok := d.(*ast.FuncDecl); ok && fn.Name.Name == "ExitStatus" {
+			exitStatus = fn
+		}
+	}
+	if exitStatus == nil {
+		t.Fatal("root.go declares no ExitStatus")
 	}
 	format := ""
-	ast.Inspect(file, func(n ast.Node) bool {
+	ast.Inspect(exitStatus, func(n ast.Node) bool {
 		call, ok := n.(*ast.CallExpr)
 		if !ok || len(call.Args) < 2 {
 			return true
@@ -40,7 +49,7 @@ func printedErrorPrefix(t *testing.T) string {
 	})
 	lead, _, ok := strings.Cut(format, "%v")
 	if !ok || lead == "" {
-		t.Fatalf("main.go prints no error with a %%v format (found %q)", format)
+		t.Fatalf("ExitStatus prints no error with a %%v format (found %q)", format)
 	}
 	return lead + rootErrorPrefix
 }

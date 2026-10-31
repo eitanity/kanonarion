@@ -74,7 +74,6 @@ func analyseAndRescan(t *testing.T, root string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv(childBinaryEnv, kanonarionBinary(t))
 	drv, cleanup, err := kanonarion.OpenDriver(root)
 	if err != nil {
 		t.Fatalf("OpenDriver: %v", err)

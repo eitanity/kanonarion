@@ -71,15 +71,15 @@ func (s *OsCallGraphSpawner) Spawn(ctx context.Context, coord coordinate.ModuleC
 	// reports stop. The instruction is explicit because the child would otherwise
 	// take it from the store's own progress preference, which would let a config
 	// file turn the stall detector off.
-	args := []string{"callgraph", coord.String(), "--narrate-progress"}
+	args := []string{cgports.ChildCommand, coord.String(), "--" + cgports.ChildFlagNarrate}
 	if force {
-		args = append(args, "--force")
+		args = append(args, "--"+cgports.ChildFlagForce)
 	}
 	// Named on the command line because the child opens the store fresh and knows
 	// only its arguments: without it a module published before Go modules is
 	// analysed against no build list at all.
 	if walkID != "" {
-		args = append(args, "--from-walk", walkID)
+		args = append(args, "--"+cgports.ChildFlagFromWalk, walkID)
 	}
 	args = append(args, s.extraArgs...)
 

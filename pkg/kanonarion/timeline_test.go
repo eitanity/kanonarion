@@ -297,7 +297,10 @@ func TestOpen_FindingTimelinesSameUnderARegisteredBackend(t *testing.T) {
 }
 
 type (
-	stubFacts        struct{ kanonarion.FactStore }
+	stubFacts struct {
+		kanonarion.FactStore
+		kanonarion.FactRecordComposer
+	}
 	stubAttestations struct{ kanonarion.AttestationStore }
 	stubAudit        struct{ kanonarion.AuditSink }
 	stubBlobs        struct{ kanonarion.BlobStore }

@@ -402,45 +402,68 @@ func TestNative_OutputIsDeterministic(t *testing.T) {
 	}
 }
 
-// TestNative_StatesWhatItDidNotEstablish. Two questions a reader arrives with —
-// was this checked against an advisory database, and what is its licence — are
-// answered on the component rather than left to an absent field, which reads as
-// a producer that does not track them.
-func TestNative_StatesWhatItDidNotEstablish(t *testing.T) {
+// TestNative_StatesItsFactsInCycloneDXFields. How the version was established
+// is the evidence block's identity, not a property in kanonarion's own
+// vocabulary, and nothing about the detection generation or what was not
+// searched reaches the component.
+func TestNative_StatesItsFactsInCycloneDXFields(t *testing.T) {
 	walk, dep := nativeWalk(t)
 	doc := generateNative(t, walk, map[coordinate.ModuleCoordinate]nativedomain.Record{
 		dep: identifiedRecord(dep, "3.38.0"),
 	})
-	props := map[string]string{}
+	var native map[string]any
 	for _, c := range componentsOf(t, doc) {
-		if c["purl"] != "pkg:generic/sqlite@3.38.0" {
-			continue
-		}
-		for _, p := range mustAs[[]any](t, c["properties"]) {
-			prop := mustAs[map[string]any](t, p)
-			props[mustAs[string](t, prop["name"])] = mustAs[string](t, prop["value"])
+		if c["purl"] == "pkg:generic/sqlite@3.38.0" {
+			native = c
 		}
 	}
-	for name, want := range map[string]string{
-		"kanonarion:native:advisories_searched": "false",
-		"kanonarion:native:licence_determined":  "false",
-		"kanonarion:component:native":           "true",
-		"kanonarion:native:confidence":          "declared",
-		"kanonarion:ecosystem":                  "native",
-		"kanonarion:native:host_artefact":       "zip:h1:deadbeef=",
-	} {
-		if props[name] != want {
-			t.Errorf("%s = %q, want %q", name, props[name], want)
+	if native == nil {
+		t.Fatal("no native component")
+	}
+	props := map[string]string{}
+	for _, p := range mustAs[[]any](t, native["properties"]) {
+		prop := mustAs[map[string]any](t, p)
+		props[mustAs[string](t, prop["name"])] = mustAs[string](t, prop["value"])
+	}
+	want := map[string]string{
+		"kanonarion:component:native":     "true",
+		"kanonarion:ecosystem":            "native",
+		"kanonarion:native:host_module":   dep.String(),
+		"kanonarion:native:host_artefact": "zip:h1:deadbeef=",
+	}
+	if len(props) != len(want) {
+		t.Errorf("native properties = %v, want exactly %v", props, want)
+	}
+	for name, v := range want {
+		if props[name] != v {
+			t.Errorf("%s = %q, want %q", name, props[name], v)
 		}
+	}
+
+	if want := "Native library compiled into the binary from source shipped inside the published zip of Go module " + dep.String() + "."; native["description"] != want {
+		t.Errorf("description = %q, want %q", native["description"], want)
+	}
+
+	evidence := mustAs[map[string]any](t, native["evidence"])
+	identity := mustAs[map[string]any](t, mustAs[[]any](t, evidence["identity"])[0])
+	if identity["field"] != "version" || identity["concludedValue"] != "3.38.0" {
+		t.Errorf("evidence.identity = %v, want field version concluding 3.38.0", identity)
+	}
+	method := mustAs[map[string]any](t, mustAs[[]any](t, identity["methods"])[0])
+	if method["technique"] != "source-code-analysis" || method["confidence"] != float64(1) {
+		t.Errorf("evidence method = %v, want source-code-analysis at confidence 1", method)
+	}
+	if occ := mustAs[[]any](t, evidence["occurrences"]); len(occ) == 0 {
+		t.Error("evidence.occurrences names no source file")
 	}
 }
 
-// TestNative_LicenceCompletenessCountsOnlyTheGoComponents. A native component
-// carries no licence and it is not a gap in the licence extraction, which reads
-// the LICENSE files of a Go module's artefact. Counting it would move the
-// document's licence gate — a non-zero exit — onto a question with no remedy an
-// operator could run.
-func TestNative_LicenceCompletenessCountsOnlyTheGoComponents(t *testing.T) {
+// TestNative_LicenceCompletenessNamesTheNativeComponentOutsideTheGate. A native
+// component carries no licence, so the licence-completeness annotation names it.
+// It does not fire the document's licence gate — a non-zero exit — because the
+// licence extraction reads a Go module's LICENSE files and no remedy an
+// operator could run would determine it.
+func TestNative_LicenceCompletenessNamesTheNativeComponentOutsideTheGate(t *testing.T) {
 	walk, dep := nativeWalk(t)
 	ts, err := time.Parse(time.RFC3339, nativeGenTime)
 	if err != nil {
@@ -462,8 +485,24 @@ func TestNative_LicenceCompletenessCountsOnlyTheGoComponents(t *testing.T) {
 	if rec.LicensesIncomplete {
 		t.Error("LicensesIncomplete = true; a native component's undetermined licence must not fire the document's licence gate")
 	}
-	if strings.Contains(string(rec.Content), "kanonarion:licence-completeness") {
-		t.Error("a licence-completeness annotation was emitted for a document whose Go components all carry a licence")
+	var doc struct {
+		Annotations []struct {
+			BOMRef   string   `json:"bom-ref"`
+			Subjects []string `json:"subjects"`
+			Text     string   `json:"text"`
+		} `json:"annotations"`
+	}
+	if err := json.Unmarshal(rec.Content, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if len(doc.Annotations) != 1 || doc.Annotations[0].BOMRef != "kanonarion:licence-completeness" {
+		t.Fatalf("annotations = %+v, want one licence-completeness annotation", doc.Annotations)
+	}
+	if got := doc.Annotations[0].Subjects; len(got) != 1 || got[0] != "pkg:generic/sqlite@3.38.0" {
+		t.Errorf("licence-completeness subjects = %v, want only the native component", got)
+	}
+	if !strings.Contains(doc.Annotations[0].Text, "1 of the 3 component(s)") {
+		t.Errorf("the statement does not count one of three components:\n%s", doc.Annotations[0].Text)
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"testing"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 	"code.eitanity.com/kanonarion/internal/adapters/sqlitestore"
 	directivesqlite "code.eitanity.com/kanonarion/internal/directive/adapters/store/sqlite"
 	"code.eitanity.com/kanonarion/internal/directive/domain"
+	"code.eitanity.com/kanonarion/internal/directive/ports"
 )
 
 func openTestStore(t *testing.T) (*directivesqlite.Store, sqlitestore.DB) {
@@ -259,5 +261,32 @@ func TestStore_MigrationRenamesUglyPreIDs(t *testing.T) {
 	// Re-running the rename SQL on a store with no ugly rows is a no-op.
 	if _, err := db.DB().ExecContext(ctx, renameSQL); err != nil {
 		t.Fatalf("idempotency: %v", err)
+	}
+}
+
+var _ ports.ScanProjectLister = (*directivesqlite.Store)(nil)
+
+// Each project is named once however many scans it holds, sorted, and an empty
+// store names none.
+func TestStore_ListScanProjectsNamesEachProjectOnce(t *testing.T) {
+	store, _ := openTestStore(t)
+	ctx := context.Background()
+	if got, err := store.ListScanProjects(ctx); err != nil || len(got) != 0 {
+		t.Fatalf("empty store: %v, %v", got, err)
+	}
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	for i, scan := range []struct{ id, project string }{
+		{"01A", "example.com/b"}, {"01B", "example.com/a"}, {"01C", "example.com/b"},
+	} {
+		if err := store.PutDirectiveRecord(ctx, mkRecord(t, scan.id, scan.project, base.Add(time.Duration(i)*time.Hour))); err != nil {
+			t.Fatalf("PutDirectiveRecord: %v", err)
+		}
+	}
+	got, err := store.ListScanProjects(ctx)
+	if err != nil {
+		t.Fatalf("ListScanProjects: %v", err)
+	}
+	if want := []string{"example.com/a", "example.com/b"}; !slices.Equal(got, want) {
+		t.Errorf("got %v, want %v", got, want)
 	}
 }

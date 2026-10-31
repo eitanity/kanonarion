@@ -940,6 +940,9 @@ func TestPublishedPortsNameOnlyPublishedTypes(t *testing.T) {
 	for _, v := range unpublishedEnumConstants(pkgs[0].Types) {
 		t.Error(v)
 	}
+	for _, v := range unpublishedUseCaseTypes(pkgs[0].Types) {
+		t.Error(v)
+	}
 	for _, v := range reachableStageTypes(pkgs[0].Types) {
 		t.Error(v)
 	}
@@ -1120,6 +1123,109 @@ func unpublishedPortTypes(pkg *types.Package) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// unpublishedUseCaseTypes returns one message per module-owned type an exported
+// method of a use case reachable from Queries or Driver names that
+// pkg/kanonarion does not export: a caller who cannot spell a method's
+// argument cannot call it.
+func unpublishedUseCaseTypes(pkg *types.Package) []string {
+	scope := pkg.Scope()
+	published := map[*types.TypeName]bool{}
+	for _, name := range scope.Names() {
+		if tn, ok := scope.Lookup(name).(*types.TypeName); ok && tn.Exported() {
+			if named, ok := types.Unalias(tn.Type()).(*types.Named); ok {
+				published[named.Origin().Obj()] = true
+			}
+		}
+	}
+	needed := map[string][]string{}
+	roots := useCaseRoots(scope)
+	if len(roots) < 2 {
+		return []string{"no use case was found on Queries and Driver; the root walk is broken"}
+	}
+	for label, named := range roots {
+		mset := types.NewMethodSet(types.NewPointer(named))
+		for i := 0; i < mset.Len(); i++ {
+			m := mset.At(i).Obj()
+			if !m.Exported() || wiringMethods[named.Obj().Name()+"."+m.Name()] {
+				continue
+			}
+			w := portTypeWalk{seen: map[*types.TypeName]bool{}}
+			w.visit(m.Type())
+			for _, obj := range w.order {
+				if !published[obj] {
+					key := strings.TrimPrefix(obj.Pkg().Path(), modulePath+"/") + "." + obj.Name()
+					needed[key] = append(needed[key], label+"."+m.Name())
+				}
+			}
+		}
+	}
+	out := make([]string, 0, len(needed))
+	for typ, by := range needed {
+		sort.Strings(by)
+		out = append(out, fmt.Sprintf("%s is named by %s but is not exported from pkg/kanonarion — alias it there",
+			typ, strings.Join(by, ", ")))
+	}
+	sort.Strings(out)
+	return out
+}
+
+// useCaseRoots are the use cases a caller holds: every exported field of
+// Queries and Driver, and what Driver's exported methods return, by the name
+// the caller reaches them through.
+func useCaseRoots(scope *types.Scope) map[string]*types.Named {
+	roots := map[string]*types.Named{}
+	add := func(label string, t types.Type) {
+		if p, ok := t.(*types.Pointer); ok {
+			t = p.Elem()
+		}
+		if n, ok := types.Unalias(t).(*types.Named); ok {
+			roots[label] = n
+		}
+	}
+	for _, holder := range []string{"Queries", "Driver"} {
+		tn, ok := scope.Lookup(holder).(*types.TypeName)
+		if !ok {
+			continue
+		}
+		named, isNamed := types.Unalias(tn.Type()).(*types.Named)
+		if !isNamed {
+			continue
+		}
+		st, isStruct := named.Underlying().(*types.Struct)
+		if !isStruct {
+			continue
+		}
+		for i := 0; i < st.NumFields(); i++ {
+			if f := st.Field(i); f.Exported() {
+				add(holder+"."+f.Name(), f.Type())
+			}
+		}
+		mset := types.NewMethodSet(types.NewPointer(named))
+		for i := 0; i < mset.Len(); i++ {
+			m := mset.At(i).Obj()
+			if !m.Exported() {
+				continue
+			}
+			sig, isSig := m.Type().(*types.Signature)
+			if !isSig {
+				continue
+			}
+			res := sig.Results()
+			for j := 0; j < res.Len(); j++ {
+				add(holder+"."+m.Name()+"()", res.At(j).Type())
+			}
+		}
+	}
+	return roots
+}
+
+// wiringMethods are use-case methods the composition root calls to build a
+// use case. A caller receives the use case already wired, so the types they
+// take need not be published.
+var wiringMethods = map[string]bool{
+	"LocalWalkExtractUseCase.WithWorkspaceProbe": true,
 }
 
 // publishedEnumType reports the module-owned basic-kinded named type an

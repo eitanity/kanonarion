@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+	"time"
 
 	"code.eitanity.com/kanonarion/internal/adapters/recordseal"
 	"code.eitanity.com/kanonarion/internal/coordinate"
@@ -483,6 +484,7 @@ func TestGenerateSBOM_SubjectStampIsNotPersisted(t *testing.T) {
 		{"version", application.SBOMRequest{WalkID: "walk-1", MainComponentVersion: "v1.2.3"}},
 		{"licence", application.SBOMRequest{WalkID: "walk-1", MainComponentLicense: "Apache-2.0"}},
 		{"version with force", application.SBOMRequest{WalkID: "walk-1", MainComponentVersion: "v1.2.3", Force: true}},
+		{"creation time", application.SBOMRequest{WalkID: "walk-1", GeneratedAt: time.Date(2026, 1, 31, 9, 0, 0, 0, time.UTC)}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ss := &fakeSBOMStore{}
@@ -496,6 +498,58 @@ func TestGenerateSBOM_SubjectStampIsNotPersisted(t *testing.T) {
 				t.Errorf("a stamped document must not be stored, got record %q in the store", ss.stored.ID)
 			}
 		})
+	}
+}
+
+// slotSBOMStore holds one record per walk, as the store's upsert on the record
+// id does, and serves it to the cache lookup.
+type slotSBOMStore struct {
+	fakeSBOMStore
+	slot map[string]domain.SBOMRecord
+}
+
+func (s *slotSBOMStore) FindSBOMRecord(_ context.Context, walkID string, _ domain.SBOMFormat, _ string) (domain.SBOMRecord, bool, error) {
+	r, ok := s.slot[walkID]
+	return r, ok, nil
+}
+
+func (s *slotSBOMStore) PutSBOMRecord(_ context.Context, r domain.SBOMRecord) error {
+	s.slot[r.WalkID] = r
+	return nil
+}
+
+// timestampEchoGenerator returns a record whose content is the creation time
+// it was asked to state, so a test can read which request a document answers.
+type timestampEchoGenerator struct{ fakeSBOMGenerator }
+
+func (g *timestampEchoGenerator) Generate(_ context.Context, walk walkdomain.WalkRecord, _ map[coordinate.ModuleCoordinate]licensedomain.LicenseRecord, req ports.GenerateRequest) (domain.SBOMRecord, error) {
+	content := "no timestamp"
+	if !req.DocumentTimestamp.IsZero() {
+		content = req.DocumentTimestamp.Format(time.RFC3339)
+	}
+	return domain.SBOMRecord{ID: "sbom-" + walk.ID, WalkID: walk.ID, Content: []byte(content), GeneratedAt: req.DocumentTimestamp}, nil
+}
+
+// A plain request after one that supplied a creation time is not served that
+// document. The stored record answers for the walk, and a caller who supplied
+// no time must not receive another caller's.
+func TestGenerateSBOM_APlainRequestIsNeverServedASuppliedCreationTime(t *testing.T) {
+	ss := &slotSBOMStore{slot: map[string]domain.SBOMRecord{}}
+	uc := application.NewGenerateSBOMUseCase(&fakeWalkStore{walk: makeWalk("walk-1")}, &fakeLicenseStore{}, ss,
+		&timestampEchoGenerator{}, "0.3.0", testLicensePipelineVersion, slog.Default())
+	stamped, err := uc.Generate(t.Context(), application.SBOMRequest{WalkID: "walk-1", GeneratedAt: time.Date(2026, 1, 31, 9, 0, 0, 0, time.UTC)})
+	if err != nil {
+		t.Fatalf("Generate with a creation time: %v", err)
+	}
+	if string(stamped.Content) != "2026-01-31T09:00:00Z" {
+		t.Fatalf("the supplied request got %q, want its own creation time", stamped.Content)
+	}
+	plain, err := uc.Generate(t.Context(), application.SBOMRequest{WalkID: "walk-1"})
+	if err != nil {
+		t.Fatalf("plain Generate: %v", err)
+	}
+	if string(plain.Content) != "no timestamp" {
+		t.Errorf("a plain request was served %q, a document generated for a supplied creation time", plain.Content)
 	}
 }
 

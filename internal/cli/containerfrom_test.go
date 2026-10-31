@@ -46,7 +46,10 @@ func (f fakeWalks) ListWalks(context.Context, walkports.WalkFilter) ([]walkports
 func fakeStorage(walkID string) (*storage.Storage, *int) {
 	closes := new(int)
 	return &storage.Storage{
-		Facts:             struct{ fetchports.FactStore }{},
+		Facts: struct {
+			fetchports.FactStore
+			fetchports.FactRecordComposer
+		}{},
 		Attestations:      struct{ fetchports.AttestationStore }{},
 		Audit:             struct{ fetchports.AuditSink }{},
 		Blobs:             struct{ fetchports.BlobStore }{},

@@ -154,9 +154,9 @@ func (a *AdapterExtractor) log() *slog.Logger {
 // driver's case — it has no --from-modcache concept and always reads bytes
 // through the content-addressed blob store.
 func CallGraphSubprocessArgs(storeRoot, modcacheDir string) []string {
-	args := []string{"--store-root=" + storeRoot}
+	args := []string{"--" + cgports.ChildFlagStoreRoot + "=" + storeRoot}
 	if modcacheDir != "" {
-		args = append(args, "--from-modcache="+modcacheDir)
+		args = append(args, "--"+cgports.ChildFlagFromModcache+"="+modcacheDir)
 	}
 	return args
 }
@@ -360,17 +360,17 @@ func (a *AdapterExtractor) extractCallgraphSubprocess(ctx context.Context, coord
 	// reports stop, so the instruction is explicit rather than left to the store's
 	// progress preference — a config file must not be able to disable the stall
 	// detector.
-	args := []string{"callgraph", coord.String(), "--narrate-progress"}
+	args := []string{cgports.ChildCommand, coord.String(), "--" + cgports.ChildFlagNarrate}
 	args = append(args, a.cgExtraArgs...)
 	if force {
-		args = append(args, "--force")
+		args = append(args, "--"+cgports.ChildFlagForce)
 	}
 	// The walk is lost at the process boundary unless it is named on the command
 	// line: the child opens the store fresh and knows only its arguments. Without
 	// it a pre-modules module is analysed with no build list, which is what left
 	// this population failing.
 	if walkID != "" {
-		args = append(args, "--from-walk", walkID)
+		args = append(args, "--"+cgports.ChildFlagFromWalk, walkID)
 	}
 
 	// The subprocesses carry their own bound, however wide the module pool is:

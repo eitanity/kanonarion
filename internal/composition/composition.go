@@ -127,8 +127,13 @@ func BackendSections() []string {
 // loadStoreConfig reads <storeRoot>/config.yaml; an absent file is the
 // built-in defaults.
 func loadStoreConfig(storeRoot string) (configdomain.Config, error) {
-	path := filepath.Join(storeRoot, "config.yaml")
-	cfg, err := configyaml.New(path, BackendSections()...).LoadConfig(context.Background())
+	return LoadConfigFile(context.Background(), filepath.Join(storeRoot, "config.yaml"))
+}
+
+// LoadConfigFile reads the configuration file at path; an absent file is the
+// built-in defaults.
+func LoadConfigFile(ctx context.Context, path string) (configdomain.Config, error) {
+	cfg, err := configyaml.New(path, BackendSections()...).LoadConfig(ctx)
 	if err != nil {
 		return configdomain.Config{}, fmt.Errorf("loading store configuration: %w", yamlkeys.InFile(err, path))
 	}
@@ -310,6 +315,9 @@ type Driver struct {
 	// Rescan re-scans a stored walk against a fresh or pinned advisory
 	// snapshot, as `vuln-scan-rescan <walk-id>` does.
 	Rescan *driver.RescanUseCase
+	// CallGraphBuild builds and stores one module version's call graph in the
+	// call-graph child, as `callgraph <module>@<version>` does.
+	CallGraphBuild *driver.CallGraphBuildUseCase
 	// ValidateIngest is the verified-fact boundary: it validates imported records
 	// against the same invariants extracted ones satisfy before persisting them
 	// (Ingest), and re-verifies records fail-closed on read (ReadVerified). Powers
@@ -414,6 +422,39 @@ func newDriverFrom(st *storage.Storage, storeRoot string, cfg configdomain.Confi
 		}
 	}
 
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	clk := clock.System{}
+	stopwatch := clock.Monotonic{}
+	fetchUC, err := NewDriverFetch(st, storeRoot, cfg, clk, stopwatch, logger)
+	if err != nil {
+		return nil, nil, errors.Join(err, closeStorage(st))
+	}
+
+	pipeline, err := newWalkExtract(st, fetchUC, clk, stopwatch, logger, cgSubprocessExec, storeRoot)
+	if err != nil {
+		return nil, nil, errors.Join(err, closeStorage(st))
+	}
+	scanWalk, rescanWalk := newScanPipeline(st, fetchUC, clk, logger, storeRoot, cfg.VulnDB.Mirror())
+
+	d := &Driver{
+		FetchServe: fetchapp.NewServeModuleUseCase(fetchUC, st.Blobs).WithAudit(st.Audit),
+		LocalWalkExtract: driver.NewLocalWalkExtractUseCase(pipeline.walk, pipeline.extract, pipeline.stages).
+			WithWorkspaceProbe(walkbuildlist.New("", logger)),
+		CoordinateAnalysis: driver.NewCoordinateAnalysisUseCase(pipeline.walk, pipeline.extract, scanWalk, pipeline.stages, privateModulePath),
+		Rescan:             driver.NewRescanUseCase(rescanWalk),
+		CallGraphBuild:     driver.NewCallGraphBuildUseCase(pipeline.stageRunner, st.CallGraphOutcomes, cgapp.PipelineVersion),
+		ValidateIngest:     fetchapp.NewValidateAndIngestUseCase(st.Facts).WithAudit(st.Audit),
+		staleness:          st.Staleness,
+		stalenessTTL:       cfg.Staleness.TTL,
+	}
+	return d, func() error { return closeStorage(st) }, nil
+}
+
+// NewDriverFetch is the driver's fetch pipeline over st: the module proxy
+// $GOPROXY names, the checksum database cached under the configured directory,
+// git cross-verification, the storage's signer and audit sink. The call-graph
+// child an importing application serves fetches through it too.
+func NewDriverFetch(st *storage.Storage, storeRoot string, cfg configdomain.Config, clk clock.System, stopwatch clock.Monotonic, logger *slog.Logger) (*fetchapp.FetchModuleUseCase, error) {
 	// The driver serves the offline half of the product too — extract and the
 	// air-gap bundle's ingest side — so an environment that declares no module
 	// fetching does not stop it being built. It gets an adapter that refuses
@@ -425,7 +466,7 @@ func newDriverFrom(st *storage.Storage, storeRoot string, cfg configdomain.Confi
 	case fetchproxy.IsRefusal(err):
 		proxy = fetchproxy.Refusing(err)
 	case err != nil:
-		return nil, nil, errors.Join(fmt.Errorf("creating proxy adapter: %w", err), closeStorage(st))
+		return nil, fmt.Errorf("creating proxy adapter: %w", err)
 	default:
 		proxy = dp
 	}
@@ -434,9 +475,6 @@ func newDriverFrom(st *storage.Storage, storeRoot string, cfg configdomain.Confi
 	if signer == nil {
 		signer = noopsigner.New()
 	}
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	clk := clock.System{}
-	stopwatch := clock.Monotonic{}
 	fetchUC := fetchapp.NewFetchModuleUseCase(
 		proxy, fetchvcs.New(), st.Blobs, st.Facts,
 		fetchsumdb.New(cfg.Storage.SumDBCacheDir(storeRoot)),
@@ -452,24 +490,7 @@ func newDriverFrom(st *storage.Storage, storeRoot string, cfg configdomain.Confi
 	if goenv.HasNoProxyPatterns() {
 		fetchUC = fetchUC.WithPrivateModules(goenv.NoProxy, nil)
 	}
-
-	pipeline, err := newWalkExtract(st, fetchUC, clk, stopwatch, logger, cgSubprocessExec, storeRoot)
-	if err != nil {
-		return nil, nil, errors.Join(err, closeStorage(st))
-	}
-	scanWalk, rescanWalk := newScanPipeline(st, fetchUC, clk, logger, storeRoot, cfg.VulnDB.Mirror())
-
-	d := &Driver{
-		FetchServe: fetchapp.NewServeModuleUseCase(fetchUC, st.Blobs).WithAudit(st.Audit),
-		LocalWalkExtract: driver.NewLocalWalkExtractUseCase(pipeline.walk, pipeline.extract, pipeline.stages).
-			WithWorkspaceProbe(walkbuildlist.New("", logger)),
-		CoordinateAnalysis: driver.NewCoordinateAnalysisUseCase(pipeline.walk, pipeline.extract, scanWalk, pipeline.stages, privateModulePath),
-		Rescan:             driver.NewRescanUseCase(rescanWalk),
-		ValidateIngest:     fetchapp.NewValidateAndIngestUseCase(st.Facts).WithAudit(st.Audit),
-		staleness:          st.Staleness,
-		stalenessTTL:       cfg.Staleness.TTL,
-	}
-	return d, func() error { return closeStorage(st) }, nil
+	return fetchUC, nil
 }
 
 // privateModulePath reports a module path GONOPROXY (else GOPRIVATE) names:
@@ -490,6 +511,8 @@ type walkExtract struct {
 	walk    *walkapp.ExecuteWalkUseCase
 	extract *extractapp.ExtractUseCase
 	stages  []string
+	// stageRunner runs one stage for one coordinate, as the extraction does.
+	stageRunner *extextractor.AdapterExtractor
 }
 
 // newWalkExtract wires the walk and extraction pipelines over the storage
@@ -549,6 +572,10 @@ func newWalkExtract(
 	// One reporter for both uses: the bound is sized from it once, and the
 	// headroom gate re-reads it before each analysis starts.
 	driverHostMemory := meminfo.New()
+	stageRunner := extextractor.NewAdapterExtractor(licExtractUC, ifaceExtractUC, cgSubprocessExec, cgStore, cgapp.PipelineVersion,
+		extextractor.CallGraphSubprocessArgs(storeRoot, ""), exExtractUC).WithLogger(logger).
+		WithCallgraphConcurrency(extextractor.ResolveCallgraphConcurrency(0, driverHostMemory, logger)).
+		WithHostMemory(driverHostMemory)
 	extractUC, err := extractapp.NewExtractUseCase(extractapp.Config{
 		Runs:  extStore,
 		Walks: walkStore,
@@ -564,10 +591,7 @@ func newWalkExtract(
 		// The subprocesses are bounded separately from the module pool, and sized
 		// from this host: the driver takes no operator value, so it asks for the
 		// host-derived default rather than leaving the memory term unread.
-		Extractor: extextractor.NewAdapterExtractor(licExtractUC, ifaceExtractUC, cgSubprocessExec, cgStore, cgapp.PipelineVersion,
-			extextractor.CallGraphSubprocessArgs(storeRoot, ""), exExtractUC).WithLogger(logger).
-			WithCallgraphConcurrency(extextractor.ResolveCallgraphConcurrency(0, driverHostMemory, logger)).
-			WithHostMemory(driverHostMemory),
+		Extractor: stageRunner,
 		Stages:    stages,
 		Clock:     clk,
 		Stopwatch: stopwatch,
@@ -582,7 +606,7 @@ func newWalkExtract(
 	if err != nil {
 		return walkExtract{}, fmt.Errorf("wiring extract use case: %w", err)
 	}
-	return walkExtract{walk: executeWalkUC, extract: extractUC.WithAudit(audit), stages: stages.Stages()}, nil
+	return walkExtract{walk: executeWalkUC, extract: extractUC.WithAudit(audit), stages: stages.Stages(), stageRunner: stageRunner}, nil
 }
 
 // newScanPipeline wires the walk scan and the re-scan over one module

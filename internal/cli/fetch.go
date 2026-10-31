@@ -159,21 +159,26 @@ func runFetchScope(ctx context.Context, gomodPath string, scope depScope, f fetc
 	}
 	// The require entries: a fetch of a replaced module is a fetch of the
 	// requirement as the walk resolves it, and the walk applies the replacement
-	// itself.
-	coords := requiredCoords(mods)
+	// itself. A local-path replacement is compiled from a directory, so there is
+	// nothing published to fetch and its path is never named to a proxy.
+	coords := publishedCoords(mods)
 	// Which set is about to be fetched, on the same channel as the progress line
 	// below it and before the empty-scope return, so a fetch that pulled nothing
 	// still says which set was empty.
-	if nerr := writeDepScopeNotice(stderr, res, len(coords), false); nerr != nil {
+	if nerr := writeDepScopeNotice(stderr, res, len(mods), false); nerr != nil {
 		return nerr
 	}
-	if len(coords) == 0 {
+	if len(mods) == 0 {
 		// Diagnostic, not data: keep stdout clean so a --json caller reading
 		// the per-module object stream is not handed prose on an empty scope.
 		_, _ = fmt.Fprintf(stderr, "no %s dependencies found in %s\n", scope, gomodPath)
 		return nil
 	}
-	_, _ = fmt.Fprintf(stderr, "fetching %d %s modules from %s\n", len(coords), scope, gomodPath)
+	progress := fmt.Sprintf("fetching %d %s modules from %s", len(coords), scope, gomodPath)
+	if local := len(mods) - len(coords); local > 0 {
+		progress += fmt.Sprintf("; %d compiled from a local directory, not fetched", local)
+	}
+	_, _ = fmt.Fprintln(stderr, progress)
 	if goSum := filepath.Join(filepath.Dir(gomodPath), "go.sum"); statOK(goSum) {
 		f.scopeGoSum = goSum
 	}

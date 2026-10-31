@@ -436,6 +436,9 @@ func projectScopeModules(ctx context.Context, gomodPath string, scope depScope, 
 // provides, and nothing for any other package.
 const goListMainModuleFmt = `{{if and .Module .Module.Main}}{{.Module.Path}}{{end}}`
 
+// goListMainBuildListFmt is the same for a build-list module (`go list -m`).
+const goListMainBuildListFmt = `{{if .Main}}{{.Path}}{{end}}`
+
 // workspaceMembersInScope returns the go.work members, other than the project
 // itself, whose packages the scope's build reaches. The scope's module records
 // drop every main module, and inside a workspace that is each member, so they
@@ -453,9 +456,14 @@ func workspaceMembersInScope(ctx context.Context, gomodPath string, scope depSco
 	if err != nil || args == nil {
 		return nil, err
 	}
+	format := goListMainModuleFmt
+	if scope == scopeComplete {
+		// The complete scope lists build-list modules, not packages.
+		format = goListMainBuildListFmt
+	}
 	for i := range args {
 		if args[i] == "-f" && i+1 < len(args) {
-			args[i+1] = goListMainModuleFmt
+			args[i+1] = format
 		}
 	}
 	self, err := readGoModulePath(gomodPath)

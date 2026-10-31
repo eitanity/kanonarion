@@ -5,7 +5,6 @@
 package main
 
 import (
-	"fmt"
 	"os"
 
 	"code.eitanity.com/kanonarion/internal/cli"
@@ -16,12 +15,10 @@ import (
 func main() {
 	// Backends are registered here, never from init, so a binary's storage
 	// choices are the ones its own main names.
-	if err := storage.Register(sqlitestorage.Backend()); err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(cli.ExitCodeForError(err))
+	if code := cli.ExitStatus(storage.Register(sqlitestorage.Backend()), os.Stderr); code != cli.ExitOK {
+		os.Exit(code)
 	}
-	if err := cli.Run(os.Args[1:], os.Stdout, os.Stderr); err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(cli.ExitCodeForError(err))
+	if code := cli.ExitStatus(cli.Run(os.Args[1:], os.Stdout, os.Stderr), os.Stderr); code != cli.ExitOK {
+		os.Exit(code)
 	}
 }

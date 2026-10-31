@@ -291,7 +291,6 @@ kanonarion walk --gomod ./go.mod
 | Root coordinate | The `module` path from `go.mod`, at the synthetic version `local` |
 | Root resolution source | `local_main_module` - an unfetched anchor node; the main module is private/local, has no proxy artefact, and carries no `fetch_record` |
 | Set | The scope's module set (default `code`); see [Scopes](#scopes-code-tool-complete) |
-| `walk-list --latest-success` | Returns the project walk, so downstream `extract` / `vuln-scan` / `sbom` operate on the project |
 | SBOM subject | `metadata.component` resolves to the local module (`pkg:golang/<module>@local`); the scoped set becomes `components` |
 
 ## Scopes (`code`, `tool`, `complete`)

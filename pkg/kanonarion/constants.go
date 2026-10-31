@@ -69,6 +69,17 @@ const (
 	AnalysisSurfaceVendored = vulndomain.AnalysisSurfaceVendored
 )
 
+// The values of AnswerOutcome, as the internal package defines them.
+//
+// Stability: supporting constants of the AnswerOutcome type; unstable pre-v1.
+// Values may be added within a major version; treat an unrecognised value
+// conservatively.
+const (
+	AnswerResolvedAbsent  = callgraphdomain.AnswerResolvedAbsent
+	AnswerResolvedPresent = callgraphdomain.AnswerResolvedPresent
+	AnswerUnresolved      = callgraphdomain.AnswerUnresolved
+)
+
 // The values of ArtifactKind, as the internal package defines them.
 //
 // Stability: supporting constants of the ArtifactKind type; unstable pre-v1.
@@ -518,6 +529,22 @@ const (
 	ReachabilityInstrumentUnrecorded   = vulndomain.AnalyserUnrecorded
 )
 
+// The values of ReachabilityState, as the internal package defines them.
+//
+// Stability: supporting constants of the ReachabilityState type; unstable
+// pre-v1. Values may be added within a major version; treat an unrecognised
+// value conservatively.
+const (
+	ReachabilityStateNotAffected      = vulndomain.StateNotAffected
+	ReachabilityStateNotAnalysed      = vulndomain.StateNotAnalysed
+	ReachabilityStateNotComputed      = vulndomain.StateNotComputed
+	ReachabilityStateNotDetermined    = vulndomain.StateNotDetermined
+	ReachabilityStateNotReachable     = vulndomain.StateNotReachable
+	ReachabilityStatePackageLevelOnly = vulndomain.StatePackageLevelOnly
+	ReachabilityStateReachable        = vulndomain.StateReachable
+	ReachabilityStateWithdrawn        = vulndomain.StateWithdrawn
+)
+
 // The values of RecordCoverageStatus, as the internal package defines them.
 //
 // Stability: supporting constants of the RecordCoverageStatus type; unstable pre-v1.
@@ -625,6 +652,26 @@ const (
 // conservatively (§4).
 const (
 	SBOMFormatCycloneDX16 = sbomdomain.CycloneDX16
+)
+
+// The values of SinkKind, as the internal package defines them.
+//
+// Stability: supporting constants of the SinkKind type; unstable pre-v1.
+// Values may be added within a major version; treat an unrecognised value
+// conservatively.
+const (
+	SinkAssemblyOrLinknameLeaf    = callgraphdomain.SinkAssemblyOrLinknameLeaf
+	SinkDroppedPackageEdges       = callgraphdomain.SinkDroppedPackageEdges
+	SinkInterfaceDispatch         = callgraphdomain.SinkInterfaceDispatch
+	SinkModuleSurfaceUnenumerated = callgraphdomain.SinkModuleSurfaceUnenumerated
+	SinkPluginLeaf                = callgraphdomain.SinkPluginLeaf
+	SinkReferenceScopeUnmeasured  = callgraphdomain.SinkReferenceScopeUnmeasured
+	SinkReflectDispatch           = callgraphdomain.SinkReflectDispatch
+	SinkTestHarnessEntry          = callgraphdomain.SinkTestHarnessEntry
+	SinkTestScopeUnmeasured       = callgraphdomain.SinkTestScopeUnmeasured
+	SinkTypeOnlyCallee            = callgraphdomain.SinkTypeOnlyCallee
+	SinkUnresolvedEdge            = callgraphdomain.SinkUnresolvedEdge
+	SinkUnsafePointerLeaf         = callgraphdomain.SinkUnsafePointerLeaf
 )
 
 // The values of StageStatus, as the internal package defines them.

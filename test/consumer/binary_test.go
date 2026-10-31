@@ -3,45 +3,48 @@ package consumer_test
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sync"
 	"testing"
+
+	"code.eitanity.com/kanonarion/pkg/kanonarion"
 )
 
-// childBinaryEnv names the kanonarion binary this test binary stands in for
-// when a driver spawns it as its call-graph child. A consumer's own binary
-// embeds the CLI; this one forwards to a built one instead, because it may
-// import nothing but pkg/kanonarion.
-const childBinaryEnv = "KANONARION_CONSUMER_CHILD_BINARY"
+// noCallGraphEnv makes this binary an application that does not serve the
+// call-graph child: it refuses the argv as a main with no such command would.
+const noCallGraphEnv = "KANONARION_CONSUMER_NO_CALLGRAPH"
 
+// noCallGraphMessage is that refusal, which the parent records on the stage.
+const noCallGraphMessage = `unknown command "callgraph"`
+
+// TestMain is this test binary's main, shaped as an importing application's:
+// it registers its backends, then serves the call-graph child when the driver
+// starts this executable as one. Answered before the tests run, or a child
+// would run the whole suite again.
 func TestMain(m *testing.M) {
-	if bin := os.Getenv(childBinaryEnv); bin != "" && len(os.Args) > 1 && os.Args[1] == "callgraph" {
-		os.Exit(forward(bin, os.Args[1:]))
+	for _, b := range []kanonarion.Backend{probeBackend(), filesBackend()} {
+		if err := kanonarion.RegisterBackend(b); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+	}
+	if len(os.Args) > 1 && os.Args[1] == "callgraph" {
+		if os.Getenv(noCallGraphEnv) != "" {
+			fmt.Fprintf(os.Stderr, "error: %s\n", noCallGraphMessage)
+			os.Exit(2)
+		}
+		os.Exit(kanonarion.ServeCallGraphChild(os.Args[1:], os.Stdout, os.Stderr))
 	}
 	code := m.Run()
-	if builtDir != "" {
-		_ = os.RemoveAll(builtDir)
+	for _, dir := range []string{builtDir, govulncheckDir} {
+		if dir != "" {
+			_ = os.RemoveAll(dir)
+		}
 	}
 	os.Exit(code)
-}
-
-// forward runs bin with args on this process's streams and returns its exit
-// code.
-func forward(bin string, args []string) int {
-	cmd := exec.Command(bin, args...) // #nosec G204 G702 -- the binary this test built
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
-	err := cmd.Run()
-	var exit *exec.ExitError
-	switch {
-	case err == nil:
-		return 0
-	case errors.As(err, &exit):
-		return exit.ExitCode()
-	default:
-		return 1
-	}
 }
 
 var (

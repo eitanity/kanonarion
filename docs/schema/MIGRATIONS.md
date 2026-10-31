@@ -170,6 +170,33 @@ values there, as they did when `verdict` and `reachability_state` gained theirs)
   a record that names no frame. `callgraph-show` text gains a `frame:` line and
   `--history` a `frame:` line per generation, both absent on such a record.
 
+## SBOM: pipeline `0.10.0` → `0.11.0`
+
+**Document bytes change; no store migration.** The bump makes stored `0.10.0`
+documents unreachable through the cache, and a request regenerates. The
+document now states only public facts, in CycloneDX fields where one exists:
+
+- **Removed:** `kanonarion:pipeline_version`; `kanonarion:document:timestamp_basis`;
+  `kanonarion:licence:newest_extraction`; `kanonarion:stdlib:verification`,
+  `verification_detail`, `published_sha256` and `anchor_limitation`;
+  every `kanonarion:tinygo:custody:*` property; `kanonarion:native:generation`,
+  `confidence`, `advisories_searched` and `licence_determined`; and
+  `kanonarion:build:goarm` off `arm`.
+- **Offline stdlib:** a `--from-modcache` document's stdlib carries no `hashes`
+  (they were over a manifest of the local source, not the published tarball)
+  and no `distribution` reference (it named the local `$GOROOT/src` path).
+- **Moved:** the stdlib's published checksum is the `distribution` reference's
+  `hashes`; a native component's version provenance is its `evidence.identity`,
+  and it is a subject of the licence-completeness annotation (exit `1` is unchanged).
+- **Renamed:** `kanonarion:build:goos`, `goarch` and `go_version` are
+  `cdx:gomod:build:env:GOOS`, `GOARCH` and `GOVERSION`.
+- **Tool version:** `metadata.tools` and every annotator name the binary's
+  release, not the pipeline version.
+- **Serial:** `serialNumber` is an RFC 4122 version-5 UUID over the document's
+  bytes with the serial left out, so two different documents never share one.
+- **Timestamp:** `metadata.timestamp` is present only with `--generated-at`, and
+  such a document is not stored, so a later plain `sbom` is never served it.
+
 ## Vulnerability store: module `vuln`, migration 17 - snapshots keyed on their bytes, and where they came from
 
 **A table rebuild, one additive field, no pipeline bump.** Migration 17
@@ -223,8 +250,7 @@ established grouped by reason (each reason once, with its sorted paths). It
 is `omitempty`, so every walk recorded before it, and every walk without
 `--tinygo`, keeps its content hash and its identity. `--gomod` walks always
 re-resolve, so the walk pipeline stays `1.11.0` and the next TinyGo walk
-records the field. `walk-show --json` carries it. The SBOM's TinyGo component
-gains the `kanonarion:tinygo:custody:*` properties.
+records the field. `walk-show --json` carries it.
 
 An older build meets a `v92` store at the schema gate: it names `tinygo@v1` as
 a migration it does not know and refuses, and `store info` still reads the
@@ -1628,42 +1654,21 @@ After the change, 0 of 128.
 
 ## SBOM: pipeline `0.9.0` → `0.10.0`
 
-**Document bytes change; no store migration.** SBOM records are cached on
-`(walk id, scan run id, format, pipeline version)`, so the bump makes stored
-`0.9.0` documents unreachable and a request regenerates. Nothing is purged.
-Eleven stored records go dark at once, of which **three** would come back
-different — the two `cortezaproject/corteza/server` walks and the
-`pbinitiative/zenbpm` one, each carrying a cgo module whose C library has been
-identified. The other eight regenerate byte-identical.
-
-The behaviour that forced it: the document could not previously contain a
-component that is not a Go module. A cgo module ships C source inside its own
-zip and compiles it into the binary, and where that library has been identified
-it is now emitted as a `pkg:generic` component, carrying the declaration it was
-read from and a `dependsOn` edge from the Go module that ships it. A `0.9.0`
-document of such a walk lists the Go module and not the library inside it, so it
-understates what the binary contains.
-
-A walk with no identified native component produces byte-identical bytes at both
-versions, so the bump costs those documents a regeneration and changes nothing
-about them.
+**Document bytes change; no store migration.** The bump makes stored `0.9.0`
+documents unreachable through the cache, and a request regenerates. An
+identified C library that a cgo module ships inside its own zip is now a
+`pkg:generic` component, with the declaration it was read from and a `dependsOn`
+edge from the Go module that ships it. A walk with no identified native
+component produces the same bytes at both versions.
 
 ## SBOM: pipeline `0.8.0` → `0.9.0`
 
-**Document bytes change; no store migration.** SBOM records are cached on
-`(walk id, scan run id, format, pipeline version)`, so the bump makes stored
-`0.8.0` documents unreachable and a request regenerates. Nothing is purged. Six
-stored records go dark at once.
-
-Two behaviours forced it:
-
-- **External references were assembled from the module path**, unconditionally —
-  a `vcs` URL and a `proxy.golang.org` distribution URL on every component, with
-  no branch for a local coordinate, a replace, a vendored tree or a private path.
-  Neither was read from anything measured. A component now carries a `vcs`
-  reference only where the fetch ledger holds one.
-- The subject asserted a proxy download for `@v/local.zip`, which the proxy does
-  not serve.
+**Document bytes change; no store migration.** The bump makes stored `0.8.0`
+documents unreachable through the cache. External references were assembled
+from the module path — a `vcs` URL and a `proxy.golang.org` distribution URL on
+every component, the subject's `@v/local.zip` included — and nothing measured
+them. A component now carries a `vcs` reference only where the fetch ledger
+holds one.
 
 ## SBOM: pipeline `0.7.0` → `0.8.0`
 
@@ -1674,22 +1679,11 @@ over the document bytes, not over a canonical struct, so there is no sealed
 shape to migrate and nothing is purged: the stored `0.7.0` documents stay
 readable and simply stop being reachable, and a request regenerates.
 
-The behaviour that forced the bump: the standard-library component's
-`kanonarion:stdlib:anchor_limitation` property was one fixed sentence — anchored
-to the go.dev/dl published checksum and the googlesource tag/commit — emitted
-whatever the measurement had reached. An offline run records
-`VerifiedLocalToolchain`, whose detail says the published checksum was not
-consulted and the commit anchor was skipped, and the fixed sentence asserted both
-of them three lines later. The property is now derived from the verification
-status and from whether a commit anchor was resolved, so it names the anchors
-reached and, separately, those that were not. Every stdlib-bearing document
-changes bytes, including the connected-side ones, because the wording changed on
-all routes.
-
-**The stored `0.7.0` documents are wrong where they were generated offline.** The
-bump makes them unreachable through the cache; it does not correct copies already
-shipped. A document already handed to a consumer states an anchor its own
-verification detail denies, and re-issuing it is the only fix for that copy.
+The behaviour that forced the bump: the stdlib `anchor_limitation` property was
+one fixed sentence whatever the measurement reached, so an offline document
+claimed anchors its own verification detail denied. It was derived from the
+status from then on, and `0.11.0` removed it. Copies already shipped are not
+corrected by the bump.
 
 ## FIPS record: pipeline `0.2.0` → `0.3.0`
 

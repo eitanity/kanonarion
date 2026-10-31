@@ -2,7 +2,7 @@
 $ kanonarion sbom-list
 exit 0
 --- stdout ---
-sbom-0ed0d446e8b1df79da9df249  walk=01ARZ3NDEKTSV4RRFFQ69G5FB3  format=cyclonedx-1.6   2026-02-03T11:30:00Z
-sbom-6ab110cfbe74526bbc14ccc9  walk=01ARZ3NDEKTSV4RRFFQ69G5FB1  format=cyclonedx-1.6   2026-02-03T11:30:00Z
+sbom-4e21a22cee7cb094152f22e1  walk=01ARZ3NDEKTSV4RRFFQ69G5FB3  format=cyclonedx-1.6   2026-02-03T11:30:00Z
+sbom-0bcbba1e2ba0fbae268b806e  walk=01ARZ3NDEKTSV4RRFFQ69G5FB1  format=cyclonedx-1.6   2026-02-03T11:30:00Z
 --- stderr ---
 (empty)

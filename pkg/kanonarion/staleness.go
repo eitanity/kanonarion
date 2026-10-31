@@ -44,6 +44,22 @@ type StalenessAnswer = staleapp.Answer
 // Grows only by a new optional interface, never by adding a method (§4).
 type LatestResolver = stalenessports.LatestResolver
 
+// RoundResolver is a LatestResolver that can also answer a round of paths
+// without waiting inside it: AskOnce asks each path once, and Settle re-asks
+// the unsettled answers together. Optional; a LatestResolver without it is
+// asked once per path, waiting for each.
+//
+// Stability: optional substitution port (implemented by consumers); unstable
+// pre-v1.
+type RoundResolver = stalenessports.RoundResolver
+
+// RoundAnswer is one path's answer in a RoundResolver round, with whether it
+// is worth asking again.
+//
+// Stability: port value type (returned by consumers); unstable pre-v1. Fields
+// may be added within a major version.
+type RoundAnswer = stalenessports.RoundAnswer
+
 // LatestInfo is a LatestResolver's answer: the version and its publication
 // time, zero when the upstream supplied none.
 //

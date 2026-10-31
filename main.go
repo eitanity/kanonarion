@@ -13,15 +13,18 @@
 package main
 
 import (
-	"fmt"
 	"os"
 
 	"code.eitanity.com/kanonarion/internal/cli"
+	"code.eitanity.com/kanonarion/internal/composition/storage"
+	sqlitestorage "code.eitanity.com/kanonarion/internal/composition/storage/sqlite"
 )
 
 func main() {
-	if err := cli.Run(os.Args[1:], os.Stdout, os.Stderr); err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(cli.ExitCodeForError(err))
+	if code := cli.ExitStatus(storage.Register(sqlitestorage.Backend()), os.Stderr); code != cli.ExitOK {
+		os.Exit(code)
+	}
+	if code := cli.ExitStatus(cli.Run(os.Args[1:], os.Stdout, os.Stderr), os.Stderr); code != cli.ExitOK {
+		os.Exit(code)
 	}
 }

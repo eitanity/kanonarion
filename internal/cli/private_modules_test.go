@@ -25,8 +25,8 @@ import (
 // and a public one (example.org/pub), both primed in its own module cache, with
 // an HTTPS module proxy that serves both and records every path it is asked.
 type privateFixture struct {
-	project, modcache, store, gitLog string
-	proxyURL, proxyAddr              string
+	project, modcache, store, gitLog, goLog string
+	proxyURL, proxyAddr                     string
 
 	mu    sync.Mutex
 	paths []string
@@ -36,7 +36,7 @@ type privateRun struct {
 	stdout, stderr string
 	exit           int
 	paths, dials   []string
-	git            []string
+	git, goArgs    []string
 }
 
 func buildPrivateFixture(t *testing.T) *privateFixture {
@@ -53,10 +53,9 @@ func buildPrivateFixture(t *testing.T) *privateFixture {
 		project:  filepath.Join(root, "project"),
 		modcache: filepath.Join(root, "modcache"),
 		store:    filepath.Join(root, "store"),
-		gitLog:   filepath.Join(root, "git.log"),
 	}
-	proxyDir, bin := filepath.Join(root, "proxy"), filepath.Join(root, "bin")
-	for _, d := range []string{proxyDir, fx.modcache, fx.project, bin} {
+	proxyDir := filepath.Join(root, "proxy")
+	for _, d := range []string{proxyDir, fx.modcache, fx.project} {
 		if err := os.MkdirAll(d, 0o750); err != nil {
 			t.Fatal(err)
 		}
@@ -74,11 +73,23 @@ func buildPrivateFixture(t *testing.T) *privateFixture {
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("go mod tidy: %v\n%s", err, out)
 	}
+	fx.serve(t, root, proxyDir, realGo)
+	return fx
+}
 
+// serve puts the recording stubs on PATH and the recording proxy over
+// proxyDir in GOPROXY, trusted through SSL_CERT_FILE.
+func (fx *privateFixture) serve(t *testing.T, root, proxyDir, realGo string) {
+	t.Helper()
+	bin := filepath.Join(root, "bin")
+	if err := os.MkdirAll(bin, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	fx.gitLog, fx.goLog = filepath.Join(root, "git.log"), filepath.Join(root, "go.log")
 	// git answers nothing; the go command keeps its own route to the recorder
 	// but any direct fetch it makes is sent to a closed loopback port.
 	writeAirGapExec(t, filepath.Join(bin, "git"), "#!/bin/sh\nprintf '%s\\n' \"$*\" >> "+fx.gitLog+"\nexit 1\n")
-	writeAirGapExec(t, filepath.Join(bin, "go"), "#!/bin/sh\nHTTPS_PROXY=http://127.0.0.1:9 https_proxy=http://127.0.0.1:9 GOSUMDB=off exec "+realGo+" \"$@\"\n")
+	writeAirGapExec(t, filepath.Join(bin, "go"), "#!/bin/sh\nprintf '%s\\n' \"$*\" >> "+fx.goLog+"\nHTTPS_PROXY=http://127.0.0.1:9 https_proxy=http://127.0.0.1:9 GOSUMDB=off exec "+realGo+" \"$@\"\n")
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	for k, v := range map[string]string{"GOMODCACHE": fx.modcache, "GOENV": "off", "GOTOOLCHAIN": "local", "GOFLAGS": "",
 		"GOSUMDB": "", "GONOSUMDB": "", "GONOSUMCHECK": "", "GOPRIVATE": "", "GONOPROXY": ""} {
@@ -106,7 +117,6 @@ func buildPrivateFixture(t *testing.T) *privateFixture {
 	transport.TLSClientConfig = &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}
 	t.Cleanup(func() { transport.TLSClientConfig = original })
 	t.Setenv("GOPROXY", fx.proxyURL)
-	return fx
 }
 
 func publishPrivateFixtureModule(t *testing.T, proxyDir, path, pkg string) {
@@ -163,7 +173,7 @@ func (fx *privateFixture) run(t *testing.T, dir string, args ...string) privateR
 // runKeepingStore executes args from dir against the store as it stands.
 func (fx *privateFixture) runKeepingStore(t *testing.T, dir string, args ...string) privateRun {
 	t.Helper()
-	for _, p := range []string{fx.gitLog} {
+	for _, p := range []string{fx.gitLog, fx.goLog} {
 		if err := os.RemoveAll(p); err != nil {
 			t.Fatal(err)
 		}
@@ -181,7 +191,8 @@ func (fx *privateFixture) runKeepingStore(t *testing.T, dir string, args ...stri
 	fx.mu.Lock()
 	defer fx.mu.Unlock()
 	return privateRun{stdout: stdout.String(), stderr: stderr.String(), exit: ExitCodeForError(err),
-		paths: append([]string(nil), fx.paths...), dials: dials.addrs(), git: readAirGapLog(t, fx.gitLog)}
+		paths: append([]string(nil), fx.paths...), dials: dials.addrs(), git: readAirGapLog(t, fx.gitLog),
+		goArgs: readAirGapLog(t, fx.goLog)}
 }
 
 func namingCorp(lines []string) []string {

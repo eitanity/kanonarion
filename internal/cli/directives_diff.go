@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -252,7 +253,10 @@ func directivesListZeroScope(ctx context.Context, ctr *Container, project string
 	// An empty corpus is not something a page can start past, so no offset the
 	// caller passed is offered as the explanation here: the store-empty and
 	// no-scans-for-this-project statements both keep their own remedy.
-	return listZeroScope{
+	// A caller whose project has no scans over a store that holds some has
+	// mistyped it or is standing in the wrong tree; the projects held are what
+	// they choose from next.
+	return withProjectListings(ctx, ctr, listZeroScope{
 		subject:     "directive scan",
 		filterName:  "project",
 		filterValue: project,
@@ -260,14 +264,30 @@ func directivesListZeroScope(ctx context.Context, ctr *Container, project string
 		matchKind:   matchExact,
 		considered:  total,
 		produce:     "kanonarion directives",
-		// This CLI has no store-wide directive listing — every read is keyed on
-		// a project — so the remedy names the project slot rather than claiming
-		// an unfiltered invocation that does not exist. A caller whose project
-		// has no scans over a store that holds some has mistyped it or is
-		// standing in the wrong tree, and naming the right one is what they do
-		// next.
-		listAll: "kanonarion directives list --project <module-path>",
-	}, nil
+		listAll:     "kanonarion directives list --project <module-path>",
+	})
+}
+
+// withProjectListings gives a directive-scan statement over a stocked store one
+// listing per project held: scans list one project at a time, and no
+// invocation lists them all. A store that cannot name its projects keeps the
+// listing's shape.
+func withProjectListings(ctx context.Context, ctr *Container, scope listZeroScope) (listZeroScope, error) {
+	if scope.considered == 0 {
+		return scope, nil
+	}
+	projects, ok, err := ctr.QueryDirectives.ListScanProjects(ctx)
+	if err != nil {
+		return listZeroScope{}, fmt.Errorf("naming the projects for the zero-result notice: %w", err)
+	}
+	if ok && len(projects) > 0 {
+		named := projects[:min(len(projects), directiveProjectsNamed)]
+		for _, p := range named {
+			scope.listEach = append(scope.listEach, "kanonarion directives list --project "+p)
+		}
+		scope.listEachMore = len(projects) - len(named)
+	}
+	return scope, nil
 }
 
 // directiveScanMiss answers a `directives show` that named a scan the store
@@ -279,11 +299,26 @@ func directivesListZeroScope(ctx context.Context, ctr *Container, project string
 // count is the store-wide one, because a scan id is not keyed on a project —
 // the caller's project is not what excluded it.
 func directiveScanMiss(ctx context.Context, ctr *Container, scanID string, stderr io.Writer) error {
+	scope, err := directiveScanIDScope(ctx, ctr, scanID)
+	if err != nil {
+		return err
+	}
+	if jsonOut {
+		if werr := writeListZeroNoticeJSON(stderr, scope); werr != nil {
+			return werr
+		}
+	}
+	return &exitError{code: ExitNotFound, msg: listZeroLine(scope)}
+}
+
+// directiveScanIDScope is the not-found statement for a scan id, counted over
+// every scan in the store.
+func directiveScanIDScope(ctx context.Context, ctr *Container, scanID string) (listZeroScope, error) {
 	total, err := ctr.QueryDirectives.CountScans(ctx)
 	if err != nil {
-		return fmt.Errorf("counting directive scans for the not-found notice: %w", err)
+		return listZeroScope{}, fmt.Errorf("counting directive scans for the not-found notice: %w", err)
 	}
-	scope := listZeroScope{
+	return withProjectListings(ctx, ctr, listZeroScope{
 		subject:     "directive scan",
 		filterName:  "scan id",
 		filterValue: scanID,
@@ -292,13 +327,51 @@ func directiveScanMiss(ctx context.Context, ctr *Container, scanID string, stder
 		considered:  total,
 		produce:     "kanonarion directives",
 		listAll:     "kanonarion directives list --project <module-path>",
+	})
+}
+
+// directiveProjectsNamed caps the per-project listings a scan-id miss offers,
+// as a drift notice caps the entries it names.
+const directiveProjectsNamed = driftMaxNamed
+
+// directiveDiffMiss answers a `directives diff` naming a scan the store does
+// not hold as `directives show` does, and says which argument named it, as
+// vuln-scan-diff does.
+func directiveDiffMiss(ctx context.Context, ctr *Container, scanA, scanB string, diffErr error, stderr io.Writer) error {
+	missing := make([]string, 0, 2)
+	for _, id := range []string{scanA, scanB} {
+		_, found, err := ctr.QueryDirectives.GetScan(ctx, id)
+		if err != nil {
+			return fmt.Errorf("checking directive scan %s for the not-found notice: %w", id, err)
+		}
+		if !found {
+			missing = append(missing, id)
+		}
+	}
+	if len(missing) == 0 {
+		return fmt.Errorf("diffing directive scans: %w", diffErr)
+	}
+	scope, err := directiveScanIDScope(ctx, ctr, strings.Join(missing, ", "))
+	if err != nil {
+		return err
+	}
+	if len(missing) > 1 {
+		scope.filterValues = missing
+	}
+	side := "the <scan-id-a> argument"
+	switch {
+	case len(missing) == 2:
+		side = "both arguments"
+	case missing[0] == scanB:
+		side = "the <scan-id-b> argument"
 	}
 	if jsonOut {
 		if werr := writeListZeroNoticeJSON(stderr, scope); werr != nil {
 			return werr
 		}
 	}
-	return &exitError{code: ExitNotFound, msg: listZeroLine(scope)}
+	return &exitError{code: ExitNotFound, msg: fmt.Sprintf("%s named a directive scan the store does not hold; %s",
+		side, listZeroLine(scope))}
 }
 
 func newDirectivesShowCmd(stdout, stderr io.Writer) *cobra.Command {
@@ -388,18 +461,18 @@ func runDirectivesDiff(ctx context.Context, scanA, scanB string, stdout, stderr 
 	}
 	defer releaseStore(cleanup)
 
-	return directivesDiffWith(ctx, ctr, scanA, scanB, stdout)
+	return directivesDiffWith(ctx, ctr, scanA, scanB, stdout, stderr)
 }
 
 // directivesDiffWith holds the directives-diff logic over an injected
 // Container: a missing scan on either side is surfaced as ExitNotFound, then
 // changes are rendered (JSON or text). Split from runDirectivesDiff so the
 // not-found contract and render selection are testable without a live store.
-func directivesDiffWith(ctx context.Context, ctr *Container, scanA, scanB string, stdout io.Writer) error {
+func directivesDiffWith(ctx context.Context, ctr *Container, scanA, scanB string, stdout, stderr io.Writer) error {
 	diff, err := ctr.DiffDirectives.Diff(ctx, scanA, scanB)
 	if err != nil {
-		if notFound, ok := errors.AsType[*dirapp.ErrScanNotFound](err); ok {
-			return &exitError{code: ExitNotFound, msg: notFound.Error()}
+		if errors.As(err, new(*dirapp.ErrScanNotFound)) {
+			return directiveDiffMiss(ctx, ctr, scanA, scanB, err, stderr)
 		}
 		return fmt.Errorf("diffing directive scans: %w", err)
 	}

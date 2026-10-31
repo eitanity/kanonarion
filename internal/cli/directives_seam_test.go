@@ -38,11 +38,12 @@ func TestDirectivesShowWith_Renders(t *testing.T) {
 
 // A missing scan on either side of a diff is surfaced as ExitNotFound.
 func TestDirectivesDiffWith_ScanNotFound(t *testing.T) {
-	ctr := &Container{DiffDirectives: &testfakes.FakeDiffDirectives{
-		Err: &dirapp.ErrScanNotFound{ScanID: "SCAN-X"},
-	}}
+	ctr := &Container{
+		DiffDirectives:  &testfakes.FakeDiffDirectives{Err: &dirapp.ErrScanNotFound{ScanID: "SCAN-X"}},
+		QueryDirectives: &testfakes.FakeQueryDirectives{},
+	}
 	var out bytes.Buffer
-	err := directivesDiffWith(context.Background(), ctr, "SCAN-A", "SCAN-X", &out)
+	err := directivesDiffWith(context.Background(), ctr, "SCAN-A", "SCAN-X", &out, io.Discard)
 	requireExit(t, err, ExitNotFound)
 }
 
@@ -53,7 +54,7 @@ func TestDirectivesDiffWith_NoChanges(t *testing.T) {
 		Result: directivedomain.DirectiveDiff{ScanA: scan, ScanB: scan},
 	}}
 	var out bytes.Buffer
-	if err := directivesDiffWith(context.Background(), ctr, "SCAN-A", "SCAN-B", &out); err != nil {
+	if err := directivesDiffWith(context.Background(), ctr, "SCAN-A", "SCAN-B", &out, io.Discard); err != nil {
 		t.Fatalf("directivesDiffWith: %v", err)
 	}
 	// The population is stated with the zero: two scans agreeing on two
@@ -111,5 +112,28 @@ func TestDirectivesListWith_SnakeCaseJSON(t *testing.T) {
 	}
 	if !strings.Contains(got, `"id"`) || !strings.Contains(got, `"completed_at"`) {
 		t.Errorf("expected snake_case keys in --json output: %s", got)
+	}
+}
+
+// A scan id the store does not hold names one runnable listing per project the
+// store holds scans of, capped, and counts the rest.
+func TestDirectivesShowWith_MissNamesEachProjectsListing(t *testing.T) {
+	ctr := &Container{QueryDirectives: &testfakes.FakeQueryDirectives{
+		StoreScans: 5,
+		Projects:   []string{"example.com/a", "example.com/b", "example.com/c", "example.com/d", "example.com/e"},
+	}}
+	err := directivesShowWith(context.Background(), ctr, "SCAN-X", &bytes.Buffer{}, io.Discard)
+	requireExit(t, err, ExitNotFound)
+	for _, want := range []string{
+		"to list one project's directive scan(s): kanonarion directives list --project example.com/a",
+		"; or: kanonarion directives list --project example.com/c",
+		"(2 more project(s) hold one)",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("miss lacks %q: %v", want, err)
+		}
+	}
+	if strings.Contains(err.Error(), "example.com/d") || strings.Contains(err.Error(), "<module-path>") {
+		t.Errorf("miss names past the cap or a template: %v", err)
 	}
 }

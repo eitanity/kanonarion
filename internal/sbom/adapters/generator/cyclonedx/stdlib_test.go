@@ -105,9 +105,9 @@ func TestGenerate_StdlibComponent(t *testing.T) {
 	}
 }
 
-// TestGenerate_BuildEnvProperties verifies GOOS/GOARCH/GOVERSION are emitted as
-// CycloneDX metadata properties, so the SBOM states the platform its component
-// set is valid for.
+// TestGenerate_BuildEnvProperties verifies GOOS/GOARCH/GOVERSION are emitted
+// under the names the CycloneDX taxonomy registers, so the SBOM states the
+// platform its component set is valid for.
 func TestGenerate_BuildEnvProperties(t *testing.T) {
 	gen := cyclonedx.New(testPipelineVersion)
 	rec, err := gen.Generate(t.Context(), walkWithStdlibAndEnv(t), nil, makeGenReq())
@@ -119,15 +119,16 @@ func TestGenerate_BuildEnvProperties(t *testing.T) {
 		t.Fatalf("unmarshal bom: %v", err)
 	}
 	want := map[string]string{
-		"kanonarion:build:goos":       "linux",
-		"kanonarion:build:goarch":     "amd64",
-		"kanonarion:build:go_version": "go1.26.4",
+		"cdx:gomod:build:env:GOOS":      "linux",
+		"cdx:gomod:build:env:GOARCH":    "amd64",
+		"cdx:gomod:build:env:GOVERSION": "go1.26.4",
 	}
 	got := make(map[string]string)
 	for _, p := range b.Metadata.Properties {
-		if strings.HasPrefix(p.Name, "kanonarion:build:") {
-			got[p.Name] = p.Value
-		}
+		got[p.Name] = p.Value
+	}
+	if len(got) != len(want) {
+		t.Errorf("metadata properties = %v, want exactly %v", got, want)
 	}
 	for name, value := range want {
 		if got[name] != value {
@@ -151,13 +152,12 @@ func TestGenerate_NoBuildEnv_NoProperties(t *testing.T) {
 		t.Fatalf("unmarshal bom: %v", err)
 	}
 	for _, p := range b.Metadata.Properties {
-		if strings.HasPrefix(p.Name, "kanonarion:build:") {
-			t.Errorf("unexpected build property on a walk with no build env: %s", p.Name)
-		}
+		t.Errorf("unexpected metadata property on a walk with no build env: %s", p.Name)
 	}
 }
 
-// buildProperties is the kanonarion:build:* metadata properties in document order.
+// buildProperties is the build metadata properties in document order, each
+// name's namespace trimmed.
 func buildProperties(t *testing.T, walk walkdomain.WalkRecord) []string {
 	t.Helper()
 	rec, err := cyclonedx.New(testPipelineVersion).Generate(t.Context(), walk, nil, makeGenReq())
@@ -170,9 +170,8 @@ func buildProperties(t *testing.T, walk walkdomain.WalkRecord) []string {
 	}
 	var out []string
 	for _, p := range b.Metadata.Properties {
-		if strings.HasPrefix(p.Name, "kanonarion:build:") {
-			out = append(out, strings.TrimPrefix(p.Name, "kanonarion:build:")+"="+p.Value)
-		}
+		name := strings.TrimPrefix(strings.TrimPrefix(p.Name, "kanonarion:build:"), "cdx:gomod:build:env:")
+		out = append(out, name+"="+p.Value)
 	}
 	return out
 }
@@ -181,14 +180,22 @@ func buildProperties(t *testing.T, walk walkdomain.WalkRecord) []string {
 // none of them, so its document is unchanged.
 func TestGenerate_TinyGoBuildPropertiesOnlyOnATinyGoWalk(t *testing.T) {
 	if got, want := strings.Join(buildProperties(t, walkWithStdlibAndEnv(t)), " "),
-		"goos=linux goarch=amd64 go_version=go1.26.4"; got != want {
+		"GOOS=linux GOARCH=amd64 GOVERSION=go1.26.4"; got != want {
 		t.Errorf("standard build properties = %q, want %q", got, want)
 	}
 	pico := walkWithStdlibAndEnv(t)
 	pico.Graph.BuildEnv = walkdomain.BuildEnv{GOOS: "linux", GOARCH: "arm", GoVersion: "go1.27.2",
 		GOARM: "6", TinyGoTarget: "pico", TinyGoVersion: "0.42.0", TinyGoTags: []string{"tinygo", "pico"}}
 	if got, want := strings.Join(buildProperties(t, pico), " "),
-		"goos=linux goarch=arm goarm=6 go_version=go1.27.2 tinygo_target=pico tinygo_version=0.42.0 tinygo_tags=tinygo,pico"; got != want {
+		"GOOS=linux GOARCH=arm goarm=6 GOVERSION=go1.27.2 tinygo_target=pico tinygo_version=0.42.0 tinygo_tags=tinygo,pico"; got != want {
 		t.Errorf("TinyGo build properties = %q, want %q", got, want)
+	}
+	// tinygo reports a GOARM for every target; off arm it has no meaning.
+	wasm := walkWithStdlibAndEnv(t)
+	wasm.Graph.BuildEnv = walkdomain.BuildEnv{GOOS: "wasip1", GOARCH: "wasm", GoVersion: "go1.27.2",
+		GOARM: "6", TinyGoTarget: "wasip1", TinyGoVersion: "0.42.0", TinyGoTags: []string{"tinygo.wasm"}}
+	if got, want := strings.Join(buildProperties(t, wasm), " "),
+		"GOOS=wasip1 GOARCH=wasm GOVERSION=go1.27.2 tinygo_target=wasip1 tinygo_version=0.42.0 tinygo_tags=tinygo.wasm"; got != want {
+		t.Errorf("wasm TinyGo build properties = %q, want %q", got, want)
 	}
 }
