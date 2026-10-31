@@ -12,6 +12,9 @@ import (
 )
 
 // QueryInterfaceUseCase provides read-only access to stored interface records.
+//
+// Every method that takes a pipeline version reads PipelineVersion when given
+// an empty one.
 type QueryInterfaceUseCase struct {
 	store ifaceports.InterfaceStore
 }
@@ -23,6 +26,7 @@ func NewQueryInterfaceUseCase(store ifaceports.InterfaceStore) *QueryInterfaceUs
 
 // GetInterfaceRecord retrieves the interface record for a module coordinate.
 func (uc *QueryInterfaceUseCase) GetInterfaceRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (domain.InterfaceRecord, bool, error) {
+	pipelineVersion = servedPipeline(pipelineVersion)
 	rec, found, err := uc.store.GetInterfaceRecord(ctx, coord, pipelineVersion)
 	if err != nil {
 		return domain.InterfaceRecord{}, false, fmt.Errorf("getting interface record for %s: %w", coord, err)
@@ -43,6 +47,7 @@ var ErrNoInterfaceHistory = errors.New("this interface store keeps no generation
 // reported non-determination becomes examinable: both records that disagree are
 // still here, each naming the artefact it was computed from.
 func (uc *QueryInterfaceUseCase) InterfaceHistory(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) ([]domain.InterfaceRecord, error) {
+	pipelineVersion = servedPipeline(pipelineVersion)
 	lister, ok := uc.store.(ifaceports.InterfaceRecordLister)
 	if !ok {
 		return nil, ErrNoInterfaceHistory
@@ -95,6 +100,7 @@ func (uc *QueryInterfaceUseCase) ListInterfaceRecords(ctx context.Context, filte
 // other module's answer, which is the failure the ledger's conflict handling
 // exists to avoid. Callers render what they got and then fail.
 func (uc *QueryInterfaceUseCase) FindSymbol(ctx context.Context, symbolName, pipelineVersion string, scope coordinate.ModuleSet) ([]ifaceports.SymbolRef, error) {
+	pipelineVersion = servedPipeline(pipelineVersion)
 	refs, err := uc.store.FindSymbol(ctx, symbolName, pipelineVersion, scope)
 	if errors.Is(err, ifaceports.ErrInterfaceConflict) {
 		return refs, fmt.Errorf("finding symbol %q: %w", symbolName, err)
@@ -103,4 +109,14 @@ func (uc *QueryInterfaceUseCase) FindSymbol(ctx context.Context, symbolName, pip
 		return nil, fmt.Errorf("finding symbol %q: %w", symbolName, err)
 	}
 	return refs, nil
+}
+
+// servedPipeline is pv, or PipelineVersion when pv is empty. No record is
+// stored at an empty version, so an empty one would read nothing and answer
+// as if nothing were recorded.
+func servedPipeline(pv string) string {
+	if pv == "" {
+		return PipelineVersion
+	}
+	return pv
 }

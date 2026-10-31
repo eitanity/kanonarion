@@ -112,15 +112,11 @@ not `Clean`, and is reported in its own section with the retraction date. `Clean
 says no advisory ever applied; `Withdrawn` says one did and was withdrawn.
 
 **Drive the pipeline stage by stage.** `walk`, `extract`, and `vuln-scan` all
-key off a **walk id**. `walk` prints it, and you can always resolve the most
-recent successful walk:
+key off a **walk id**, which `walk` prints:
 
 ```bash
-# Walk a module and its full transitive closure (prints a walk id)
-kanonarion walk github.com/spf13/cobra@v1.8.1
-
-# Resolve the latest successful walk id (needs jq)
-WALK_ID=$(kanonarion walk-list --latest-success --json | jq -r '.id')
+# Walk a module and its full transitive closure; keep its walk id (needs jq)
+WALK_ID=$(kanonarion walk github.com/spf13/cobra@v1.8.1 --json | jq -r '.id')
 
 # Extract the facts for that walk (licences, interfaces, examples).
 # Call graphs are opt-in: add --stages callgraph, or let `inspect` run them.

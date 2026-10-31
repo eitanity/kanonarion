@@ -42,13 +42,8 @@ func TestMain(m *testing.M) {
 	// Run in process, in which case os.Executable() is this test binary and the
 	// testing package would run the whole suite again. See TestBinaryIsCLIEnv.
 	if os.Getenv(TestBinaryIsCLIEnv) == "1" && len(os.Args) > 1 && !strings.HasPrefix(os.Args[1], "-test.") {
-		if err := Run(os.Args[1:], os.Stdout, os.Stderr); err != nil {
-			// Mirror cmd/kanonarion/main.go: the CLI silences cobra's own error
-			// printing, so the entry point must surface the error itself.
-			fmt.Fprintf(os.Stderr, "error: %v\n", err)
-			os.Exit(1)
-		}
-		os.Exit(0)
+		// As cmd/kanonarion/main.go reports it, so the parent reads the same code.
+		os.Exit(ExitStatus(Run(os.Args[1:], os.Stdout, os.Stderr), os.Stderr))
 	}
 	// Set for this suite's children, never for the suite: this process was started
 	// by `go test`, and the variable is what tells its descendants apart from that.

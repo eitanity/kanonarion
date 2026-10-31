@@ -157,6 +157,33 @@ type RescanUseCase = driver.RescanUseCase
 // be added within a major version (§4).
 type RescanRequest = driver.RescanRequest
 
+// CallGraphBuildUseCase builds and stores the call graph of one fetched module
+// version, as `kanonarion callgraph <module>@<version>` does, on the driver's
+// storage. It starts the running executable again as the call-graph child, so
+// the application must serve that command line with ServeCallGraphChild. A
+// child that fails or stores no usable graph is an error naming the failure.
+// Driver.CallGraphBuild holds it.
+//
+// Stability: driver use case (called by consumers); unstable pre-v1. May gain
+// methods within a major version.
+type CallGraphBuildUseCase = driver.CallGraphBuildUseCase
+
+// CallGraphBuildRequest is the input to CallGraphBuildUseCase.Run: the
+// coordinate, whether to re-analyse past a stored graph, and an optional walk
+// whose build list a module published before Go modules is analysed against.
+//
+// Stability: request struct (passed by consumers); unstable pre-v1. Fields may
+// be added within a major version.
+type CallGraphBuildRequest = driver.CallGraphBuildRequest
+
+// CallGraphBuildResult is the output of CallGraphBuildUseCase.Run: what the
+// stored generation states about the analysis. Read the graph itself through
+// Open's QueryCallGraphUseCase.
+//
+// Stability: result type (received by consumers); unstable pre-v1. Fields may
+// be added within a major version.
+type CallGraphBuildResult = driver.CallGraphBuildResult
+
 // Driver is the write/serving surface (§1): a pointer to every driver
 // use case, constructed together against one store handle. Its
 // StalenessResolver method builds the staleness resolver over the store's

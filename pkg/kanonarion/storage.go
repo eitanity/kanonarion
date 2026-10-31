@@ -11,13 +11,15 @@ import (
 // every record store, the blob store, the audit sink, the attestation store and
 // the signer. A consumer builds one against the ports in this package and hands
 // it to OpenFrom or OpenDriverFrom; Validate names every required field left
-// nil. Signer, Schema, Writable, Close and ConfigHashes are optional: a nil
-// Signer is the no-op signer, a nil Writable is always writable, a nil Close
-// closes nothing, a nil ConfigHashes keeps no last recorded config hash.
+// nil, and refuses a Facts store that does not implement FactRecordComposer.
+// The other store capabilities in this package are optional. Signer, Schema,
+// Writable, Close and ConfigHashes are optional: a nil Signer is the no-op
+// signer, a nil Writable is always writable, a nil Close closes nothing, a nil
+// ConfigHashes keeps no last recorded config hash.
 //
 // Stability: storage value (filled by consumers); unstable pre-v1. It is a
 // struct that may gain fields within a major version, so a consumer sets
-// fields by name, never positionally (§4).
+// fields by name, never positionally.
 type Storage = storage.Storage
 
 // StorageRequest is what a storage backend is asked to open: the store root,

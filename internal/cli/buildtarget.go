@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"code.eitanity.com/kanonarion/internal/composition/cgchild"
 	"context"
 	"fmt"
 	"path/filepath"
@@ -9,7 +10,6 @@ import (
 
 	"code.eitanity.com/kanonarion/internal/adapters/goenv"
 	"code.eitanity.com/kanonarion/internal/walk/adapters/buildlist/gotoolchain"
-	"code.eitanity.com/kanonarion/internal/walk/adapters/buildlist/tinygo"
 	"github.com/spf13/cobra"
 )
 
@@ -187,17 +187,12 @@ func resolveBuildTarget(ctx context.Context, f buildTargetFlags, goBinary, dir s
 	return nil
 }
 
-// resolveTinyGoTarget settles a --tinygo declaration through the tinygo command
-// rather than `go tool dist list`, which knows no board names. Both refusals are
-// invocation errors: the command or the target name is what has to change.
+// resolveTinyGoTarget settles a --tinygo declaration through the tinygo
+// command, as the call-graph child does.
 func resolveTinyGoTarget(ctx context.Context, name string) error {
-	frame, err := tinygo.Probe(ctx, "", name)
+	pair, frame, err := cgchild.ProbeTinyGo(ctx, name)
 	if err != nil {
-		return &exitError{code: ExitConfig, msg: err.Error()}
-	}
-	pair, err := goenv.NewTarget(frame.GOOS(), frame.GOARCH())
-	if err != nil {
-		return &exitError{code: ExitConfig, msg: fmt.Sprintf("tinygo target %q: %v", name, err)}
+		return asExitError(err)
 	}
 	declare(pair, frame)
 	return nil

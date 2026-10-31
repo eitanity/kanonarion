@@ -21,7 +21,7 @@ for the complete build list.
 ./kanonarion latest --gomod ./go.mod
 ```
 
-Reports each direct code dependency's pinned version against the latest
+Reports each module in the code scope's pinned version against the latest
 published, with age. This is read-only - nothing is fetched or changed.
 
 **Observed (7 of 20 stale):**
@@ -50,11 +50,11 @@ to work against. Rooted at the local module (`target: local`), the set equals
 
 ```bash
 ./kanonarion walk --gomod ./go.mod --json > walk.json
-WALK_ID=$(./kanonarion walk-list --latest-success --json | jq -r '.id')
+WALK_ID=$(jq -r '.id' walk.json)
 ```
 
-`--latest-success` filters to succeeded walks and emits a single object, so a
-failed/empty walk can never leak into `$WALK_ID`.
+Take the id from the walk you just ran: `walk-list --latest-success` is the
+newest walk of any project in the store.
 
 **Observed:** `overall_status: 0`, 21 nodes, 50 edges, `partial: false`.
 
@@ -117,7 +117,7 @@ for v in v0.36.0 v0.37.0; do
   ./kanonarion callgraph golang.org/x/mod@$v
 done
 
-./kanonarion capability golang.org/x/mod@v0.37.0 --against golang.org/x/mod@v0.36.0
+./kanonarion capability golang.org/x/mod@v0.36.0 --against golang.org/x/mod@v0.37.0
 
 # A module the build has not had before: its whole capability set.
 ./kanonarion capability golang.org/x/mod@v0.37.0

@@ -217,6 +217,10 @@ func TestRunExamplesShow_ExampleNotFound(t *testing.T) {
 	if !strings.Contains(err.Error(), "not found") {
 		t.Errorf("expected 'not found' in error, got: %v", err)
 	}
+	if !strings.Contains(err.Error(), "to list its examples: kanonarion examples-list example.com/app@v1.0.0") {
+		t.Errorf("the miss names no listing of the record's examples: %v", err)
+	}
+	requireExit(t, err, ExitNotFound)
 }
 
 func TestRunExamplesShow_JSON(t *testing.T) {

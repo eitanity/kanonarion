@@ -59,3 +59,17 @@ func (uc *QueryDirectivesUseCase) CountScans(ctx context.Context) (int, error) {
 	}
 	return n, nil
 }
+
+// ListScanProjects returns each project the store holds scans of; ok is false
+// when the store cannot enumerate them.
+func (uc *QueryDirectivesUseCase) ListScanProjects(ctx context.Context) (projects []string, ok bool, err error) {
+	lister, ok := uc.store.(ports.ScanProjectLister)
+	if !ok {
+		return nil, false, nil
+	}
+	projects, err = lister.ListScanProjects(ctx)
+	if err != nil {
+		return nil, true, fmt.Errorf("listing directive scan projects: %w", err)
+	}
+	return projects, true, nil
+}

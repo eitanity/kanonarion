@@ -3,10 +3,9 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
-	"slices"
-	"sort"
 	"strings"
 
 	cgapp "code.eitanity.com/kanonarion/internal/callgraph/application"
@@ -139,7 +138,7 @@ type implementersResult struct {
 // three-valued verdict the edge queries use: an empty result must be
 // distinguishable from one the analysis could not decide.
 func runImplementers(ctx context.Context, queryID string, jsonOut bool, uc QueryCallGraphUseCase, stdout io.Writer, sc buildScope, opts ports.EdgeQueryOptions) error {
-	interfaceID, method, perMethod := domain.ParseInterfaceMethodID(queryID)
+	interfaceID, _, perMethod := domain.ParseInterfaceMethodID(queryID)
 	if !perMethod {
 		interfaceID = queryID
 	}
@@ -148,284 +147,68 @@ func runImplementers(ctx context.Context, queryID string, jsonOut bool, uc Query
 		return err
 	}
 
-	found, err := gatherImplementers(ctx, interfaceID, uc, sc)
+	res, err := cgapp.FindImplementers(ctx, uc, cgapp.ImplementersRequest{
+		InterfaceID: queryID, PipelineVersion: cgapp.PipelineVersion, Scope: sc.modules, Opts: opts,
+	})
+	if miss, ok := errors.AsType[*cgapp.InterfaceNotDeclaredError](err); ok {
+		return implementersMiss(ctx, uc, miss)
+	}
+	if sup, ok := errors.AsType[*cgapp.SupersededModuleError](err); ok {
+		return supersededPipelineError(sup.InterfaceID, sup.ModulePath, sup.Stored)
+	}
 	if err != nil {
-		return err
+		return err //nolint:wrapcheck // the use case's errors name what failed
 	}
-	if !found.declared {
-		return implementersMiss(ctx, uc, interfaceID, found)
-	}
-	if perMethod && !found.hasMethod(method) {
-		return fmt.Errorf(
-			"interface %q declares no method %q; its methods are %s",
-			interfaceID, method, strings.Join(found.iface.Methods, ", "))
-	}
-
-	notSearched, err := uc.UnservedCoordinates(ctx, found.supersededCoords, cgapp.PipelineVersion)
-	if err != nil {
-		return fmt.Errorf("naming the call graphs this answer could not read: %w", err)
-	}
-	if err := reportNotSearched(ctx, uc, sc, notSearched); err != nil {
+	if err := reportNotSearched(ctx, uc, sc, res.NotSearched); err != nil {
 		return err
 	}
 
-	impls := found.implementations
-	if opts.ExcludeTests {
-		kept := impls[:0:0]
-		for _, im := range impls {
-			if !im.impl.IsTest {
-				kept = append(kept, im)
-			}
-		}
-		impls = kept
-	}
-
-	verdict := found.verdict(len(impls) > 0, opts)
-	scopeLine := implementersScopeLine(found.modulePath, opts)
-
+	scopeLine := implementersScopeLine(res.ModulePath, opts)
 	if jsonOut {
-		return writeImplementersJSON(stdout, interfaceID, method, perMethod, impls, verdict, scopeLine, found.modulePath, opts,
-			foreignDrawOfImplementers(impls))
+		return writeImplementersJSON(stdout, res, perMethod, scopeLine, opts, foreignDrawOfImplementers(res.Implementers))
 	}
 	// The implementer relation is read out of the served record, so the same
 	// routing question applies: which working tree's types are these.
 	if err := writeWorktreeNotice(ctx, interfaceID, uc, stdout, sc.modules); err != nil {
 		return err
 	}
-	return writeImplementersText(stdout, queryID, method, perMethod, impls, verdict, scopeLine, sc, foreignDrawOfImplementers(impls))
+	return writeImplementersText(stdout, queryID, res, perMethod, scopeLine, sc, foreignDrawOfImplementers(res.Implementers))
 }
 
 // implementersMiss refuses an interface no served record declares. One sought
 // only in records the read frame serves, where none was served, is a frame miss.
-func implementersMiss(ctx context.Context, uc QueryCallGraphUseCase, interfaceID string, found implementerLookup) error {
-	if !found.moduleAnalysed {
+func implementersMiss(ctx context.Context, uc QueryCallGraphUseCase, miss *cgapp.InterfaceNotDeclaredError) error {
+	if !miss.ModuleAnalysed {
 		stored, err := listStoredCoordinates(ctx, uc, coordinate.ModuleSet{})
 		if err != nil {
 			return err
 		}
-		if miss := stdlibFrameMiss(ctx, uc, interfaceID, stored); miss != nil {
-			return miss
+		if frame := stdlibFrameMiss(ctx, uc, miss.InterfaceID, stored); frame != nil {
+			return frame
 		}
 	}
-	if found.moduleAnalysed && !found.servedAny {
-		if miss := moduleFrameMiss(ctx, uc, found.modulePath, found.analysedVersions); miss != nil {
-			return miss
+	if miss.ModuleAnalysed && !miss.ServedAny {
+		if frame := moduleFrameMiss(ctx, uc, miss.ModulePath, miss.AnalysedVersions); frame != nil {
+			return frame
 		}
 	}
-	return implementersUnknownError(interfaceID, found.modulePath, found.moduleAnalysed, found.analysedVersions)
-}
-
-// scopedImplementer is one implementation plus the record it was measured in.
-type scopedImplementer struct {
-	impl          domain.InterfaceImplementation
-	modulePath    string
-	moduleVersion string
-	// foreign names the module the implementing type actually belongs to, when
-	// the record that holds it is a record about a different module. Zero when
-	// the type is the searched module's own — the ordinary case, since the
-	// relation is computed over the analysed module's declarations.
-	foreign domain.ForeignModule
-}
-
-// implementerLookup is the outcome of searching the in-scope records for an
-// interface: whether the module was analysed, whether it declares the
-// interface, the implementations found, and the soundness signals bearing on an
-// empty answer.
-type implementerLookup struct {
-	iface          domain.InterfaceType
-	declared       bool
-	modulePath     string
-	moduleAnalysed bool
-	// analysedVersions are the module's analysed versions, newest first, so a
-	// refusal can name a coordinate rather than the bare path.
-	analysedVersions []string
-	implementations  []scopedImplementer
-	belowFull        domain.CompletenessLevel
-	testScope        domain.TestScope
-	testScopeDetail  string
-	partialPkg       string
-	partialDetail    string
-	// supersededCoords are the module's coordinates held only at a superseded
-	// pipeline: each would have been searched had it been re-derived.
-	supersededCoords []coordinate.ModuleCoordinate
-	// servedAny is whether any record of the module was served under the read
-	// frame, so an undeclared interface can be told from an unsearched one.
-	servedAny bool
-}
-
-func (l implementerLookup) hasMethod(method string) bool {
-	return slices.Contains(l.iface.Methods, method)
-}
-
-// verdict classifies the answer. Presence is never downgraded: an implementer
-// found is a type-level fact go/types decided exactly. An empty answer is a
-// measurement only when nothing about the analysis leaves room for a missing
-// one.
-func (l implementerLookup) verdict(present bool, opts ports.EdgeQueryOptions) domain.Answer {
-	if present {
-		return domain.Answer{Outcome: domain.AnswerResolvedPresent}
-	}
-	var sinks []domain.SoundnessSink
-	if l.partialPkg != "" {
-		// Its own kind, matching what callers/callees now report for the same
-		// condition: a dropped package is a build failure inside the analysed
-		// artefact, not a module analysed at a level someone chose, and the two
-		// were indistinguishable while they shared a kind.
-		sinks = append(sinks, domain.SoundnessSink{
-			Kind:   domain.SinkDroppedPackageEdges,
-			Site:   l.iface.ID,
-			Detail: "package " + l.partialPkg + " " + domain.DroppedPackageReason(l.partialDetail) + ", so its edges were dropped",
-		})
-	}
-	if l.belowFull != domain.CompletenessUnknown && !l.belowFull.IsBuiltWithBodies() {
-		sinks = append(sinks, domain.SoundnessSink{
-			Kind:   domain.SinkTypeOnlyCallee,
-			Site:   l.iface.ID,
-			Detail: "module completeness " + l.belowFull.String(),
-		})
-	}
-	if !l.testScope.IsMeasured() && !opts.ExcludeTests {
-		detail := l.testScopeDetail
-		if detail == "" {
-			detail = "_test.go declarations were not analysed for this module"
-		}
-		sinks = append(sinks, domain.SoundnessSink{
-			Kind:   domain.SinkTestScopeUnmeasured,
-			Site:   l.iface.ID,
-			Detail: detail,
-		})
-	}
-	if len(sinks) == 0 {
-		return domain.Answer{Outcome: domain.AnswerResolvedAbsent}
-	}
-	return domain.Answer{Outcome: domain.AnswerUnresolved, Sinks: sinks}
-}
-
-// gatherImplementers searches every in-scope analysed record of the module
-// owning interfaceID. A module analysed at several versions contributes each of
-// them, and the result is the union — deduplicated on the type ID, because the
-// same declaration at two versions is one answer to "what must change".
-func gatherImplementers(ctx context.Context, interfaceID string, uc QueryCallGraphUseCase, sc buildScope) (implementerLookup, error) {
-	var out implementerLookup
-	out.testScope = domain.TestScopeAnalysed
-
-	// Resolution reads everything the store holds so a module analysed only
-	// under superseded logic is still recognised as owning the interface; the
-	// answer itself is drawn only from what this binary serves.
-	stored, err := listStoredCoordinates(ctx, uc, sc.modules)
-	if err != nil {
-		return out, err
-	}
-	coords, err := listScopedCoordinates(ctx, uc, sc.modules)
-	if err != nil {
-		return out, err
-	}
-	modulePath, ok := domain.ResolveSymbolModule(interfaceID, coordinatePaths(stored))
-	if !ok {
-		return out, nil
-	}
-	if !moduleServedAtThisPipeline(modulePath, coords) {
-		// Empty here would read as "nothing implements this interface", which is
-		// a claim about the code rather than about what has been measured.
-		return out, supersededPipelineError(interfaceID, modulePath, stored)
-	}
-	out.modulePath = modulePath
-	out.moduleAnalysed = true
-	out.analysedVersions = analysedVersionsOf(modulePath, coords)
-	if out.supersededCoords, err = supersededCoordinatesOf(modulePath, stored, coords); err != nil {
-		return out, err
-	}
-
-	seen := make(map[string]struct{})
-	for _, s := range coords {
-		if s.ModulePath != modulePath {
-			continue
-		}
-		coord, cErr := coordinate.NewModuleCoordinate(s.ModulePath, s.ModuleVersion)
-		if cErr != nil {
-			return out, fmt.Errorf("call graph record %s@%s names no module: %w", s.ModulePath, s.ModuleVersion, cErr)
-		}
-		rec, ok, gErr := uc.GetCallGraphRecordFrom(ctx, coord, s.PipelineVersion, domain.ComposeRequest{ToolchainPreference: sc.toolchain})
-		if gErr != nil {
-			return out, fmt.Errorf("loading call graph for %s: %w", coord, gErr)
-		}
-		if !ok {
-			continue
-		}
-		out.servedAny = true
-		iface, declared := domain.InterfaceByID(rec, interfaceID)
-		if !declared {
-			continue
-		}
-		if !out.declared {
-			out.iface = iface
-			out.declared = true
-		}
-		impls, _ := domain.ImplementersOf(rec, interfaceID)
-		for _, im := range impls {
-			if _, dup := seen[im.TypeID]; dup {
-				continue
-			}
-			seen[im.TypeID] = struct{}{}
-			// A record can hold a nested module's declarations, built with bodies
-			// under the parent's path prefix. Naming the module the type really
-			// belongs to keeps the answer from reading as the searched module's own.
-			//
-			// Read off the record rather than off the store's column, and that is not
-			// an exception to the column's rule. The column exists so that an answer
-			// served from the EDGE TABLE need not compose a record to qualify itself.
-			// This answer IS the record — the implementer relation lives nowhere else
-			// — so the set is already in hand, and a column read here would be a
-			// second read of a value derived from the very bytes just decoded.
-			fm, _ := domain.ForeignModuleOwning(rec.ForeignModulesBuilt, im.TypeID)
-			out.implementations = append(out.implementations, scopedImplementer{
-				impl:          im,
-				modulePath:    s.ModulePath,
-				moduleVersion: s.ModuleVersion,
-				foreign:       fm,
-			})
-		}
-		noteRecordQualifications(&out, rec, interfaceID)
-	}
-	sort.Slice(out.implementations, func(i, j int) bool {
-		return out.implementations[i].impl.TypeID < out.implementations[j].impl.TypeID
-	})
-	return out, nil
-}
-
-// noteRecordQualifications records the first partial package, below-full
-// completeness and unmeasured test scope a contributing record carries.
-func noteRecordQualifications(out *implementerLookup, rec domain.CallGraphRecord, interfaceID string) {
-	if rec.OverallStatus == domain.CallGraphStatusPartial && out.partialPkg == "" {
-		if fp, hit := symbolFailedPackage(interfaceID, rec.FailedPackages); hit {
-			out.partialPkg = fp
-			out.partialDetail = rec.FailureDetail
-		}
-	}
-	if out.belowFull == domain.CompletenessUnknown &&
-		rec.Completeness != domain.CompletenessUnknown && !rec.Completeness.IsBuiltWithBodies() {
-		out.belowFull = rec.Completeness
-	}
-	if !rec.TestScope.IsMeasured() && out.testScope.IsMeasured() {
-		out.testScope = rec.TestScope
-		out.testScopeDetail = rec.TestScopeDetail
-	}
+	return implementersUnknownError(miss.InterfaceID, miss.ModulePath, miss.ModuleAnalysed, miss.AnalysedVersions)
 }
 
 // foreignDrawOfImplementers classifies an implementers answer the way
 // foreignDrawOfEdges classifies an edge answer: how many of its rows are types
 // belonging to a module the record that holds them is not about.
-func foreignDrawOfImplementers(impls []scopedImplementer) foreignDraw {
+func foreignDrawOfImplementers(impls []cgapp.Implementer) foreignDraw {
 	d := foreignDraw{total: len(impls)}
 	modules := map[domain.ForeignModule]struct{}{}
 	holders := map[string]struct{}{}
 	for _, im := range impls {
-		if im.foreign.Path == "" {
+		if im.Foreign.Path == "" {
 			continue
 		}
 		d.rows++
-		modules[im.foreign] = struct{}{}
-		holders[im.modulePath+"@"+im.moduleVersion] = struct{}{}
+		modules[im.Foreign] = struct{}{}
+		holders[im.ModulePath+"@"+im.ModuleVersion] = struct{}{}
 	}
 	d.modules, d.holders = sortedForeignModules(modules), sortedLabels(holders)
 	return d
@@ -448,32 +231,29 @@ func implementersScopeLine(modulePath string, opts ports.EdgeQueryOptions) strin
 	return line
 }
 
-func writeImplementersJSON(stdout io.Writer, interfaceID, method string, perMethod bool, impls []scopedImplementer, v domain.Answer, scopeLine, searchedModule string, opts ports.EdgeQueryOptions, foreign foreignDraw) error {
-	out := make([]implementerJSON, 0, len(impls))
-	for _, im := range impls {
-		entry := implementerJSON{
-			TypeID:        im.impl.TypeID,
-			Package:       im.impl.Package,
-			ModulePath:    im.modulePath,
-			ModuleVersion: im.moduleVersion,
-			IsTest:        im.impl.IsTest,
-			File:          im.impl.Position.File,
-			Line:          im.impl.Position.Line,
-		}
-		if perMethod {
-			entry.NodeID = methodNodeID(im.impl, method)
-		}
-		out = append(out, entry)
+func writeImplementersJSON(stdout io.Writer, res cgapp.ImplementersResult, perMethod bool, scopeLine string, opts ports.EdgeQueryOptions, foreign foreignDraw) error {
+	out := make([]implementerJSON, 0, len(res.Implementers))
+	for _, im := range res.Implementers {
+		out = append(out, implementerJSON{
+			TypeID:        im.Implementation.TypeID,
+			Package:       im.Implementation.Package,
+			ModulePath:    im.ModulePath,
+			ModuleVersion: im.ModuleVersion,
+			IsTest:        im.Implementation.IsTest,
+			NodeID:        im.NodeID,
+			File:          im.Implementation.Position.File,
+			Line:          im.Implementation.Position.Line,
+		})
 	}
-	res := implementersResult{
-		InterfaceID:  interfaceID,
+	doc := implementersResult{
+		InterfaceID:  res.InterfaceID,
 		Count:        len(out),
 		Implementers: out,
-		Answer:       string(v.Outcome),
-		AnswerWhy:    v.Reason(),
+		Answer:       string(res.Answer.Outcome),
+		AnswerWhy:    res.Answer.Reason(),
 		Scope:        scopeLine,
 
-		SearchedModule: searchedModule,
+		SearchedModule: res.ModulePath,
 		// Never true, and it is a field rather than a constant in the prose so the
 		// day the measurement widens is a day this value changes.
 		CrossModuleTypesMeasured: false,
@@ -482,19 +262,20 @@ func writeImplementersJSON(stdout io.Writer, interfaceID, method string, perMeth
 		AnswerForeignModules:     foreign.foreignModuleJSONs(),
 	}
 	if perMethod {
-		res.Method = method
+		doc.Method = res.Method
 	}
-	res.SetAside = storeSetAside.take().json()
-	res.NotSearched = storeNotSearched.take().json()
+	doc.SetAside = storeSetAside.take().json()
+	doc.NotSearched = storeNotSearched.take().json()
 	enc := json.NewEncoder(stdout)
 	enc.SetIndent("", "  ")
-	if err := enc.Encode(res); err != nil {
+	if err := enc.Encode(doc); err != nil {
 		return fmt.Errorf("encoding JSON: %w", err)
 	}
 	return nil
 }
 
-func writeImplementersText(stdout io.Writer, queryID, method string, perMethod bool, impls []scopedImplementer, v domain.Answer, scopeLine string, sc buildScope, foreign foreignDraw) error {
+func writeImplementersText(stdout io.Writer, queryID string, res cgapp.ImplementersResult, perMethod bool, scopeLine string, sc buildScope, foreign foreignDraw) error {
+	impls, v := res.Implementers, res.Answer
 	if err := writeScopeNotice(stdout, sc); err != nil {
 		return err
 	}
@@ -507,7 +288,7 @@ func writeImplementersText(stdout io.Writer, queryID, method string, perMethod b
 			return fmt.Errorf("writing header: %w", err)
 		}
 		for _, im := range impls {
-			if err := writeImplementerRow(stdout, im, method, perMethod); err != nil {
+			if err := writeImplementerRow(stdout, im, perMethod); err != nil {
 				return err
 			}
 		}
@@ -543,27 +324,25 @@ func writeImplementersText(stdout io.Writer, queryID, method string, perMethod b
 
 // writeImplementerRow writes one implementer, or its method when the query
 // named one.
-func writeImplementerRow(stdout io.Writer, im scopedImplementer, method string, perMethod bool) error {
-	shown := im.impl.TypeID
+func writeImplementerRow(stdout io.Writer, im cgapp.Implementer, perMethod bool) error {
+	shown := im.Implementation.TypeID
 	promoted := ""
-	if perMethod {
-		if id := methodNodeID(im.impl, method); id != "" {
-			shown = id
-			// A promoted method is declared on an embedded type, so two
-			// implementers can share one declaration. Naming the type that
-			// satisfies the interface keeps the row distinguishable — and
-			// tells the reader that editing that one declaration covers both.
-			if !strings.HasPrefix(id, im.impl.TypeID+".") {
-				promoted = "  (promoted into " + im.impl.TypeID + ")"
-			}
+	if perMethod && im.NodeID != "" {
+		shown = im.NodeID
+		// A promoted method is declared on an embedded type, so two
+		// implementers can share one declaration. Naming the type that
+		// satisfies the interface keeps the row distinguishable — and
+		// tells the reader that editing that one declaration covers both.
+		if !strings.HasPrefix(im.NodeID, im.Implementation.TypeID+".") {
+			promoted = "  (promoted into " + im.Implementation.TypeID + ")"
 		}
 	}
 	testTag := ""
-	if im.impl.IsTest {
+	if im.Implementation.IsTest {
 		testTag = "  [test]"
 	}
 	if _, err := fmt.Fprintf(stdout, "  %s%s%s  (%s@%s)\n",
-		shown, testTag, promoted, im.modulePath, im.moduleVersion); err != nil {
+		shown, testTag, promoted, im.ModulePath, im.ModuleVersion); err != nil {
 		return fmt.Errorf("writing implementer: %w", err)
 	}
 	return nil
@@ -604,17 +383,6 @@ func moduleOfScopeLine(scopeLine string) string {
 		return before
 	}
 	return rest
-}
-
-// methodNodeID returns the concrete node implementing method, or "" when the
-// implementation records none.
-func methodNodeID(impl domain.InterfaceImplementation, method string) string {
-	for _, m := range impl.Methods {
-		if m.Method == method {
-			return m.NodeID
-		}
-	}
-	return ""
 }
 
 // implementersUnknownError distinguishes the three ways an interface ID can

@@ -131,11 +131,10 @@ func TestGenerate_EventWitnessesTheWriteNotTheDocument(t *testing.T) {
 	}
 }
 
-// TestGenerate_CallerSuppliedTimestampIsStated covers the one input that makes
-// two otherwise identical requests produce different documents: a
-// caller-supplied creation time bypasses the cache, so a reader must be able to
-// tell a document dated by its caller from one dated from its inputs.
-func TestGenerate_CallerSuppliedTimestampIsStated(t *testing.T) {
+// TestGenerate_CallerSuppliedTimestampAppendsNoGeneratedEvent: a document
+// dated by its caller answers only that request and is not stored, so it
+// leaves no record for the generation event to witness.
+func TestGenerate_CallerSuppliedTimestampAppendsNoGeneratedEvent(t *testing.T) {
 	sink := &recordingSink{}
 	uc := auditUC(&fakeWalkStore{walk: makeWalk("walk-1")}, &fakeSBOMStore{}, &fakeSBOMGenerator{record: generatedRecord()}, sink)
 
@@ -146,12 +145,9 @@ func TestGenerate_CallerSuppliedTimestampIsStated(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
-
-	events := sink.ofType(audit.EventSBOMGenerated)
-	if len(events) != 1 {
-		t.Fatalf("sbom_generated events = %d, want 1", len(events))
+	if events := sink.ofType(audit.EventSBOMGenerated); len(events) != 0 {
+		t.Fatalf("sbom_generated events = %d, want 0 for an unstored document", len(events))
 	}
-	assertField(t, events[0].Payload, "caller_supplied_timestamp", true)
 }
 
 // TestGenerate_CacheHitAppendsServedEvent covers the served half of the

@@ -276,25 +276,6 @@ func TestCallGraphFromWalk_DisagreeingDeclarationIsRefused(t *testing.T) {
 	}
 }
 
-// The discovery search passes over a consumer walk of another frame, and the
-// notice counts it.
-func TestFramePassedOverClause(t *testing.T) {
-	if got := framePassedOverClause(0, hostFrame()); got != "" {
-		t.Errorf("nothing passed over still says %q", got)
-	}
-	if got := framePassedOverClause(2, hostFrame()); !strings.Contains(got, "2 walk(s) resolved for a frame other than "+hostFrame().String()) {
-		t.Errorf("clause = %q", got)
-	}
-	env := walkdomain.BuildEnv{GOOS: "linux", GOARCH: "arm"}
-	if !walkFrameMatches(env, cgdomain.BuildFrame{GOOS: "linux", GOARCH: "arm", GOARM: "7"}) {
-		t.Error("a standard walk records no GOARM and was refused for stating none")
-	}
-	env.GOARM, env.TinyGoTarget = "6", "pico"
-	if walkFrameMatches(env, cgdomain.BuildFrame{GOOS: "linux", GOARCH: "arm", GOARM: "7"}) {
-		t.Error("a pico walk matched a plain linux/arm frame")
-	}
-}
-
 // Real toolchain: one working tree analysed under four frames holds four
 // records, each read selects its own, and an unchanged tree reuses per frame.
 // Skipped by name when tinygo is absent.

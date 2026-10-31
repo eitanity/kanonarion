@@ -163,3 +163,30 @@ func TestQueryDirectives_ListScansError(t *testing.T) {
 		t.Fatal("expected error")
 	}
 }
+
+// projectListingStore is a store that can also enumerate its projects.
+type projectListingStore struct {
+	*fakeDirectiveStore
+	projects []string
+	err      error
+}
+
+func (s projectListingStore) ListScanProjects(context.Context) ([]string, error) {
+	return s.projects, s.err
+}
+
+// The project listing is read through the optional capability, and a store
+// without it says so rather than answering that it holds none.
+func TestQueryDirectives_ListScanProjects(t *testing.T) {
+	ctx := context.Background()
+	if _, ok, err := application.NewQueryDirectivesUseCase(newFakeDirectiveStore()).ListScanProjects(ctx); ok || err != nil {
+		t.Errorf("a store without the capability: ok=%v err=%v, want false, nil", ok, err)
+	}
+	got, ok, err := application.NewQueryDirectivesUseCase(projectListingStore{newFakeDirectiveStore(), []string{"example.com/a"}, nil}).ListScanProjects(ctx)
+	if !ok || err != nil || len(got) != 1 || got[0] != "example.com/a" {
+		t.Errorf("got %v ok=%v err=%v", got, ok, err)
+	}
+	if _, _, err := application.NewQueryDirectivesUseCase(projectListingStore{newFakeDirectiveStore(), nil, errors.New("planted")}).ListScanProjects(ctx); err == nil {
+		t.Error("a failed listing returned no error")
+	}
+}

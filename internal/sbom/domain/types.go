@@ -66,13 +66,12 @@ type SBOMRecord struct {
 	Content []byte
 	// ContentHash is the SHA-256 hex digest of Content.
 	ContentHash string
-	// GeneratedAt is when the document this record holds was created, and is the
-	// value its metadata timestamp carries. It is the caller-supplied creation
-	// time when one was given, and otherwise the newest licence extraction time
-	// among the document's inputs — a derived value the document labels as such
-	// rather than passing off as a clock reading.
+	// GeneratedAt orders stored records. A stored document had no caller-supplied
+	// creation time, so it is the newest licence extraction time among the
+	// document's inputs, which the document itself does not carry; an unstored
+	// document with one supplied carries that time here and in the document.
 	GeneratedAt time.Time
-	// PipelineVersion is the kanonarion version that produced this record.
+	// PipelineVersion is the SBOM pipeline version that produced this record.
 	PipelineVersion string
 	// Operator is the identity that requested generation.
 	Operator string

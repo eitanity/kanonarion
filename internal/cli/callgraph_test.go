@@ -1057,29 +1057,6 @@ func TestRunCallers_ExtractedGraph_NoCaveat(t *testing.T) {
 	}
 }
 
-func TestSymbolFailedPackage(t *testing.T) {
-	failed := []string{"example.com/app/broken", "example.com/app/other"}
-	cases := []struct {
-		symbol string
-		want   string
-	}{
-		{"example.com/app/broken.Broken", "example.com/app/broken"},
-		{"example.com/app/broken.(*T).M", "example.com/app/broken"},
-		{"example.com/app/broken/sub.Fn", ""}, // sub-package is a different package
-		{"example.com/app.Clean", ""},
-		{"example.com/app/brokenish.Fn", ""}, // prefix but not a package boundary
-	}
-	for _, tc := range cases {
-		got, hit := symbolFailedPackage(tc.symbol, failed)
-		if tc.want == "" && hit {
-			t.Errorf("symbolFailedPackage(%q) = %q, want no hit", tc.symbol, got)
-		}
-		if tc.want != "" && got != tc.want {
-			t.Errorf("symbolFailedPackage(%q) = %q, want %q", tc.symbol, got, tc.want)
-		}
-	}
-}
-
 // TestWorktreeNotice_SpeaksOnlyWhenThereIsADecision. The notice exists because a
 // routing decision the reader cannot see is the same failure as no routing at
 // all — but a reader with one checkout has no decision, and a line on every

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"code.eitanity.com/kanonarion/internal/composition/cgchild"
 	"code.eitanity.com/kanonarion/internal/coordinate"
 
 	walkdomain "code.eitanity.com/kanonarion/internal/walk/domain"
@@ -218,7 +219,7 @@ func selectShowRecord(ctx context.Context, uc QueryVulnUseCase, walks QueryWalks
 		return rec, isolated, hasIsolated, vulnShowReadRefusal(coord, cerr)
 	}
 	if !ok && len(*aside) > 0 {
-		return rec, isolated, hasIsolated, aside.noServable(coord, "re-scan with this build to write one it can: kanonarion vuln-scan <walk-id>")
+		return rec, isolated, hasIsolated, aside.noServable(coord, "re-scan with this build to write one it can: "+vulnScanRemedy(ctx, walks, coord))
 	}
 	if !ok {
 		// The read above keys on the pipeline version, so an empty result may
@@ -228,15 +229,8 @@ func selectShowRecord(ctx context.Context, uc QueryVulnUseCase, walks QueryWalks
 		if err := supersededVulnRefusal(ctx, uc, walks, coord); err != nil {
 			return rec, isolated, hasIsolated, err
 		}
-		// No walk was named, so there is no "newer than what you passed" to
-		// compute — but a succeeded walk of this module may already exist,
-		// and naming it turns the placeholder <walk-id> into a command the
-		// operator can run. The primary line keeps its placeholder shape.
-		msg := fmt.Sprintf("no vulnerability record for %s — run: kanonarion vuln-scan <walk-id>", coord)
-		if note := latestSucceededWalkNote(ctx, walks, coord, time.Time{}); note != "" {
-			msg += "\n" + note
-		}
-		return rec, isolated, hasIsolated, &exitError{code: ExitNotFound, msg: msg}
+		return rec, isolated, hasIsolated, &exitError{code: ExitNotFound, msg: fmt.Sprintf(
+			"no vulnerability record for %s — run: %s", coord, vulnScanRemedy(ctx, walks, coord))}
 	}
 	return r, isoAside, has, nil
 }
@@ -268,6 +262,28 @@ func selectAnchoredShowRecord(ctx context.Context, uc QueryVulnUseCase, runs Que
 		return rec, isolated, hasIsolated, frameRecordAbsence(coord, anchor, candidates)
 	}
 	return r, isoAside, has, nil
+}
+
+// vulnScanRemedy is the scan that writes a record for coord, runnable as
+// printed. The walk is the one dependents --any-build answers from: the newest
+// consumer build holding coord, else the newest walk rooted at it; several
+// consumer builds are each named, since each is a different answer. A store
+// with no walk holding it gets the walk of coord itself. Read on the miss only.
+func vulnScanRemedy(ctx context.Context, walks QueryWalksUseCase, coord coordinate.ModuleCoordinate) string {
+	if walks != nil {
+		found, err := cgchild.FindWalkHolding(ctx, walks, coord, "", nil)
+		if err == nil {
+			return "kanonarion vuln-scan " + found.WalkID
+		}
+		if amb, ok := errors.AsType[*cgchild.Ambiguity](err); ok {
+			out := fmt.Sprintf("the scan of the build you mean — %d builds hold %s:", len(amb.Candidates), coord)
+			for _, c := range amb.Candidates {
+				out += fmt.Sprintf("\n  rooted at %s: kanonarion vuln-scan %s", c.Target, c.ID)
+			}
+			return out
+		}
+	}
+	return walkInvocation(coord) + " && kanonarion vuln-scan --module " + coord.String()
 }
 
 // vulnShowReadRefusal is how this command reports a failed record read.

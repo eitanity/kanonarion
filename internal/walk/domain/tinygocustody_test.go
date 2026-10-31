@@ -142,7 +142,7 @@ func TestClassifyTinyGoCustody(t *testing.T) {
 			if !reflect.DeepEqual(got.NotEstablished, tc.notEstablished) {
 				t.Errorf("not established = %+v, want %+v", got.NotEstablished, tc.notEstablished)
 			}
-			if got.ReleaseOutcome != tc.outcome || got.Compiled() != 3 || got.Module != tinygoModule {
+			if got.ReleaseOutcome != tc.outcome || got.VerifiedByModule+got.VerifiedByRelease+len(got.Differs)+len(got.NotEstablished) != 3 || got.Module != tinygoModule {
 				t.Errorf("custody = %+v", got)
 			}
 		})
@@ -156,40 +156,6 @@ func TestTinyGoCustodyInput_AbsentFromModule(t *testing.T) {
 	}
 }
 
-func TestTinyGoCustody_Statement(t *testing.T) {
-	for name, tc := range map[string]struct {
-		change func(*domain3.TinyGoCustodyInput)
-		want   []string
-	}{
-		"matched": {func(*domain3.TinyGoCustodyInput) {}, []string{
-			"2 of 3 compiled TinyGo file(s) match the module zip " + tinygoModule + " (fetch verification Verified)",
-			"1 match the release archive " + tinygoAsset + ", whose bytes matched the SHA-256 GitHub publishes for it",
-			"0 differ from their anchor", "0 not established",
-		}},
-		"mismatch": {func(in *domain3.TinyGoCustodyInput) {
-			in.Release.Outcome, in.Release.Manifest = domain3.TinyGoReleaseDigestMismatch, nil
-		}, []string{"did NOT match the SHA-256 GitHub publishes", "1 not established"}},
-		"unmeasured": {func(in *domain3.TinyGoCustodyInput) {
-			in.Release = &domain3.TinyGoRelease{Asset: tinygoAsset, Outcome: domain3.TinyGoReleaseAssetAbsent}
-		}, []string{"no file was checked against the release archive " + tinygoAsset + " (asset_absent)"}},
-		"no release": {func(in *domain3.TinyGoCustodyInput) {
-			in.ModuleVerification, in.ModuleFailure, in.Release = "", "gone", nil
-		}, []string{"(the module zip could not be read)", "no release archive was consulted", "3 not established"}},
-	} {
-		t.Run(name, func(t *testing.T) {
-			in := custodyInput()
-			in.Release = matchedRelease()
-			tc.change(&in)
-			got := domain3.ClassifyTinyGoCustody(in).Statement()
-			for _, w := range tc.want {
-				if !strings.Contains(got, w) {
-					t.Errorf("statement %q lacks %q", got, w)
-				}
-			}
-		})
-	}
-}
-
 func TestTinyGoCustody_GroupsForSurfaces(t *testing.T) {
 	c := domain3.TinyGoCustody{
 		Differs: []domain3.TinyGoFileDiffers{
@@ -197,9 +163,6 @@ func TestTinyGoCustody_GroupsForSurfaces(t *testing.T) {
 			{Path: "g.go", Anchor: domain3.TinyGoAnchorRelease},
 		},
 		NotEstablished: []domain3.TinyGoFileNotEstablished{{Path: "b", Reason: "r2"}, {Path: "c", Reason: "r1"}, {Path: "a", Reason: "r2"}},
-	}
-	if got := c.DiffersFrom(domain3.TinyGoAnchorModule); !reflect.DeepEqual(got, []string{"a.go", "z.go"}) {
-		t.Errorf("DiffersFrom(module) = %v", got)
 	}
 	reasons, by := c.NotEstablishedByReason()
 	if !reflect.DeepEqual(reasons, []string{"r1", "r2"}) || !reflect.DeepEqual(by["r2"], []string{"a", "b"}) {

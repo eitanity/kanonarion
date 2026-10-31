@@ -30,8 +30,12 @@ type custodyComponent struct {
 		Value string `json:"value"`
 	} `json:"properties"`
 	ExternalReferences []struct {
-		Type string `json:"type"`
-		URL  string `json:"url"`
+		Type   string `json:"type"`
+		URL    string `json:"url"`
+		Hashes []struct {
+			Alg     string `json:"alg"`
+			Content string `json:"content"`
+		} `json:"hashes"`
 	} `json:"externalReferences"`
 }
 
@@ -96,7 +100,8 @@ func TestGenerate_StdlibCustodyChain(t *testing.T) {
 }
 
 // assertStdlibCustodyComponent checks the stdlib component carries the
-// tarball's hashes, its verification properties and its source references.
+// tarball's hashes, its source references with the published checksum on the
+// distribution reference, and no verification status of kanonarion's own.
 func assertStdlibCustodyComponent(t *testing.T, c custodyComponent) {
 	t.Helper()
 	// Hashes: SHA-256/384/512 from the tarball, no MD5/SHA-1.
@@ -110,26 +115,17 @@ func assertStdlibCustodyComponent(t *testing.T, c custodyComponent) {
 		}
 	}
 
-	// Properties: verification status + honest-limitation note.
-	props := map[string]string{}
-	for _, p := range c.Properties {
-		props[p.Name] = p.Value
-	}
-	if props["kanonarion:stdlib:verification"] != "VerifiedGoDevChecksum" {
-		t.Errorf("verification property = %q", props["kanonarion:stdlib:verification"])
-	}
-	if props["kanonarion:stdlib:published_sha256"] != "aa256" {
-		t.Errorf("published_sha256 property = %q", props["kanonarion:stdlib:published_sha256"])
-	}
-	if !strings.Contains(props["kanonarion:stdlib:anchor_limitation"], "weaker than a module sumdb") {
-		t.Errorf("missing honest-limitation note: %q", props["kanonarion:stdlib:anchor_limitation"])
-	}
+	assertStdlibPropertiesAreOnlyMarkers(t, c)
 
-	// External references: the source tarball distribution URL and the commit.
+	// External references: the source tarball distribution URL carrying the
+	// published checksum, and the commit.
 	var hasDist, hasCommit bool
 	for _, ref := range c.ExternalReferences {
-		if strings.Contains(ref.URL, "go.dev/dl/go1.26.4.src.tar.gz") {
+		if ref.Type == "distribution" && strings.Contains(ref.URL, "go.dev/dl/go1.26.4.src.tar.gz") {
 			hasDist = true
+			if len(ref.Hashes) != 1 || ref.Hashes[0].Alg != "SHA-256" || ref.Hashes[0].Content != "aa256" {
+				t.Errorf("distribution reference hashes = %+v, want the published SHA-256 aa256", ref.Hashes)
+			}
 		}
 		if ref.URL == "https://go.googlesource.com/go" {
 			hasCommit = true
@@ -170,12 +166,35 @@ func walkWithStdlibFacts(t *testing.T, facts *walkdomain.StdlibFacts) walkdomain
 	}
 }
 
-// stdlibProps returns the stdlib component's properties from a generated
-// document, failing when the component is absent.
-func stdlibProps(t *testing.T, walk walkdomain.WalkRecord) map[string]string {
+// assertStdlibPropertiesAreOnlyMarkers checks the stdlib component's properties
+// are its ecosystem and its stdlib marker, and nothing of kanonarion's own
+// verification vocabulary.
+func assertStdlibPropertiesAreOnlyMarkers(t *testing.T, c custodyComponent) {
 	t.Helper()
+	props := map[string]string{}
+	for _, p := range c.Properties {
+		props[p.Name] = p.Value
+	}
+	want := map[string]string{"kanonarion:ecosystem": "go", "kanonarion:component:stdlib": "true"}
+	if len(props) != len(want) || props["kanonarion:ecosystem"] != "go" || props["kanonarion:component:stdlib"] != "true" {
+		t.Errorf("stdlib properties = %v, want exactly %v", props, want)
+	}
+}
+
+// TestGenerate_OfflineStdlibNamesNoLocalPath: an offline measurement read the
+// local $GOROOT/src, which is a path on the machine that ran it and not a
+// distribution, and consulted no published checksum. Its references are the Go
+// repository and website only, and neither they nor the component carry hashes.
+func TestGenerate_OfflineStdlibNamesNoLocalPath(t *testing.T) {
 	gen := cyclonedx.New(testPipelineVersion)
-	rec, err := gen.Generate(t.Context(), walk, nil, makeGenReq())
+	rec, err := gen.Generate(t.Context(), walkWithStdlibFacts(t, &walkdomain.StdlibFacts{
+		LicenseSPDX:        "BSD-3-Clause",
+		VerificationStatus: "VerifiedLocalToolchain",
+		VerificationDetail: "digests computed over local toolchain source; go.dev/dl published checksum not consulted (offline)",
+		SourceURL:          "/opt/go/src",
+		VCSURL:             "https://go.googlesource.com/go",
+		VCSRef:             "go1.26.4",
+	}), nil, makeGenReq())
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -187,65 +206,21 @@ func stdlibProps(t *testing.T, walk walkdomain.WalkRecord) map[string]string {
 		if c.Name != walkdomain.StdlibModulePath {
 			continue
 		}
-		props := map[string]string{}
-		for _, p := range c.Properties {
-			props[p.Name] = p.Value
+		assertStdlibPropertiesAreOnlyMarkers(t, c)
+		var got []string
+		for _, ref := range c.ExternalReferences {
+			got = append(got, ref.Type+" "+ref.URL)
+			if len(ref.Hashes) != 0 {
+				t.Errorf("%s reference %s carries hashes %+v, but no published checksum was consulted", ref.Type, ref.URL, ref.Hashes)
+			}
 		}
-		return props
+		if want := "vcs https://go.googlesource.com/go,website https://go.dev/"; strings.Join(got, ",") != want {
+			t.Errorf("offline stdlib references = %v, want %s", got, want)
+		}
+		if len(c.Hashes) != 0 {
+			t.Errorf("offline stdlib hashes = %+v; they are over a local source manifest, not a published artefact", c.Hashes)
+		}
+		return
 	}
 	t.Fatal("stdlib component absent from SBOM")
-	return nil
-}
-
-// TestGenerate_StdlibAnchorLimitationFollowsTheEvidence is the regression for a
-// document that stated one fixed anchor sentence for every measurement. An
-// offline run records VerifiedLocalToolchain — the published checksum not
-// consulted, the commit anchor skipped — and the document asserted both anchors
-// three lines below the detail that said neither happened. The stronger claim
-// won, in an artefact written to be read where the store is not.
-func TestGenerate_StdlibAnchorLimitationFollowsTheEvidence(t *testing.T) {
-	const prop = "kanonarion:stdlib:anchor_limitation"
-
-	anchored := stdlibProps(t, walkWithStdlibFacts(t, &walkdomain.StdlibFacts{
-		LicenseSPDX:        "BSD-3-Clause",
-		VerificationStatus: "VerifiedGoDevChecksum",
-		VerificationDetail: "SHA-256 matched go.dev/dl published checksum",
-		PublishedSHA256:    "aa256",
-		SourceURL:          "https://go.dev/dl/go1.26.4.src.tar.gz",
-		VCSURL:             "https://go.googlesource.com/go",
-		VCSRef:             "go1.26.4",
-		VCSCommit:          "deadbeefcafe",
-	}))
-	offline := stdlibProps(t, walkWithStdlibFacts(t, &walkdomain.StdlibFacts{
-		LicenseSPDX:        "BSD-3-Clause",
-		VerificationStatus: "VerifiedLocalToolchain",
-		VerificationDetail: "digests computed over local toolchain source; go.dev/dl published checksum not consulted (offline); googlesource commit anchor skipped (offline)",
-		SourceURL:          "/opt/go/src",
-	}))
-
-	if anchored[prop] == offline[prop] {
-		t.Fatalf("anchor limitation does not vary with the evidence; both documents say:\n%s", anchored[prop])
-	}
-	if !strings.Contains(anchored[prop], "go.dev/dl publishes") {
-		t.Errorf("connected document does not name the published-checksum anchor it reached:\n%s", anchored[prop])
-	}
-	if !strings.Contains(anchored[prop], "cross-checked against a go.googlesource.com/go release tag") {
-		t.Errorf("connected document does not name the commit anchor it resolved:\n%s", anchored[prop])
-	}
-	// The offline document must not claim either anchor its own detail denies.
-	for _, forbidden := range []string{"integrity anchored to", "cross-checked"} {
-		if strings.Contains(offline[prop], forbidden) {
-			t.Errorf("offline document claims %q, which its verification detail denies:\n%s", forbidden, offline[prop])
-		}
-	}
-	if !strings.Contains(offline[prop], "locally-held toolchain source") {
-		t.Errorf("offline document does not say what its integrity rests on:\n%s", offline[prop])
-	}
-	// The ceiling is the reason the property exists and holds on both routes.
-	for name, got := range map[string]string{"connected": anchored[prop], "offline": offline[prop]} {
-		if !strings.Contains(got, "weaker than a module sumdb transparency-log entry") ||
-			!strings.Contains(got, "never present in go.sum") {
-			t.Errorf("%s document dropped the sumdb/go.sum ceiling:\n%s", name, got)
-		}
-	}
 }

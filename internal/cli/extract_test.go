@@ -46,11 +46,10 @@ func TestExtractShowCmd_NotFound(t *testing.T) {
 			}
 			args = append(args, "invalid-id")
 			err := Run(args, &stdout, &stderr)
-			if err == nil {
-				t.Fatal("expected error for missing run ID")
-			}
-			if !strings.Contains(err.Error(), "not found") {
-				t.Errorf("expected 'not found' in error, got: %v", err)
+			requireExit(t, err, ExitNotFound)
+			if !strings.Contains(err.Error(), "the store holds no extraction run at all") ||
+				!strings.Contains(err.Error(), "to produce one: kanonarion extract <walk-id>") {
+				t.Errorf("the miss does not size the corpus and name its remedy: %v", err)
 			}
 		})
 	}

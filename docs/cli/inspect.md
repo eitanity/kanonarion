@@ -305,8 +305,7 @@ must not decode the same as a negative answer.
 `inspect` is equivalent to running these commands in sequence:
 
 ```bash
-kanonarion walk github.com/spf13/cobra@v1.8.1
-WALK_ID=$(kanonarion walk-list --json | jq -r '.records[0].id')
+WALK_ID=$(kanonarion walk github.com/spf13/cobra@v1.8.1 --json | jq -r '.id')
 kanonarion extract "$WALK_ID"
 kanonarion vuln-scan "$WALK_ID"
 kanonarion context github.com/spf13/cobra@v1.8.1
@@ -315,8 +314,7 @@ kanonarion context github.com/spf13/cobra@v1.8.1
 For the `--gomod` form, the equivalent is:
 
 ```bash
-kanonarion walk --gomod ./go.mod
-WALK_ID=$(kanonarion walk-list --latest-success --json | jq -r '.id')
+WALK_ID=$(kanonarion walk --gomod ./go.mod --json | jq -r '.id')
 kanonarion extract "$WALK_ID"
 kanonarion vuln-scan "$WALK_ID"
 ```

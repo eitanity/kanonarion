@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"code.eitanity.com/kanonarion/internal/composition/cgchild"
+	"code.eitanity.com/kanonarion/internal/exitcode"
 	"context"
 	"encoding/json"
 	"errors"
@@ -8,7 +10,6 @@ import (
 	"io"
 	"strings"
 
-	cgapp "code.eitanity.com/kanonarion/internal/callgraph/application"
 	cgdomain "code.eitanity.com/kanonarion/internal/callgraph/domain"
 	"code.eitanity.com/kanonarion/internal/coordinate"
 	"code.eitanity.com/kanonarion/internal/gotoolchain"
@@ -121,41 +122,25 @@ func runCallGraphExtract(ctx context.Context, arg string, f cgFlags, stdout, std
 	}
 	defer releaseStore(cleanup)
 
-	// A named walk's frame is the extraction frame; it can only be read once the
-	// store is open, so the container is re-wired from it here.
-	if werr := adoptWalkFrame(ctx, ctr, coord, f.fromWalk, f.target.declared(), stderr); werr != nil {
-		return werr
-	}
-
-	inputs, run, err := callGraphInputs(ctx, ctr, coord, f, stderr)
-	if err != nil {
-		return err
-	}
-
-	extract := ctr.ExtractCallGraph.Execute
-	if coord.IsStdlib() {
-		extract = ctr.ExtractStdlibCallGraph.Execute
-	}
-	result, err := extract(ctx, cgapp.ExtractRequest{
-		Coordinate: coord,
-		Force:      f.force,
-		Inputs:     inputs,
+	// The extraction is the one the call-graph child runs: the frame from
+	// --from-walk, the build list, the analysis.
+	out, err := cgchild.Extract(ctx, ctr.callGraphChildDeps(stderr), cgchild.Request{
+		Coordinate: coord, Force: f.force, FromWalk: f.fromWalk, Declared: f.target.declared(),
 	})
 	if err != nil {
-		return fmt.Errorf("extracting call graph: %w", err)
+		return asExitError(err)
+	}
+	result := out.Result
+	var run callGraphRunJSON
+	if out.Ambiguity != nil {
+		run.BuildListRefusal = ambiguityRefusal(out.Ambiguity).document(callGraphBuildFlag)
 	}
 
 	if err := printCallGraphSummary(ctx, result.Record, result.FromCache || result.Reused, jsonOut, "", stdout, run); err != nil {
 		return err
 	}
-	if result.Reused {
-		// Said plainly, because the two are different facts and the distinction is
-		// the one a reader chasing a failing module needs: the analysis DID run,
-		// and it came back saying what the ledger already said.
-		if _, err := fmt.Fprintln(stderr,
-			"re-measured and found identical to the generation already recorded; no new generation was written"); err != nil {
-			return fmt.Errorf("writing re-measurement note: %w", err)
-		}
+	if err := cgchild.NoteReuse(stderr, result); err != nil {
+		return err //nolint:wrapcheck // the note's own error names what failed
 	}
 	return callGraphExtractionExit(result.Record)
 }
@@ -191,64 +176,18 @@ func resolveCallGraphModcache(ctx context.Context, f cgFlags) error {
 	return nil
 }
 
-// callGraphInputs is the build list the analysis is pinned to: the walk
-// --from-walk names, or one discovered from the store.
-func callGraphInputs(ctx context.Context, ctr *Container, coord coordinate.ModuleCoordinate, f cgFlags, stderr io.Writer) (cgdomain.AnalysisInputs, callGraphRunJSON, error) {
-	var err error
-	var run callGraphRunJSON
-	var inputs cgdomain.AnalysisInputs
-	// The standard library resolves no build list and has none to be pinned
-	// against: it vendors every dependency it has, and the toolchain the
-	// coordinate names decides the rest. A --from-walk naming the frame that
-	// recorded the coordinate is therefore accepted and used for nothing, which
-	// is the honest outcome rather than a refusal of a flag that costs nothing.
-	if !coord.IsStdlib() {
-		inputs, err = analysisInputsForWalk(ctx, ctr.QueryWalks, f.fromWalk)
-		if err != nil {
-			return inputs, run, err
-		}
-		if f.fromWalk == "" {
-			inputs, run.BuildListRefusal = discoveredBuildList(ctx, ctr.QueryWalks, coord, stderr)
-		}
-	}
-	return inputs, run, nil
+// callGraphExtractionExit maps an extraction outcome onto the process exit
+// code, as the call-graph child does.
+func callGraphExtractionExit(r cgdomain.CallGraphRecord) error {
+	return asExitError(cgchild.RecordExit(r))
 }
 
-// callGraphExtractionExit maps an extraction outcome onto the process exit code.
-//
-// Three outcomes, three codes: a complete graph, one scoped by its
-// FailedPackages line, and no graph at all. Partial took the complete graph's 0
-// for being an answer — which it is, and 1 is the code for an answer that is
-// known-incomplete. A Partial carrying no nodes stays at 2 with LoadFailed.
-func callGraphExtractionExit(r cgdomain.CallGraphRecord) error {
-	msg := fmt.Sprintf("%s: %s", r.Coordinate, r.OverallStatus.String())
-	if r.FailureDetail != "" {
-		msg += " — " + r.FailureDetail
+// asExitError is err as this package's exit carrier when it is the shared one.
+func asExitError(err error) error {
+	if ee, ok := err.(*exitcode.Error); ok { //nolint:errorlint // only the carrier itself is converted; a wrapped one keeps its chain
+		return &exitError{code: ee.Code, msg: ee.Msg}
 	}
-	// 20, not 1 or 2: the remedy is another build of this binary, which no
-	// invocation of this one can run, so the invocation is what has to change.
-	if l, ok := cgdomain.AnalyserLimitOf(r.FailureDetail); ok && r.OverallStatus != cgdomain.CallGraphStatusCancelled {
-		return &exitError{code: ExitConfig, msg: fmt.Sprintf("%s: %s — %s", r.Coordinate, r.OverallStatus, l.Statement())}
-	}
-	switch r.OverallStatus {
-	// ExcludedByConfig shares Extracted's 0 by decision, not by omission: the
-	// operator listed this module in callgraph.exclude, so the absent graph is
-	// the outcome they asked for rather than one this run failed to produce.
-	case cgdomain.CallGraphStatusExtracted, cgdomain.CallGraphStatusExcludedByConfig:
-		return nil
-	case cgdomain.CallGraphStatusPartial:
-		if r.NodeCount == 0 {
-			return &exitError{code: ExitFailed, msg: msg}
-		}
-		return &exitError{code: ExitPartial, msg: msg}
-	case cgdomain.CallGraphStatusCancelled:
-		return &exitError{code: ExitCancelled, msg: msg}
-	default:
-		// LoadFailed, OutOfMemory, ExtractionFailed, Unknown, and any status added
-		// later: no graph exists, so nothing downstream can consume this
-		// coordinate. Only the two answers above are enumerated as clean.
-		return &exitError{code: ExitFailed, msg: msg}
-	}
+	return err
 }
 
 // dir is the working tree a local run was pointed at, so a printed remedy names
@@ -363,64 +302,18 @@ func writeExclusionInfo(stdout io.Writer, r cgdomain.CallGraphRecord) error {
 	return nil
 }
 
-// discoveredBuildList answers a module that needs a build list nobody named.
-//
-// A module published before Go modules ships no go.mod, and a synthesised one is
-// only honest for a module that imports nothing outside the standard library.
-// The versions that make the rest analysable are a property of a BUILD, and this
-// store holds several — but until now the operator had to know that, know which
-// walk resolved the module, and pass --from-walk. Nobody asking "what does this
-// module call" knows any of that, so the default path recorded an empty graph
-// while the store held everything needed to fill it.
-//
-// It runs BEFORE the extraction rather than as a retry after one failed, and
-// that ordering is the whole of the design. A retry would analyse the module
-// twice and persist both outcomes, and two failure generations differing only in
-// which build list they were denied are a divergence: the composed read then
-// refuses the coordinate outright, which is a worse answer than the empty graph
-// it replaced. One request, one analysis, one generation.
-//
-// A search that finds nothing is not an error and says nothing. The extraction
-// that follows fails exactly as it would have anyway, and the failure it records
-// already names the imports it could not pin — the more useful of the two
-// messages. --from-walk always wins: an operator who scoped the analysis to a
-// build keeps that scope.
+// discoveredBuildList is the call-graph child's build-list discovery under
+// this invocation's frame, its ambiguity rendered as the refusal document.
 func discoveredBuildList(
 	ctx context.Context,
 	walks QueryWalksUseCase,
 	coord coordinate.ModuleCoordinate,
 	stderr io.Writer,
 ) (cgdomain.AnalysisInputs, *buildListRefusalJSON) {
-	// Only walks of the analysis frame are candidates: a build list resolved for
-	// another platform is another build's.
-	frame := invocationFrame()
-	found, err := findWalkContainingIn(ctx, walks, coord,
-		fmt.Sprintf("kanonarion callgraph %s %s <walk of that build>", coord, callGraphBuildFlag), &frame)
-	if err != nil {
-		// A search that finds nothing still says nothing. An AMBIGUOUS one does:
-		// the store holds the build list this analysis needs, in more than one
-		// build, and the analysis is about to run without it. Degrading silently
-		// there would record an empty graph while naming neither the builds that
-		// could have filled it nor the flag that picks one.
-		//
-		// It is said twice, in two forms, because the two readers are different:
-		// the sentence for the person watching stderr, the document for the
-		// consumer who has to retry with one of the builds named in it.
-		if amb, ok := errors.AsType[*ambiguousBuildRefusal](err); ok {
-			_, _ = fmt.Fprintf(stderr, "no build list was named; %s\n", amb)
-			return cgdomain.AnalysisInputs{}, amb.document(callGraphBuildFlag)
-		}
-		return cgdomain.AnalysisInputs{}, nil
+	inputs, amb := cgchild.DiscoverBuildList(ctx, walks, coord, invocationFrame(), stderr)
+	if amb != nil {
+		return inputs, ambiguityRefusal(amb).document(callGraphBuildFlag)
 	}
-	walkID := found.walkID
-	inputs, err := analysisInputsForWalk(ctx, walks, walkID)
-	if err != nil || !inputs.HasBuildList() {
-		return cgdomain.AnalysisInputs{}, nil
-	}
-	// The choice is announced, never enforced: an unwritable stderr does not make
-	// a discovered build list the wrong input to analyse with.
-	_, _ = fmt.Fprintf(stderr, "no build list was named; a pre-modules module will be pinned to walk %s, "+
-		"which resolved %d version(s) and includes this module%s\n", walkID, len(inputs.BuildList), framePassedOverClause(found.framePassedOver, frame))
 	return inputs, nil
 }
 
@@ -428,12 +321,3 @@ func discoveredBuildList(
 // so the remedy a reader is shown and the flag a consumer retries with cannot
 // drift apart.
 const callGraphBuildFlag = "--from-walk"
-
-// framePassedOverClause says how many walks of other frames the search left out,
-// empty when none were.
-func framePassedOverClause(n int, frame cgdomain.BuildFrame) string {
-	if n == 0 {
-		return ""
-	}
-	return fmt.Sprintf("; %d walk(s) resolved for a frame other than %s were passed over", n, frame)
-}

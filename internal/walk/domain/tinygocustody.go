@@ -4,7 +4,6 @@ import (
 	"cmp"
 	"fmt"
 	"slices"
-	"strings"
 	"time"
 
 	fetchdomain "code.eitanity.com/kanonarion/internal/fetch/domain"
@@ -287,11 +286,6 @@ func fromCanonicalTinyGoCustody(c *canonicalTinyGoCustody) (*TinyGoCustody, erro
 	return out, nil
 }
 
-// Compiled is how many compiled files the custody judged.
-func (c TinyGoCustody) Compiled() int {
-	return c.VerifiedByModule + c.VerifiedByRelease + len(c.Differs) + len(c.NotEstablished)
-}
-
 // NotEstablishedByReason groups the not-established paths by reason, both
 // sorted, so a surface states each reason once.
 func (c TinyGoCustody) NotEstablishedByReason() ([]string, map[string][]string) {
@@ -306,39 +300,4 @@ func (c TinyGoCustody) NotEstablishedByReason() ([]string, map[string][]string) 
 	}
 	slices.Sort(reasons)
 	return reasons, byReason
-}
-
-// DiffersFrom is the differing paths judged against anchor, sorted.
-func (c TinyGoCustody) DiffersFrom(anchor TinyGoAnchor) []string {
-	var out []string
-	for _, d := range c.Differs {
-		if d.Anchor == anchor {
-			out = append(out, d.Path)
-		}
-	}
-	slices.Sort(out)
-	return out
-}
-
-// Statement says what the custody rests on, from what was reached rather than
-// from the route a connected run usually takes.
-func (c TinyGoCustody) Statement() string {
-	parts := []string{fmt.Sprintf("%d of %d compiled TinyGo file(s) match the module zip %s", c.VerifiedByModule, c.Compiled(), c.Module)}
-	if c.ModuleVerification != "" {
-		parts[0] += fmt.Sprintf(" (fetch verification %s)", c.ModuleVerification)
-	} else {
-		parts[0] += " (the module zip could not be read)"
-	}
-	switch {
-	case c.ReleaseAsset == "":
-		parts = append(parts, "no release archive was consulted")
-	case c.ReleaseOutcome == TinyGoReleaseDigestMatched:
-		parts = append(parts, fmt.Sprintf("%d match the release archive %s, whose bytes matched the SHA-256 GitHub publishes for it", c.VerifiedByRelease, c.ReleaseAsset))
-	case c.ReleaseOutcome == TinyGoReleaseDigestMismatch:
-		parts = append(parts, fmt.Sprintf("the release archive %s did NOT match the SHA-256 GitHub publishes for it, so no file is verified against it", c.ReleaseAsset))
-	default:
-		parts = append(parts, fmt.Sprintf("no file was checked against the release archive %s (%s)", c.ReleaseAsset, c.ReleaseOutcome))
-	}
-	parts = append(parts, fmt.Sprintf("%d differ from their anchor", len(c.Differs)), fmt.Sprintf("%d not established", len(c.NotEstablished)))
-	return strings.Join(parts, "; ")
 }

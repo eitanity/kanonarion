@@ -558,6 +558,9 @@ type FakeQueryDirectives struct {
 	// scans for OTHER projects sets it explicitly.
 	StoreScans int
 	CountErr   error
+	// Projects is what ListScanProjects names; nil reads as a store that
+	// cannot enumerate them.
+	Projects []string
 	// ListCalls counts calls to ListScans, so a test can assert that a listing
 	// which returned rows read the store once and did not also pay the
 	// zero-result survey.
@@ -589,6 +592,10 @@ func (f *FakeQueryDirectives) ListScans(_ context.Context, _ string, limit, offs
 		out = out[:limit]
 	}
 	return out, nil
+}
+
+func (f *FakeQueryDirectives) ListScanProjects(context.Context) ([]string, bool, error) {
+	return f.Projects, f.Projects != nil, nil
 }
 
 func (f *FakeQueryDirectives) CountScans(context.Context) (int, error) {

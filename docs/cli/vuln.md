@@ -1169,7 +1169,7 @@ Where no walk is rooted at the coordinate and its records name none either, the
 refusal names no command at all rather than one that cannot resolve.
 
 This is a different statement from `no vulnerability record for <coord> — run:
-kanonarion vuln-scan <walk-id>`, which means the store holds the coordinate at
+kanonarion vuln-scan …`, which means the store holds the coordinate at
 no pipeline version at all. A pipeline bump darkens every record written before
 it until a re-scan, so after one the first message is the ordinary answer and
 the second is the exception.
