@@ -19,6 +19,7 @@ import (
 
 	"code.eitanity.com/kanonarion/internal/sbom/application"
 	"code.eitanity.com/kanonarion/internal/sbom/domain"
+	sbomports "code.eitanity.com/kanonarion/internal/sbom/ports"
 	walkdomain "code.eitanity.com/kanonarion/internal/walk/domain"
 	walkports "code.eitanity.com/kanonarion/internal/walk/ports"
 )
@@ -460,6 +461,9 @@ func runSBOMShow(ctx context.Context, id, storeRoot string, stdout, stderr io.Wr
 	defer releaseStore(cleanup)
 
 	record, err := ctr.QuerySBOM.GetSBOMRecord(ctx, id)
+	if errors.Is(err, sbomports.ErrSBOMNotFound) {
+		return sbomRecordMiss(ctx, ctr.QuerySBOM, id, stderr)
+	}
 	if err != nil {
 		return fmt.Errorf("retrieving sbom %q: %w", id, err)
 	}
@@ -545,6 +549,34 @@ func runSBOMList(ctx context.Context, storeRoot, walkID string, jsonOut bool, st
 			r.GeneratedAt.Format("2006-01-02T15:04:05Z"))
 	}
 	return nil
+}
+
+// sbomRecordMiss answers an `sbom-show` that named an SBOM the store does not
+// hold, counted over every SBOM, since an SBOM id is not keyed on a walk.
+func sbomRecordMiss(ctx context.Context, uc QuerySBOMUseCase, id string, stderr io.Writer) error {
+	all, err := uc.ListSBOMRecords(ctx, "")
+	if err != nil {
+		return fmt.Errorf("counting sbom records for the not-found notice: %w", err)
+	}
+	scope := listZeroScope{
+		subject:     "SBOM record",
+		filterName:  "SBOM id",
+		filterValue: id,
+		field:       "SBOM id",
+		matchKind:   matchExact,
+		considered:  len(all),
+		produce:     "kanonarion sbom <walk-id>",
+		listAll:     "kanonarion sbom-list",
+	}
+	if len(all) > 0 {
+		scope.example = all[0].ID
+	}
+	if jsonOut {
+		if werr := writeListZeroNoticeJSON(stderr, scope); werr != nil {
+			return werr
+		}
+	}
+	return &exitError{code: ExitNotFound, msg: listZeroLine(scope)}
 }
 
 // sbomListZeroScope lifts the --walk filter and re-asks the store, so a zero

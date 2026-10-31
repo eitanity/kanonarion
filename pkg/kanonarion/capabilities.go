@@ -2,6 +2,7 @@ package kanonarion
 
 import (
 	callgraphports "code.eitanity.com/kanonarion/internal/callgraph/ports"
+	directiveports "code.eitanity.com/kanonarion/internal/directive/ports"
 	exampleports "code.eitanity.com/kanonarion/internal/example/ports"
 	fetchports "code.eitanity.com/kanonarion/internal/fetch/ports"
 	ifaceports "code.eitanity.com/kanonarion/internal/iface/ports"
@@ -29,6 +30,14 @@ type FactRecordComposer = fetchports.FactRecordComposer
 // Stability: optional substitution port (implemented by consumers); unstable
 // pre-v1.
 type SupersededArtefactLister = fetchports.SupersededArtefactLister
+
+// ScanProjectLister names the projects the store holds directive scans of.
+// Optional on Storage.Directives; without it a scan id the store does not hold
+// is refused without naming a project to list.
+//
+// Stability: optional substitution port (implemented by consumers); unstable
+// pre-v1.
+type ScanProjectLister = directiveports.ScanProjectLister
 
 // CallGraphCoordinateLister lists analysed coordinates from the store's keys.
 // Optional on Storage.CallGraphs; without it the listing composes every

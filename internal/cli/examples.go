@@ -310,6 +310,7 @@ func runExamplesShow(ctx context.Context, moduleArg, exampleName string, jsonOut
 			msg += ". " + u.Limit.Remedy()
 		}
 	}
+	msg += fmt.Sprintf("; to list its examples: kanonarion examples-list %s", coord)
 	return &exitError{code: ExitNotFound, msg: msg}
 }
 

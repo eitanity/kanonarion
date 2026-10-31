@@ -1844,6 +1844,11 @@ func ExitCodeFromError(err error) (int, bool) {
 	if ee, ok := errors.AsType[*exitcode.Error](err); ok {
 		return ee.Code, true
 	}
+	// A project walk the read needs is an absent record: the refusal names the
+	// walk invocation that produces it, runnable as printed.
+	if errors.As(err, new(noProjectWalkError)) {
+		return ExitNotFound, true
+	}
 	return 0, false
 }
 

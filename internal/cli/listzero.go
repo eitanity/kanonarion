@@ -57,6 +57,11 @@ type listZeroScope struct {
 	// that would create a record, one that would list the corpus unfiltered.
 	produce string
 	listAll string
+	// listEach replaces listAll for a corpus that lists only part by part —
+	// directive scans list one project at a time — naming the parts held, and
+	// listEachMore counts those left unnamed.
+	listEach     []string
+	listEachMore int
 	// pagedPast is set when --offset, not the filter, emptied the page; it
 	// carries the clause naming the paging that did it.
 	pagedPast string
@@ -226,6 +231,19 @@ func listZeroStatement(s listZeroScope) (string, []listZeroRemedy) {
 			line += fmt.Sprintf(" (e.g. %s)", s.example)
 		}
 		remedies := []listZeroRemedy{{fmt.Sprintf("to list every %s", s.subject), s.listAll}}
+		if len(s.listEach) > 0 {
+			remedies = remedies[:0]
+			for i, inv := range s.listEach {
+				label := "or"
+				if i == 0 {
+					label = fmt.Sprintf("to list one project's %s", s.plural())
+				}
+				remedies = append(remedies, listZeroRemedy{label, inv})
+			}
+			if s.listEachMore > 0 {
+				line += fmt.Sprintf(" (%d more project(s) hold one)", s.listEachMore)
+			}
+		}
 		if m := s.superseded.matched; len(m) > 0 {
 			g := s.superseded.gen
 			line += fmt.Sprintf("; %d %s matching it %s held only at a superseded %s (%s)",
@@ -342,6 +360,9 @@ func listZeroStatementJSON(s listZeroScope) listZeroJSON {
 		out.Superseded = &n
 		gens := distinctGenerations(sup)
 		out.SupersededGenerations = &gens
+	}
+	if len(s.listEach) > 0 {
+		out.Remedy = s.listEach
 	}
 	switch {
 	case s.storeEmpty():

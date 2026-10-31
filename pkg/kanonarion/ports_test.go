@@ -164,6 +164,7 @@ var allowedPortAliases = map[string]bool{
 	"ExampleRecordLister": true, "ExamplePipelinesHeldReader": true, "ExampleIdenticalGenerationReader": true,
 	"LicenseRecordLister": true, "LicensePipelinesHeldReader": true, "LicenseIdenticalGenerationReader": true,
 	"RoundResolver": true, "RoundAnswer": true,
+	"ScanProjectLister": true,
 }
 
 // facadeAlias is one exported type-alias declaration in the façade package.

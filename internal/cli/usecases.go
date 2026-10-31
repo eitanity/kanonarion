@@ -123,6 +123,9 @@ type QueryDirectivesUseCase interface {
 	// CountScans sizes the whole store, which ListScans cannot: it is keyed on
 	// a project, so an empty page can only speak for that project's history.
 	CountScans(ctx context.Context) (int, error)
+	// ListScanProjects names each project the store holds scans of; ok is
+	// false when the store cannot enumerate them.
+	ListScanProjects(ctx context.Context) (projects []string, ok bool, err error)
 }
 
 // DiffDirectivesUseCase is the interface for diffing two directive scans.

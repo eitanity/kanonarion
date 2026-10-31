@@ -534,7 +534,7 @@ kanonarion sbom-show <sbom-id> [flags]
 The global `--json` flag is a no-op here: `sbom-show` always emits the stored
 CycloneDX document's own bytes, which are the deliverable artifact and are
 already machine-readable, so there is nothing to convert. Passing the flag and
-omitting it produce byte-identical output.
+omitting it produce byte-identical stdout.
 
 The record's own fields — including `operator` and `licenses_incomplete`, the
 condition behind the [undetermined-licence exit](#licence-completeness) — are

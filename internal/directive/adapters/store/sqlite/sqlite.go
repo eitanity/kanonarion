@@ -217,6 +217,29 @@ func (s *Store) CountScans(ctx context.Context) (int, error) {
 	return n, nil
 }
 
+// ListScanProjects returns each project path this pipeline version holds a
+// scan of, sorted, under CountScans's predicate.
+func (s *Store) ListScanProjects(ctx context.Context) ([]string, error) {
+	const q = `SELECT DISTINCT project_module_path FROM directive_scans WHERE pipeline_version = ? ORDER BY project_module_path`
+	rows, err := s.db.DB().QueryContext(ctx, q, domain.PipelineVersion)
+	if err != nil {
+		return nil, fmt.Errorf("listing directive scan projects: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []string
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			return nil, fmt.Errorf("scanning directive scan project: %w", err)
+		}
+		out = append(out, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating directive scan projects: %w", err)
+	}
+	return out, nil
+}
+
 func scanOneRecord(row *sql.Row) (domain.Record, bool, error) {
 	var f filedRow
 	var blob []byte
