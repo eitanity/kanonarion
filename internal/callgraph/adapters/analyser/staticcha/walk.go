@@ -145,11 +145,12 @@ func (a *Analyser) walkGraph(
 	roots sourceRoots,
 ) ([]domain.CallNode, []domain.CallEdge, domain.CallGraphStatus) {
 	seenNodes := make(map[string]domain.CallNode)
-	seenEdges := make(map[edgeKey]struct{})
+	seenEdges := make(map[edgeKey]int)
 	var edges []domain.CallEdge
 
 	// Cache for built nodes to avoid redundant buildNode calls
 	nodeCache := make(map[*ssa.Function]domain.CallNode)
+	templates := newTemplateNames()
 
 	walkErr := callgraph.GraphVisitEdges(cg, func(edge *callgraph.Edge) error {
 		if ctx.Err() != nil {
@@ -189,22 +190,8 @@ func (a *Analyser) walkGraph(
 			}
 		}
 
-		ek := newEdgeKey(callerNode.ID, calleeNode.ID, sitePosFile, sitePosLine)
-
-		if _, dup := seenEdges[ek]; !dup {
-			seenEdges[ek] = struct{}{}
-			confidence, reflectDispatch := classifyConfidence(edge)
-			edges = append(edges, domain.CallEdge{
-				FromID: callerNode.ID,
-				ToID:   calleeNode.ID,
-				CallSite: domain.SourcePosition{
-					File: sitePosFile,
-					Line: sitePosLine,
-				},
-				Confidence:      confidence,
-				ReflectDispatch: reflectDispatch,
-			})
-		}
+		edges = recordEdge(edges, seenEdges, edge, callerNode.ID, calleeNode.ID, sitePosFile, sitePosLine)
+		templates.observe(edge, callerNode.Module, calleeNode.ID)
 
 		if _, ok := seenNodes[callerNode.ID]; !ok {
 			seenNodes[callerNode.ID] = callerNode
@@ -214,6 +201,9 @@ func (a *Analyser) walkGraph(
 		}
 		return nil
 	})
+
+	templates.stamp(edges, seenNodes)
+	addEdgelessNodes(cg, seenNodes, nodeCache, mem, fset, roots)
 
 	status := domain.CallGraphStatusExtracted
 	if walkErr != nil && ctx.Err() != nil {
@@ -225,4 +215,59 @@ func (a *Analyser) walkGraph(
 		nodes = append(nodes, n)
 	}
 	return nodes, edges, status
+}
+
+// addEdgelessNodes records every module function built with its body that no
+// edge named, so a call into it from another module's graph lands on a node
+// this graph holds rather than reading as a call into a graph not held.
+func addEdgelessNodes(cg *callgraph.Graph, seen map[string]domain.CallNode, cache map[*ssa.Function]domain.CallNode,
+	mem moduleMembership, fset *token.FileSet, roots sourceRoots) {
+	for fn := range cg.Nodes {
+		if fn == nil || !fnInModule(fn, mem) || !fnHasRealBody(fn) {
+			continue
+		}
+		n, ok := cache[fn]
+		if !ok {
+			n = buildNode(fn, mem, fset, roots)
+		}
+		if _, held := seen[n.ID]; !held {
+			seen[n.ID] = n
+		}
+	}
+}
+
+// recordEdge appends the edge once per (caller, callee, site), with the
+// constant name of a MethodByName lookup made there.
+func recordEdge(edges []domain.CallEdge, seen map[edgeKey]int, edge *callgraph.Edge, fromID, toID, file string, line int) []domain.CallEdge {
+	ek := newEdgeKey(fromID, toID, file, line)
+	name := lookupName(edge.Site, toID)
+	if at, dup := seen[ek]; dup {
+		if edges[at].LookupName != name {
+			// Two lookups on one line share an edge. Naming either would leave the
+			// other's methods unbound, so the edge names none and binds them all.
+			edges[at].LookupName = ""
+		}
+		return edges
+	}
+	seen[ek] = len(edges)
+	confidence, reflectDispatch := classifyConfidence(edge)
+	return append(edges, domain.CallEdge{
+		FromID:          fromID,
+		ToID:            toID,
+		CallSite:        domain.SourcePosition{File: file, Line: line},
+		Confidence:      confidence,
+		ReflectDispatch: reflectDispatch,
+		LookupName:      name,
+	})
+}
+
+// lookupName is the constant name a reflect MethodByName call passes at the
+// edge's site, and "" for a computed name or any other callee. The name is the
+// call's last argument whether the receiver is bound (Value) or invoked (Type).
+func lookupName(site ssa.CallInstruction, calleeID string) string {
+	if calleeID != "reflect.(Value).MethodByName" && calleeID != "reflect.(*rtype).MethodByName" {
+		return ""
+	}
+	name, _ := constantLastArg(site)
+	return name
 }

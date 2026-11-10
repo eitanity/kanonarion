@@ -504,6 +504,36 @@ type CallEdge struct {
 	// The zero value is a call; see EdgeKind for why the distinction may never
 	// be collapsed.
 	Kind EdgeKind
+	// LookupName is what a search past a reflective lookup at this site may bind
+	// to: the constant name a reflect MethodByName call passes, or on a template
+	// Execute edge the names its module's constant template texts use (see
+	// TemplateLookupNames). Empty where the names are not known.
+	LookupName string
+}
+
+// TemplateNamesNone is a template Execute edge's LookupName where every text
+// its module parses is constant and names no field or method.
+const TemplateNamesNone = "-"
+
+// TemplateLookupNames encodes a template Execute edge's sorted name set.
+func TemplateLookupNames(names []string) string {
+	if len(names) == 0 {
+		return TemplateNamesNone
+	}
+	return strings.Join(names, ",")
+}
+
+// LookupNames decodes a LookupName into the names it binds, and false where it
+// binds nothing known.
+func LookupNames(v string) ([]string, bool) {
+	switch v {
+	case "":
+		return nil, false
+	case TemplateNamesNone:
+		return nil, true
+	default:
+		return strings.Split(v, ","), true
+	}
 }
 
 // CallGraphRecord is the aggregate root for a module's call graph extraction

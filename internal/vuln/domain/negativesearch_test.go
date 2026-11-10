@@ -302,14 +302,19 @@ func TestIsReflectiveLookup_NamesExactlyTheCallsThatFetchAMethod(t *testing.T) {
 	}
 }
 
-// TestSearchedNegative_AReachableLookupHoldsTheRung pins where a reflective
-// site enters the ladder: only a clean search whose entry points reach one is
-// held at unconfirmed. Every neighbour keeps the rung it already had.
-func TestSearchedNegative_AReachableLookupHoldsTheRung(t *testing.T) {
+// TestSearchedNegative_OnlyAnUnboundLookupDecidesTheRung pins where a reflective
+// site enters the ladder: a bound one is searched past, so every outcome keeps
+// the rung its search earns and the reason names it; a reachable unbound one
+// holds a clean search at unconfirmed, and nothing else.
+func TestSearchedNegative_OnlyAnUnboundLookupDecidesTheRung(t *testing.T) {
 	t.Parallel()
 
 	reached := domain.ReflectiveDispatchSite{
 		Caller: "example.com/mod.bind", Callee: "reflect.(Value).MethodByName", ReachableFromEntryPoint: true,
+		LookupName: "Run", Bound: true, NameCount: 1, MethodsBound: 1,
+	}
+	unbound := domain.ReflectiveDispatchSite{
+		Caller: "example.com/mod.render", Callee: "text/template.(*Template).Execute", CallSite: "r.go:4", ReachableFromEntryPoint: true,
 	}
 	unreached := domain.ReflectiveDispatchSite{
 		Caller: "example.com/mod/internal/testenv.helper", Callee: "reflect.(Value).MethodByName",
@@ -318,6 +323,7 @@ func TestSearchedNegative_AReachableLookupHoldsTheRung(t *testing.T) {
 		{ModulePath: "example.com/mod", Package: "example.com/mod", Symbol: "Serve"},
 		{ModulePath: "example.com/mod", Package: "example.com/mod", Symbol: "Vulnerable"},
 	}
+	const named = "from the 1 reachable lookup site: example.com/mod.bind -> reflect.(Value).MethodByName (bound to the 1 exported method named Run)"
 
 	for _, tt := range []struct {
 		name         string
@@ -327,52 +333,64 @@ func TestSearchedNegative_AReachableLookupHoldsTheRung(t *testing.T) {
 		reasonHasNot string
 	}{
 		{
-			name:      "one reachable site",
+			name:      "one reachable site confirms a clean search",
 			search:    domain.NegativeSearch{ReflectiveDispatch: []domain.ReflectiveDispatchSite{reached}},
-			want:      domain.SoundnessUnconfirmed,
-			reasonHas: "reach 1 reflective method lookup site (",
+			want:      domain.SoundnessConfirmed,
+			reasonHas: named,
 		},
 		{
 			name:      "reachable sites are counted, unreached ones are not",
 			search:    domain.NegativeSearch{ReflectiveDispatch: []domain.ReflectiveDispatchSite{reached, reached, unreached}},
-			want:      domain.SoundnessUnconfirmed,
-			reasonHas: "reach 2 reflective method lookup sites (",
+			want:      domain.SoundnessConfirmed,
+			reasonHas: "from the 2 reachable lookup sites: ",
 		},
 		{
-			name:         "a site no entry point reaches changes nothing",
+			name:      "a reachable unbound site holds a clean search at unconfirmed",
+			search:    domain.NegativeSearch{ReflectiveDispatch: []domain.ReflectiveDispatchSite{unbound, reached}},
+			want:      domain.SoundnessUnconfirmed,
+			reasonHas: "reach 1 reflective method lookup site whose methods are not known, which this search cannot follow, so a route may exist that it could not see: example.com/mod.render -> text/template.(*Template).Execute at r.go:4. A call-graph search found no path",
+		},
+		{
+			name:         "a path found past an unbound site is still disputed",
+			search:       domain.NegativeSearch{PathFound: true, InRecordedFrame: true, Route: route, ReflectiveDispatch: []domain.ReflectiveDispatchSite{unbound}},
+			want:         domain.SoundnessDisputed,
+			reasonHasNot: "not known",
+		},
+		{
+			name:         "a site no entry point reaches is not named",
 			search:       domain.NegativeSearch{ReflectiveDispatch: []domain.ReflectiveDispatchSite{unreached}},
 			want:         domain.SoundnessConfirmed,
-			reasonHasNot: "by reflection",
+			reasonHasNot: "reachable lookup site",
 		},
 		{
-			name:         "a found path in the recorded frame is still disputed",
-			search:       domain.NegativeSearch{PathFound: true, InRecordedFrame: true, Route: route, ReflectiveDispatch: []domain.ReflectiveDispatchSite{reached}},
-			want:         domain.SoundnessDisputed,
-			reasonHasNot: "by reflection",
+			name:      "a found path in the recorded frame is disputed",
+			search:    domain.NegativeSearch{PathFound: true, InRecordedFrame: true, Route: route, ReflectiveDispatch: []domain.ReflectiveDispatchSite{reached}},
+			want:      domain.SoundnessDisputed,
+			reasonHas: named,
 		},
 		{
-			name:         "a found path outside the recorded frame keeps the recorded rung",
-			search:       domain.NegativeSearch{PathFound: true, Route: route, ReflectiveDispatch: []domain.ReflectiveDispatchSite{reached}},
-			want:         domain.SoundnessInferred,
-			reasonHasNot: "by reflection",
+			name:      "a found path outside the recorded frame keeps the recorded rung",
+			search:    domain.NegativeSearch{PathFound: true, Route: route, ReflectiveDispatch: []domain.ReflectiveDispatchSite{reached}},
+			want:      domain.SoundnessInferred,
+			reasonHas: named,
 		},
 		{
-			name:      "unjoined calls do not outrank a reachable site",
+			name:      "unjoined calls keep the recorded rung past a reachable site",
 			search:    domain.NegativeSearch{UnjoinedCalls: []string{"example.net/other.F"}, ReflectiveDispatch: []domain.ReflectiveDispatchSite{reached}},
-			want:      domain.SoundnessUnconfirmed,
-			reasonHas: "reach 1 reflective method lookup site (",
+			want:      domain.SoundnessInferred,
+			reasonHas: named,
 		},
 		{
 			name:         "unjoined calls with only an unreached site keep the recorded rung",
 			search:       domain.NegativeSearch{UnjoinedCalls: []string{"example.net/other.F"}, ReflectiveDispatch: []domain.ReflectiveDispatchSite{unreached}},
 			want:         domain.SoundnessInferred,
-			reasonHasNot: "by reflection",
+			reasonHasNot: "reachable lookup site",
 		},
 		{
 			name:         "a search that did not run keeps the recorded rung",
 			search:       domain.NegativeSearch{NotSearched: "the store holds no call graph", ReflectiveDispatch: []domain.ReflectiveDispatchSite{reached}},
 			want:         domain.SoundnessInferred,
-			reasonHasNot: "by reflection",
+			reasonHasNot: "reachable lookup site",
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -391,7 +409,7 @@ func TestSearchedNegative_AReachableLookupHoldsTheRung(t *testing.T) {
 				t.Errorf("the reason does not say %q: %s", tt.reasonHas, reason)
 			}
 			if tt.reasonHasNot != "" && strings.Contains(reason, tt.reasonHasNot) {
-				t.Errorf("the reason says %q where no reachable site decided the rung: %s", tt.reasonHasNot, reason)
+				t.Errorf("the reason says %q where no reachable site was searched past: %s", tt.reasonHasNot, reason)
 			}
 		})
 	}

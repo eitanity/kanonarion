@@ -59,9 +59,10 @@ func buildNode(fn *ssa.Function, mem moduleMembership, fset *token.FileSet, root
 // function has none, which is the case for the synthetic wrappers SSA
 // materialises for a method set. A wrapper around a test fake's method is test
 // code, and attributing it to production would put it back in exactly the
-// answer the role exists to keep separate.
+// answer the role exists to keep separate. A wrapper of a promoted method is
+// asked of its receiver's type too, since its object is the embedded method.
 func isTestFunc(fn *ssa.Function, fset *token.FileSet, pkgPath string) bool {
-	if isTestPackagePath(pkgPath) {
+	if isTestPackagePath(pkgPath) || isTestTypeWrapper(fn, fset) || hasTestTypeArg(fn, fset) {
 		return true
 	}
 	if fset == nil {
@@ -83,6 +84,56 @@ func isTestFunc(fn *ssa.Function, fset *token.FileSet, pkgPath string) bool {
 	}
 	p := fset.Position(pos)
 	return p.IsValid() && strings.HasSuffix(p.Filename, "_test.go")
+}
+
+// isTestTypeWrapper reports whether fn is a synthetic method wrapper of a type
+// declared in test code. Its object is the promoted method, declared beside the
+// embedded type, so the receiver's own declaration has to be asked.
+func isTestTypeWrapper(fn *ssa.Function, fset *token.FileSet) bool {
+	if fn.Synthetic == "" || fn.Signature.Recv() == nil {
+		return false
+	}
+	return isTestType(fn.Signature.Recv().Type(), fset, map[types.Type]bool{})
+}
+
+// hasTestTypeArg reports whether fn is a generic instance with a type argument
+// declared in test code: such an instance exists only in a test build.
+func hasTestTypeArg(fn *ssa.Function, fset *token.FileSet) bool {
+	seen := map[types.Type]bool{}
+	for _, t := range fn.TypeArgs() {
+		if isTestType(t, fset, seen) {
+			return true
+		}
+	}
+	return false
+}
+
+// isTestType reports whether t names a type declared in test code, itself or
+// through an element or a type argument.
+func isTestType(t types.Type, fset *token.FileSet, seen map[types.Type]bool) bool {
+	t = types.Unalias(t)
+	if seen[t] {
+		return false
+	}
+	seen[t] = true
+	switch t := t.(type) {
+	case *types.Named:
+		if obj := t.Obj(); obj.Pkg() != nil && isTestDeclaration(obj.Pos(), fset, obj.Pkg().Path()) {
+			return true
+		}
+		for i := range t.TypeArgs().Len() {
+			if isTestType(t.TypeArgs().At(i), fset, seen) {
+				return true
+			}
+		}
+	case interface{ Elem() types.Type }:
+		// Pointer, slice, array, channel and map values.
+		if m, ok := t.(*types.Map); ok && isTestType(m.Key(), fset, seen) {
+			return true
+		}
+		return isTestType(t.Elem(), fset, seen)
+	}
+	return false
 }
 
 // isTestDeclaration is the type-level form of isTestFunc, for a declaration

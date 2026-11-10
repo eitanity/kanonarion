@@ -1045,6 +1045,9 @@ type CallGraphReflectSite struct {
 	// the site. Both are zero when the edge carried no position.
 	File string
 	Line int
+	// LookupName is the edge's recorded name set, as the call graph spells it;
+	// empty where none is known.
+	LookupName string
 }
 
 // CallSiteKey names one directed call site: the caller node and the callee node,

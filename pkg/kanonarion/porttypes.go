@@ -902,8 +902,8 @@ type RecordFindingsStatus = vulndomain.RecordFindingsStatus
 // Values may be added within a major version (§4).
 type ReferenceScope = callgraphdomain.ReferenceScope
 
-// ReflectiveDispatchSite is one call the search could not follow: a call site
-// in the graph searched whose callee is a reflective method lookup.
+// ReflectiveDispatchSite is one reflective method lookup in the graph searched,
+// and what the search bound it to.
 //
 // Stability: supporting type of the VulnerabilityStore port; unstable pre-v1.
 // Fields may be added within a major version (§4).

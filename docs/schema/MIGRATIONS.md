@@ -170,6 +170,49 @@ values there, as they did when `verdict` and `reachability_state` gained theirs)
   a record that names no frame. `callgraph-show` text gains a `frame:` line and
   `--history` a `frame:` line per generation, both absent on such a record.
 
+## Call graph record: pipeline `0.13.0` → `0.14.0`, and callgraph migration 18 - the name a reflective lookup passes
+
+**Record shape change; store migration 18; no schema-version bump.** An edge
+records inside the seal, as `lookup_name`, the names a reflective lookup there
+may bind: on `reflect.(Value).MethodByName` and `reflect.(*rtype).MethodByName`
+a constant name argument; on `text/template` and `html/template` `Execute` and
+`ExecuteTemplate` the sorted, comma-joined field and method names in every
+template text the caller's module parses, `-` where they name none. It is
+empty where the names are not known: a computed name, or a module that calls
+`Parse` with non-constant text, `ParseFiles`, `ParseGlob`, `ParseFS`, `Delims`
+or `AddParseTree`, or parses no template. The field is omitted when empty, so a
+record without one marshals to the bytes it always did.
+Migration 18 adds its column copy:
+
+```sql
+ALTER TABLE callgraph_edges ADD COLUMN lookup_name TEXT NOT NULL DEFAULT ''
+```
+
+No back-fill, and no row is changed: every existing row is at `0.13.0` or
+earlier, which is never served at `0.14.0`. Store `v93` -> `v94`.
+`callgraph-show --json` edges gain `lookup_name` where set.
+
+The read-time `reachability` search binds each lookup its entry points reach to
+the exported methods of its names. A negative past bound lookups only reads
+`confirmed` or `disputed`, or keeps the recorded rung where a bound method is in
+a module whose graph is not joined; one past a lookup with no known names still
+reads `unconfirmed`. Each `reflective_dispatch.sites` entry gains `bound`,
+`methods_bound` and, where set, `lookup_name`, and a route hop over an added edge
+carries `dispatch.kind` `reflect`. Additive.
+
+The same bump marks as test code (`is_test`) a wrapper SSA builds for a method a
+test type promotes from an embedded field, and a generic instance with a type
+argument declared in test code. A `0.13.0` record held them as production code,
+where a dependency join kept them as calls into a module whose graph is not held.
+A record also holds a node for every function of the module built with its
+body, including one no edge names: a `0.13.0` record omitted those, so another
+module's call to one read as a call into a graph not held. `node_count` grows;
+`edge_count` does not.
+
+Records are keyed `(module, version, pipeline_version)`: `0.13.0` rows stay and
+become unreachable. Cost is one re-extraction per coordinate on its next
+`callgraph` or `local` run.
+
 ## SBOM: pipeline `0.10.0` → `0.11.0`
 
 **Document bytes change; no store migration.** The bump makes stored `0.10.0`

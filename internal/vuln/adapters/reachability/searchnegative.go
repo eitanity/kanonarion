@@ -121,7 +121,10 @@ type cachedProjection struct {
 	// beside the root sets, for the same reason they are: the reachable set costs
 	// one walk of the graph, and a record can hold many findings.
 	reflectSites []domain.ReflectiveDispatchSite
-	loaded       bool
+	// lookupEdges are the edges projection gained past those sites, each with
+	// the site it was added for, so a route over one names it.
+	lookupEdges map[lookupEdge]domain.ReflectiveDispatchSite
+	loaded      bool
 	// loadErr is why the load failed, kept so the refusal a reader is shown names
 	// the cause rather than asserting the commonest one.
 	loadErr error
@@ -303,53 +306,13 @@ func (c *cachedProjection) search(rec *domain.VulnerabilityRecord, f domain.Vuln
 	// a route this tool found is never dropped.
 	if path := bfsPath(c.projection, c.entryRoots, targets); path != nil {
 		result.PathFound = true
-		result.Route = routeFrom(c.projection, path)
+		result.Route = annotateLookupHops(routeFrom(c.projection, path), path, c.lookupEdges)
 	}
 	if path := bfsPath(c.projection, c.shippedRoots, targets); path != nil {
 		result.ShippedCodePathFound = true
-		result.ShippedCodeRoute = routeFrom(c.projection, path)
+		result.ShippedCodeRoute = annotateLookupHops(routeFrom(c.projection, path), path, c.lookupEdges)
 	}
 	return result
-}
-
-// reflectiveDispatchSites renders the graph's reflective dispatch sites for a
-// reader, each told whether the named entry points reach its CALLER.
-//
-// The reachable set is what separates a site worth reporting from one that only
-// makes a negative look weaker. A reflective call in code no entry point reaches
-// cannot be on a route into this module, so it qualifies nothing.
-//
-// The graph walk is skipped entirely where there are no sites, which is the
-// common case. Nothing is computed for a graph with none.
-func reflectiveDispatchSites(proj ports.CallGraphProjection, entryRoots []string) []domain.ReflectiveDispatchSite {
-	if len(proj.ReflectiveDispatch) == 0 {
-		return nil
-	}
-	reached := reachableFrom(proj, entryRoots)
-	sites := make([]domain.ReflectiveDispatchSite, 0, len(proj.ReflectiveDispatch))
-	for _, s := range proj.ReflectiveDispatch {
-		sites = append(sites, domain.ReflectiveDispatchSite{
-			Caller:                  s.CallerID,
-			Callee:                  s.CalleeID,
-			CallSite:                reflectSitePosition(s),
-			ReachableFromEntryPoint: reached[s.CallerID],
-		})
-	}
-	// Sorted on every field that distinguishes two sites, not on the caller
-	// alone: two calls from one function to one reflect method differ only in
-	// their line, and a sort that cannot tell them apart leaves their order to
-	// whatever the store happened to return.
-	sort.Slice(sites, func(i, j int) bool {
-		a, b := sites[i], sites[j]
-		if a.Caller != b.Caller {
-			return a.Caller < b.Caller
-		}
-		if a.Callee != b.Callee {
-			return a.Callee < b.Callee
-		}
-		return a.CallSite < b.CallSite
-	})
-	return sites
 }
 
 // reflectSitePosition renders a site's position the way a hop renders its call
@@ -475,7 +438,7 @@ func ownGraph(coord coordinate.ModuleCoordinate, proj ports.CallGraphProjection)
 	entry := &cachedProjection{missing: coord, subject: coord, projection: proj, loaded: true}
 	entry.shippedRoots = collectEntryPoints(proj)
 	entry.entryRoots = collectNamedEntryPoints(proj)
-	entry.reflectSites = reflectiveDispatchSites(proj, entry.entryRoots)
+	entry.projection, entry.reflectSites, entry.lookupEdges = searchPastLookups(proj, entry.entryRoots)
 	entry.searched = []string{graphLabel(coord, proj)}
 	return entry
 }
@@ -647,8 +610,8 @@ func (s *NegativeSearcher) joinedGraphFor(
 	// Selected over the consumer's graph, never the joined one: see above.
 	entry.shippedRoots = collectEntryPoints(consumer)
 	entry.entryRoots = collectNamedEntryPoints(consumer)
+	entry.projection, entry.reflectSites, entry.lookupEdges = searchPastLookups(entry.projection, entry.entryRoots)
 	entry.projection.Completeness = frame.reachedCompleteness(entry.projection, entry.entryRoots, consumer, own)
-	entry.reflectSites = reflectiveDispatchSites(entry.projection, entry.entryRoots)
 	entry.searched = append([]string{graphLabel(frameCoord, consumer)}, frame.label(subject)...)
 	entry.searched = append(entry.searched, rule.restrictedLabel(subject, own, len(linked)))
 	entry.unjoinedCalls = unjoinedCalls(entry.projection, entry.entryRoots)

@@ -761,7 +761,7 @@ type negativeSearchOutput struct {
 	// calls into modules the join does not hold (naming the calls).
 	NotJoined string                    `json:"not_joined,omitempty"`
 	Routes    []reachabilityRouteOutput `json:"routes,omitempty"`
-	// ReflectiveDispatch is what the search could NOT follow. Where a search ran,
+	// ReflectiveDispatch is the lookup sites the search bound. Where a search ran,
 	// its zero counts are evidence — the graph was looked at and holds no such
 	// site — which an absent key cannot say, so it is emitted rather than omitted.
 	//
@@ -776,10 +776,9 @@ type negativeSearchOutput struct {
 // search ran over, in the curated JSON shape.
 //
 // The two counts are both here and neither is the other's summary. SiteCount is
-// how many calls the analysis could not bound; ReachableSiteCount is how many of
-// those sit in code anything the analysis can name as an entry point reaches. A
-// site nothing reaches hides no route into the module, so a consumer that weighs
-// a negative on the first number alone will weaken it for no reason.
+// how many lookup sites the graph holds; ReachableSiteCount is how many of those
+// sit in code anything the analysis can name as an entry point reaches. Only a
+// reachable site adds edges to the search.
 //
 // A "reflective dispatch site" is a reflective method lookup, or a call to a
 // standard-library function that makes one. It is NOT a call into package
@@ -801,6 +800,13 @@ type reflectiveDispatchSiteOutput struct {
 	// field that says whether the site qualifies anything, and it was derived for
 	// every site listed.
 	ReachableFromEntryPoint bool `json:"reachable_from_entry_point"`
+	// Bound says the site's name set is known, LookupName is that set, and
+	// MethodsBound how many methods the search bound the site to.
+	Bound        bool   `json:"bound"`
+	LookupName   string `json:"lookup_name,omitempty"`
+	MethodsBound int    `json:"methods_bound"`
+	// binding is the domain's rendering of the above, for the text surface.
+	binding string
 }
 
 // negativeSearchToOutput renders the search, or nil when none ran.
@@ -849,6 +855,10 @@ func reflectiveDispatchToOutput(s *vuldomain.NegativeSearch) reflectiveDispatchO
 			Callee:                  site.Callee,
 			CallSite:                site.CallSite,
 			ReachableFromEntryPoint: site.ReachableFromEntryPoint,
+			Bound:                   site.Bound,
+			LookupName:              site.LookupName,
+			MethodsBound:            site.MethodsBound,
+			binding:                 site.Binding(),
 		})
 	}
 	return out
@@ -1345,12 +1355,13 @@ func printSoundness(stdout io.Writer, res vulnReachabilityQuery) {
 	_, _ = fmt.Fprintf(stdout, "  soundness: %s — %s\n", res.Soundness, res.SoundnessReason)
 }
 
-// printReflectiveDispatch prints what the read-time search could not follow.
+// printReflectiveDispatch prints the lookup sites the read-time search bound.
 //
 // It prints under a negative because that is the verdict it qualifies — or, far
 // more often, declines to qualify. A reflective dispatch site is a reflective
-// method lookup, or a call to a standard-library function that makes one, so the
-// analysis cannot say what it fetched and a route could hide behind it.
+// method lookup, or a call to a standard-library function that makes one. The
+// search went past each reachable one whose name set is known, and an unknown
+// one holds the rung at unconfirmed.
 //
 // Three things are said, in this order, because each is useless without the one
 // before it. How many sites there are. How many of those anything the analysis
@@ -1372,15 +1383,15 @@ func printReflectiveDispatch(stdout io.Writer, search *negativeSearchOutput) {
 			"  reflective dispatch: none — the graph searched holds no reflective method lookup and no call to a standard-library function that makes one")
 		return
 	}
-	_, _ = fmt.Fprintf(stdout, "  reflective dispatch: %d %s the search could not follow, %s\n",
-		d.SiteCount, pluralise(d.SiteCount, "call site", "call sites"), reachableSitesPhrase(d.ReachableSiteCount))
+	_, _ = fmt.Fprintf(stdout, "  reflective dispatch: %d %s a method up by reflection, %s\n",
+		d.SiteCount, pluralise(d.SiteCount, "call site that looks", "call sites that look"), reachableSitesPhrase(d.ReachableSiteCount))
 	for _, site := range d.Sites {
 		where := ""
 		if site.CallSite != "" {
 			where = " at " + site.CallSite
 		}
 		_, _ = fmt.Fprintf(stdout, "    %s -> %s%s — %s\n",
-			site.Caller, site.Callee, where, reachableSiteNote(site.ReachableFromEntryPoint))
+			site.Caller, site.Callee, where, reachableSiteNote(site))
 	}
 }
 
@@ -1388,18 +1399,19 @@ func printReflectiveDispatch(stdout io.Writer, search *negativeSearchOutput) {
 // means for the negative printed above it.
 func reachableSitesPhrase(reachable int) string {
 	if reachable == 0 {
-		return "none of them reachable from an entry point the analysis can name — none can be on a route into this module, so they do not qualify this answer"
+		return "none of them reachable from an entry point the analysis can name — none can be on a route into this module, so the search added nothing for them"
 	}
 	return strconv.Itoa(reachable) + " of them " + pluralise(reachable, "is", "are") +
-		" reachable from an entry point the analysis can name, so a route could hide there"
+		" reachable from an entry point the analysis can name"
 }
 
-// reachableSiteNote says which of the two a single site is.
-func reachableSiteNote(reachable bool) string {
-	if reachable {
-		return "reachable from an entry point"
+// reachableSiteNote says which of the two a single site is, and what a
+// reachable one was bound to.
+func reachableSiteNote(site reflectiveDispatchSiteOutput) string {
+	if !site.ReachableFromEntryPoint {
+		return "not reachable from any entry point the analysis can name"
 	}
-	return "not reachable from any entry point the analysis can name"
+	return "reachable from an entry point, " + site.binding
 }
 
 // frameLine renders one hop, omitting the parts the analyser could not supply.

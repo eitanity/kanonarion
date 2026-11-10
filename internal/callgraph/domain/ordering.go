@@ -84,7 +84,7 @@ func interruptHandlerLess(a, b InterruptHandler) bool {
 
 // CallEdgeLess is the canonical ordering for CallEdge slices. The endpoints and
 // the call site come first because that is the order a reader scans an edge
-// list in; Kind, Confidence, ReflectDispatch and IsTest follow so that two
+// list in; Kind, Confidence, ReflectDispatch and LookupName follow so that two
 // edges between one pair of nodes at one call site still have a defined order.
 func CallEdgeLess(a, b CallEdge) bool {
 	if a.FromID != b.FromID {
@@ -108,7 +108,7 @@ func CallEdgeLess(a, b CallEdge) bool {
 	if a.ReflectDispatch != b.ReflectDispatch {
 		return !a.ReflectDispatch
 	}
-	return false
+	return a.LookupName < b.LookupName
 }
 
 // InterfaceTypeLess is the canonical ordering for InterfaceType slices. Methods

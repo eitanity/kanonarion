@@ -155,7 +155,7 @@ The rungs, most to least sound:
 |---|---|
 | `confirmed` | A call-graph search ran over a graph built with function bodies and found no path **from any entry point the analysis can name** — the module's public API, its package initialisers, a command's `main`, a function with an export directive, an `http.Handler`. The only rung a clean negative may rest on. |
 | `inferred` | No search ran for this finding. An analysis loaded the whole build from source and never reported a route; the negative reads that silence. |
-| `unconfirmed` | An analysis ran that could not have found a route at all — a symbol table inspected in binary mode, a module-level scan under a TinyGo frame (see [Scanning under a TinyGo frame](vuln.md#scanning-under-a-tinygo-frame)), a call graph below `BUILT_WITH_BODIES`, a clean search whose entry points reach a reflective method lookup it cannot follow, or an answer that does not say what produced it. |
+| `unconfirmed` | An analysis ran that could not have found a route at all — a symbol table inspected in binary mode, a module-level scan under a TinyGo frame (see [Scanning under a TinyGo frame](vuln.md#scanning-under-a-tinygo-frame)), a call graph below `BUILT_WITH_BODIES`, a clean search whose entry points reach a reflective method lookup whose methods are not known, or an answer that does not say what produced it. |
 | `unsearchable` | The advisory names no symbols for this module path, so there was never a target to search for. Unlike the rungs above, no re-scan at any fidelity changes this. |
 | `disputed` | The recorded negative is contradicted: a search from one of those entry points found a path to the symbol. Both answers stand; neither is discarded. Treat the finding as open. |
 
@@ -226,44 +226,39 @@ A graph that names no entry point at all confirms nothing. The search would star
 nowhere, so of course it finds nothing, and `entry_point_roots: 0` in the JSON is
 what says that happened.
 
-### What the search could not follow
-
-A negative says no route was found. It cannot say no route exists, and one of the
-ways a route hides is a call whose target is chosen while the program runs. So the
-search names those calls.
+### Reflective method lookups
 
 A **reflective dispatch site** is a reflective method lookup, or a call to a
 standard-library function that makes one: `Method`, `MethodByName` or `Methods` on
 a `reflect.Value` or `reflect.Type`; `Execute` or `ExecuteTemplate` on a
 `text/template` or `html/template` `Template`; `Register` or `RegisterName` in
-`net/rpc`. A method fetched this way has no call edge, so a route could be hiding
-behind it.
+`net/rpc`.
 
 It is **not** a call into package `reflect`. `reflect.TypeOf` has exactly one
 callee and conceals nothing. `Value.Call` and `FieldByName` are not sites either:
 a function reaches `Call` as a value, and taking that value is a reference the
 search follows.
 
-Two counts are reported and neither is the other's summary:
-
-- `site_count` — how many such calls are in the graph that was searched.
-- `reachable_site_count` — how many of those sit in code that something the
-  analysis can name as an entry point actually reaches.
-
-**The second is the one that decides whether a negative is worth doubting.** A
-lookup in code nothing enters cannot be on a route into the module, so it
-qualifies nothing. A reachable one holds a negative at `unconfirmed`:
+A site an entry point reaches gets an edge to each exported, non-test method of
+the names it is known to use: a `MethodByName` call's constant name, or for `Execute` and
+`ExecuteTemplate` the field and method names in every template text its module
+parses, when all of them are constants. Every other site binds nothing:
+a computed name, `Method`, `Methods`, `net/rpc`, and a module that calls `Parse`
+with other text, `ParseFiles`, `ParseGlob`, `ParseFS` or `Delims`, or parses
+none. A reachable site that binds nothing holds a clean negative at
+`unconfirmed` and is named in the reason. A site nothing reaches adds nothing.
+Each site in `sites` carries `reachable_from_entry_point`, `bound`,
+`methods_bound` and `lookup_name`, the names:
 
 ```
 GO-0000-0000 affects example.com/mod@v1.0.0 but is NOT reachable [...]
-  soundness: unconfirmed — the entry points reach 1 reflective method lookup site [...]
-  reflective dispatch: 1 call site the search could not follow, 1 of them is reachable from an entry point the analysis can name, so a route could hide there
-    example.com/mod.render -> text/template.(*Template).Execute at render.go:9 — reachable from an entry point
+  soundness: disputed — [...] On that route, example.com/app main -> example.com/app (D).Run is reflect, at main.go:13, an edge the search added for the reflective method lookup [...]
+  reflective dispatch: 1 call site that looks a method up by reflection, 1 of them is reachable from an entry point the analysis can name
+    example.com/app.main -> reflect.(Value).MethodByName at main.go:13 — reachable from an entry point, bound to the 1 exported method named Run
 ```
 
-Finding none is the common answer, and it is stated rather than left out. A search
-that ran over a graph and found no such call has measured something; an absent
-number has not:
+The added hop reads `reflect` in `--json` too. A bound method in a module whose
+graph is not joined is an unjoined call. Finding no site is stated:
 
 ```
   reflective dispatch: none — the graph searched holds no reflective method lookup and no call to a standard-library function that makes one
@@ -276,9 +271,6 @@ Two calls from one function to one `reflect` method on two lines are two sites, 
 with its own `call_site`. The callee picks the site, except an `Unknown` edge
 without `reflect_dispatch`: that is a call through a function value, not a lookup
 (see [callgraph](callgraph.md)).
-
-A reachable site changes the soundness rung and never the verdict: a search that
-found no route still answers NOT reachable, at `unconfirmed`.
 
 ### A search that could not be made says so
 
@@ -320,7 +312,7 @@ the coordinate, or the graph names none of the advisory's symbols — which is n
 | `routes` | Every route the search found, from either rooting, each naming its own root. |
 | `graphs_searched` | The stored call graphs the traversal ran over, each named with its coordinate, fidelity and size. One entry for an ordinary module; two or three for a negative measured in your build, which is a join — see below. The middle entry, where present, counts the further dependency graphs joined and names the first three. |
 | `not_joined` | Why the join could not settle a negative measured in your build: your build has no graph (the command that analyses it is named), or your entry points reach calls the join cannot follow (the calls are named, with why each was not joined and the `callgraph` command where one would join it). Absent where the join ran and followed every call. |
-| `reflective_dispatch` | What the search could not follow: `site_count`, `reachable_site_count`, and a `sites` list. Always present, zero included. See below. |
+| `reflective_dispatch` | The reflective method lookups the search went past: `site_count`, `reachable_site_count`, and a `sites` list. Always present, zero included. See below. |
 
 The same fact is on `callgraph-show` as `artifact_kind`, in text on the fidelity
 line and in `--json`, so you can see which rooting a graph will get before you ask

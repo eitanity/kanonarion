@@ -181,27 +181,32 @@ func TestSearchNegative_DependencyJoinConfirmsWithoutTheExport(t *testing.T) {
 	}
 }
 
-// TestSearchNegative_DependencyJoinHoldsARouteThroughAReachableLookup: a linked
-// dependency's lookup that the project's entry point reaches leaves the search
-// with a call it cannot follow, so the empty result is not confirmed.
-func TestSearchNegative_DependencyJoinHoldsARouteThroughAReachableLookup(t *testing.T) {
+// TestSearchNegative_DependencyJoinDisputesThroughAReachableLookup: a linked
+// dependency's MethodByName("Run") that the project's entry point reaches binds
+// the dependency's exported Run, which calls the advisory's symbol, so the
+// joined search finds the route the lookup hides and the hop reads reflect.
+func TestSearchNegative_DependencyJoinDisputesThroughAReachableLookup(t *testing.T) {
 	dep := dependencyGraph()
+	tagRun := depLanguage + ".(Tag).Run"
+	dep.Nodes = append(dep.Nodes, ports.CallGraphNode{ID: tagRun, Module: depModule, Package: depLanguage, Receiver: "Tag", Symbol: "Run"})
+	dep.Edges = append(dep.Edges, ports.CallGraphEdge{FromID: tagRun, ToID: depLanguage + ".ParseAcceptLanguage"})
 	dep.ReflectiveDispatch = append(dep.ReflectiveDispatch,
-		ports.CallGraphReflectSite{CallerID: depInternal + ".parse", CalleeID: "reflect.(Value).MethodByName"})
+		ports.CallGraphReflectSite{CallerID: depInternal + ".parse", CalleeID: "reflect.(Value).MethodByName", LookupName: "Run"})
 	loader := &byCoordinateLoader{graphs: map[string]ports.CallGraphProjection{
 		projectCoord:                 projectGraph("parse", "wasmexport", "Parse", linkedClosure),
 		depModule + "@" + depVersion: dep,
 	}}
 
 	s, got, reason := searchDependency(t, loader, advisoryPackages, advisorySymbols)
-	if got != domain.SoundnessUnconfirmed {
-		t.Fatalf("soundness = %s (%s), want %s", got, reason, domain.SoundnessUnconfirmed)
-	}
-	if !strings.Contains(reason, "reach 1 reflective method lookup site (") {
-		t.Errorf("the reason does not count the reachable site: %s", reason)
+	if got != domain.SoundnessDisputed {
+		t.Fatalf("soundness = %s (%s), want %s", got, reason, domain.SoundnessDisputed)
 	}
 	if n := s.ReachableReflectiveDispatch(); n != 1 {
 		t.Errorf("reachable sites = %d, want 1: %+v", n, s.ReflectiveDispatch)
+	}
+	last := len(s.Route) - 1
+	if last < 1 || s.Route[last-1].Symbol != "Run" || s.Route[last-1].Dispatch.Kind != domain.DispatchReflect {
+		t.Errorf("route = %+v, want a reflect hop into Tag.Run before ParseAcceptLanguage", s.Route)
 	}
 }
 

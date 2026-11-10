@@ -1574,10 +1574,10 @@ inventing a confidence rank for it. Every edge states it in `--json`, `true` or
 reader back where they started.
 
 **`reflect_dispatch` means the callee is in package `reflect`, and nothing
-narrower.** An edge to `reflect.TypeOf` carries it and has exactly one callee. The
-calls a negative search cannot follow are the reflective method lookups, which
-`reachability` names. Select them on `to_id`, leaving out an `Unknown` edge without
-the attribute: that is a call through a function value.
+narrower.** An edge to `reflect.TypeOf` carries it and has exactly one callee.
+Select the method lookups `reachability` binds on `to_id`, leaving out an
+`Unknown` edge without it: that is a call through a function value. Its
+`lookup_name` is a constant `MethodByName` name or a template's names.
 
 ## Edge kind
 

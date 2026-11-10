@@ -317,21 +317,21 @@ func TestReachabilityJSON_AGraphWithNoReflectiveDispatchStatesZero(t *testing.T)
 	}
 }
 
-// TestPrintVulnReachability_NegativeNamesTheReflectiveDispatchItCouldNotFollow is
+// TestPrintVulnReachability_NegativeNamesTheReflectiveDispatchItSearchedPast is
 // the same acceptance on the surface an operator reads.
 //
 // It goes through printVulnReachability, the command's own printer, rather than
 // the helper behind it: the helper could be perfect and never be called. The
 // count, the reachable count and each site must all reach the page.
-func TestPrintVulnReachability_NegativeNamesTheReflectiveDispatchItCouldNotFollow(t *testing.T) {
+func TestPrintVulnReachability_NegativeNamesTheReflectiveDispatchItSearchedPast(t *testing.T) {
 	t.Parallel()
 
 	var buf bytes.Buffer
 	printVulnReachability(&buf, searchedReflectAnswer(t))
 	got := buf.String()
 
-	if !strings.Contains(got, "reflective dispatch: 3 call sites the search could not follow") {
-		t.Errorf("the answer does not say how many calls the search could not follow:\n%s", got)
+	if !strings.Contains(got, "reflective dispatch: 3 call sites that look a method up by reflection") {
+		t.Errorf("the answer does not say how many lookup sites the graph holds:\n%s", got)
 	}
 	// The distinction the measurement demanded. Without it the line qualifies a
 	// negative on the strength of code nothing enters.
@@ -339,8 +339,8 @@ func TestPrintVulnReachability_NegativeNamesTheReflectiveDispatchItCouldNotFollo
 		t.Errorf("the answer does not separate the reachable sites from the rest:\n%s", got)
 	}
 	for _, want := range []string{
-		"example.com/dep.bindFields -> reflect.(Value).Method at bind.go:10 — reachable from an entry point",
-		"example.com/dep.bindFields -> reflect.(Value).Method at bind.go:31 — reachable from an entry point",
+		"example.com/dep.bindFields -> reflect.(Value).Method at bind.go:10 — reachable from an entry point, the methods it can return are not known, so the search cannot follow it",
+		"example.com/dep.bindFields -> reflect.(Value).Method at bind.go:31 — reachable from an entry point, the methods it can return are not known, so the search cannot follow it",
 		"example.com/dep/internal/testenv.testHelper -> reflect.(Value).MethodByName at exec.go:80 — not reachable from any entry point",
 	} {
 		if !strings.Contains(got, want) {
@@ -352,8 +352,8 @@ func TestPrintVulnReachability_NegativeNamesTheReflectiveDispatchItCouldNotFollo
 			t.Errorf("the answer names %s, which has one callee and bounds perfectly:\n%s", bounded, got)
 		}
 	}
-	// The control. This states what a search could not follow; it does not change
-	// what the search concluded.
+	// The control. Binding the sites changes no verdict, and here no rung: the
+	// search ran over the module's own graph in another build's frame.
 	if !strings.Contains(got, "is NOT reachable") {
 		t.Errorf("the verdict moved:\n%s", got)
 	}
@@ -623,6 +623,12 @@ func TestReachabilityJSON_ReachIsDerivedByWalkingARealGraph(t *testing.T) {
 // so the search runs clean, and the given callees at the site under bindFields.
 func clearSiteAnswer(t *testing.T, callee string) vulnReachabilityQuery {
 	t.Helper()
+	return clearNamedSiteAnswer(t, callee, "")
+}
+
+// clearNamedSiteAnswer is clearSiteAnswer with name recorded on both sites.
+func clearNamedSiteAnswer(t *testing.T, callee, name string) vulnReachabilityQuery {
+	t.Helper()
 
 	graph := reflectFixtureGraph()
 	for i, n := range graph.Nodes {
@@ -633,6 +639,7 @@ func clearSiteAnswer(t *testing.T, callee string) vulnReachabilityQuery {
 	for i, e := range graph.Edges {
 		if e.ToID == "reflect.(Value).Method" {
 			graph.Edges[i].ToID = callee
+			graph.Edges[i].LookupName = name
 		}
 	}
 	rec := vuldomain.VulnerabilityRecord{
@@ -661,43 +668,54 @@ func clearSiteAnswer(t *testing.T, callee string) vulnReachabilityQuery {
 	return res
 }
 
-// TestReachability_AReachableLookupHoldsAClearSearchAtUnconfirmed is the whole
-// change, on the two surfaces a reader has: a method fetched by a lookup has no
-// edge, so a clean negative past a reachable one is not confirmed.
-func TestReachability_AReachableLookupHoldsAClearSearchAtUnconfirmed(t *testing.T) {
+// TestReachability_AReachableLookupConfirmsOnlyWhenItsNamesAreKnown is the
+// whole change, on the two surfaces a reader has: a site with a known name set
+// is searched past and a clean negative confirms, naming it; a site without one
+// holds the negative at unconfirmed, naming it.
+func TestReachability_AReachableLookupConfirmsOnlyWhenItsNamesAreKnown(t *testing.T) {
 	t.Parallel()
 
-	for _, callee := range []string{
-		"reflect.(*rtype).MethodByName",
-		"text/template.(*Template).Execute",
-		"net/rpc.Register",
+	for _, tt := range []struct {
+		callee, name string
+		want         vuldomain.ReachabilitySoundness
+		says         string
+	}{
+		{callee: "reflect.(*rtype).MethodByName", name: "Run", want: vuldomain.SoundnessConfirmed,
+			says: "from the 2 reachable lookup sites: example.com/dep.bindFields -> reflect.(*rtype).MethodByName at bind.go:10 (no exported method named Run is in the graph searched"},
+		{callee: "text/template.(*Template).Execute", name: "Run", want: vuldomain.SoundnessConfirmed,
+			says: "from the 2 reachable lookup sites: example.com/dep.bindFields -> text/template.(*Template).Execute at bind.go:10 ("},
+		{callee: "reflect.(*rtype).MethodByName", want: vuldomain.SoundnessUnconfirmed,
+			says: "reach 2 reflective method lookup sites whose methods are not known"},
+		{callee: "text/template.(*Template).Execute", want: vuldomain.SoundnessUnconfirmed,
+			says: "reach 2 reflective method lookup sites whose methods are not known"},
+		{callee: "net/rpc.Register", want: vuldomain.SoundnessUnconfirmed,
+			says: "reach 2 reflective method lookup sites whose methods are not known"},
 	} {
-		t.Run(callee, func(t *testing.T) {
+		t.Run(tt.callee+"/"+tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			res := clearSiteAnswer(t, callee)
-			if res.Soundness != vuldomain.SoundnessUnconfirmed {
-				t.Errorf("soundness = %s (%s), want %s", res.Soundness, res.SoundnessReason, vuldomain.SoundnessUnconfirmed)
+			res := clearNamedSiteAnswer(t, tt.callee, tt.name)
+			if res.Soundness != tt.want {
+				t.Errorf("soundness = %s (%s), want %s", res.Soundness, res.SoundnessReason, tt.want)
 			}
 			search, ok := decodeAnswer(t, res)["negative_search"].(map[string]any)
 			if !ok {
 				t.Fatal("the answer carries no negative_search")
 			}
-			d, ok := search["reflective_dispatch"].(map[string]any)
-			if !ok {
-				t.Fatalf("the search states nothing about reflective dispatch: %v", search)
-			}
+			d := mustAs[map[string]any](t, search["reflective_dispatch"])
 			if got := d["reachable_site_count"]; got != float64(2) {
 				t.Errorf("reachable_site_count = %v, want 2", got)
+			}
+			for _, raw := range mustAs[[]any](t, d["sites"]) {
+				site := mustAs[map[string]any](t, raw)
+				if site["reachable_from_entry_point"] == true && site["bound"] != (tt.name != "") {
+					t.Errorf("site = %v, want bound %t", site, tt.name != "")
+				}
 			}
 			var buf bytes.Buffer
 			printVulnReachability(&buf, res)
 			got := buf.String()
-			for _, want := range []string{
-				"soundness: unconfirmed",
-				"reach 2 reflective method lookup sites (",
-				"example.com/dep.bindFields -> " + callee + " at bind.go:10 — reachable from an entry point",
-			} {
+			for _, want := range []string{"soundness: " + string(tt.want), tt.says} {
 				if !strings.Contains(got, want) {
 					t.Errorf("the answer does not say %q:\n%s", want, got)
 				}
@@ -726,5 +744,38 @@ func TestPrintVulnReachability_NoSiteStatesOnlyWhatWasMeasured(t *testing.T) {
 	}
 	if strings.Contains(got, "could be hiding") {
 		t.Errorf("the none line still claims no route could be hiding:\n%s", got)
+	}
+}
+
+// TestReachabilityJSON_ANamedLookupStatesItsNameAndBinding: a MethodByName site
+// with a recorded name carries it and the count of methods it bound, in JSON
+// and text. reflect.(Value).MethodByName is the one method of that name here.
+func TestReachabilityJSON_ANamedLookupStatesItsNameAndBinding(t *testing.T) {
+	t.Parallel()
+
+	res := clearNamedSiteAnswer(t, "reflect.(Value).MethodByName", "MethodByName")
+	search, ok := decodeAnswer(t, res)["negative_search"].(map[string]any)
+	if !ok {
+		t.Fatal("the answer carries no negative_search")
+	}
+	sites := mustAs[[]any](t, mustAs[map[string]any](t, search["reflective_dispatch"])["sites"])
+	named := 0
+	for _, raw := range sites {
+		site := mustAs[map[string]any](t, raw)
+		if site["reachable_from_entry_point"] != true {
+			continue
+		}
+		named++
+		if site["lookup_name"] != "MethodByName" || site["methods_bound"] != float64(1) {
+			t.Errorf("site = %v, want lookup_name MethodByName and methods_bound 1", site)
+		}
+	}
+	if named != 2 {
+		t.Errorf("%d reachable sites, want 2: %v", named, sites)
+	}
+	var buf bytes.Buffer
+	printVulnReachability(&buf, res)
+	if want := "at bind.go:10 — reachable from an entry point, bound to the 1 exported method named MethodByName"; !strings.Contains(buf.String(), want) {
+		t.Errorf("the answer does not say %q:\n%s", want, buf.String())
 	}
 }

@@ -154,8 +154,12 @@ func TestAnalyse_ZipShippingGoModIsNotSynthesised(t *testing.T) {
 		if !rec.SynthesisedGoMod.IsZero() {
 			t.Errorf("SynthesisedGoMod = %+v: the published go.mod was overwritten", rec.SynthesisedGoMod)
 		}
-		if len(rec.Nodes) != 0 {
-			t.Errorf("expected no graph for a module whose own go.mod names another path, got %d node(s)", len(rec.Nodes))
+		// The shipped go.mod's module is what loads, so nothing in the graph is the
+		// coordinate's own; F, which no edge names, is still recorded under it.
+		for _, n := range rec.Nodes {
+			if n.Module == coord.Path() {
+				t.Errorf("node %s is attributed to %s, whose own go.mod names another path", n.ID, coord.Path())
+			}
 		}
 	})
 }

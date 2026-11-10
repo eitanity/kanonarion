@@ -132,7 +132,12 @@ import (
 // Bumped to "0.13.0" when a TinyGo-frame record started carrying the calls
 // TinyGo's compiler inserts, the edges //go:linkname supplies and the interrupt
 // handlers installed by value. A 0.12.0 TinyGo-frame record lacks all three.
-const PipelineVersion = "0.13.0"
+//
+// Bumped to "0.14.0" when an edge started recording the names a reflective
+// lookup can use (CallEdge.LookupName), test types' wrappers and instances
+// started reading as test code, and a module function no edge names started
+// being a node. A 0.13.0 record has none of the three.
+const PipelineVersion = "0.14.0"
 
 // ExtractCallGraphUseCase extracts the call graph of a module and persists a
 // CallGraphRecord.

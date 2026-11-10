@@ -367,9 +367,9 @@ type NegativeSearch struct {
 	ShippedCodePathFound bool
 	ShippedCodeRoute     ReachabilityRoute
 	// ReflectiveDispatch is every call site in the graph searched whose callee
-	// IsReflectiveLookup names. Those are the calls the traversal above could not
-	// follow, so a route could hide behind one, and a reachable one holds a clean
-	// negative at unconfirmed.
+	// IsReflectiveLookup names. The traversal above went past each reachable one
+	// whose name set is known; a reachable one without holds the rung at
+	// unconfirmed.
 	//
 	// It is narrow on purpose. Most calls into package reflect bound perfectly,
 	// and counting them would qualify every negative for nothing.
@@ -414,8 +414,8 @@ type NegativeSearch struct {
 	UnjoinedCalls []string
 }
 
-// ReflectiveDispatchSite is one call the search could not follow: a call site in
-// the graph searched whose callee is a reflective method lookup.
+// ReflectiveDispatchSite is one reflective method lookup in the graph searched:
+// a call site whose callee IsReflectiveLookup names.
 //
 // ReachableFromEntryPoint is the field that decides what the site is worth to a
 // reader, and it is why a bare count is not enough. A reflective call sitting in
@@ -434,6 +434,42 @@ type ReflectiveDispatchSite struct {
 	// CALLER. It is about the site, not about the vulnerable symbol: a site
 	// nothing reaches cannot be on any route into this module.
 	ReachableFromEntryPoint bool
+	// LookupName is the site's recorded name set: a constant MethodByName name,
+	// or the comma-joined names its module's constant templates use. Bound says
+	// a name set is known, and NameCount how many names it holds. The search
+	// binds a bound site to the exported methods of those names, and an unbound
+	// one to nothing, which holds a clean negative at unconfirmed.
+	LookupName string
+	Bound      bool
+	NameCount  int
+	// MethodsBound is how many method nodes the search bound the site to. Zero
+	// on a site no entry point reaches, which adds nothing.
+	MethodsBound int
+}
+
+// String renders the site for a reason: where it is and what it was bound to.
+func (s ReflectiveDispatchSite) String() string {
+	return s.Caller + " -> " + s.Callee + atSite(s.CallSite) + " (" + s.Binding() + ")"
+}
+
+// Binding says which methods the search bound the site to.
+func (s ReflectiveDispatchSite) Binding() string {
+	switch {
+	case !s.ReachableFromEntryPoint:
+		return "not reached, so nothing bound"
+	case !s.Bound:
+		return "the methods it can return are not known, so the search cannot follow it"
+	case s.NameCount == 1 && s.MethodsBound == 0:
+		return "no exported method named " + s.LookupName + " is in the graph searched, so nothing was bound"
+	case s.NameCount == 1:
+		return "bound to the " + plural(s.MethodsBound, "exported method") + " named " + s.LookupName
+	case s.MethodsBound == 0:
+		return "no exported method named in its module's constant templates (" + plural(s.NameCount, "name") +
+			") is in the graph searched, so nothing was bound"
+	default:
+		return "bound to the " + plural(s.MethodsBound, "exported method") + " named in its module's constant templates (" +
+			plural(s.NameCount, "name") + ")"
+	}
 }
 
 // ReachableReflectiveDispatch counts the reflective dispatch sites a traversal
@@ -537,9 +573,9 @@ const completenessBuiltWithBodies = "BUILT_WITH_BODIES"
 // negative stamped from silence is judged on the search that has since run over
 // it rather than on the silence. Where it found a path instead, rule 4 still
 // refuses to confirm and the rung says the two analysers disagree; the recorded
-// verdict is never overwritten by the search, in either direction. A clean
-// search whose entry points reach a reflective method lookup is unconfirmed: the
-// lookup's target is a route it could not see.
+// verdict is never overwritten by the search, in either direction. A reflective
+// method lookup the entry points reach is searched past, over an edge to each
+// method it can return, so it decides no rung of its own.
 //
 //  6. THE SEARCH THAT MAY CONFIRM IS THE ONE ROOTED AT NAMED ENTRY POINTS, and a
 //     search given none of them confirms nothing. Whole-graph rooting makes every
@@ -599,7 +635,7 @@ func searchedSoundness(d ReachabilityDerivation, s *NegativeSearch) (soundness R
 	}
 	switch {
 	case s.PathFound && s.InRecordedFrame:
-		return SoundnessDisputed, disputedReason(d, s) + searchedGraphsNote(s)
+		return SoundnessDisputed, disputedReason(d, s) + lookupHopsNote(s.Route) + lookupSitesNote(s) + searchedGraphsNote(s)
 	case s.PathFound:
 		// A path inside the module's own graph is not a contradiction of a
 		// negative measured in another build. The recorded rung stands, and the
@@ -607,29 +643,90 @@ func searchedSoundness(d ReachabilityDerivation, s *NegativeSearch) (soundness R
 		// and did not report is the one outcome a reachability tool must never
 		// produce.
 		rung, reason := soundnessFromDerivation(d)
-		return rung, reason + crossFrameNote(s) + searchedGraphsNote(s)
-	case s.ReachableReflectiveDispatch() > 0:
-		// A method fetched by a lookup has no edge, so an empty result past one is
-		// not an absence: the rung a graph below BUILT_WITH_BODIES gets, for the
-		// same reason.
-		return SoundnessUnconfirmed, "the entry points reach " + plural(s.ReachableReflectiveDispatch(), "reflective method lookup site") +
-			" (a lookup of a method by reflection, or a call to a standard-library function that makes one), which this" +
-			" search cannot follow, so a route may exist that it could not see. A call-graph search found no path" +
-			entryPointRootingNote(s) + searchedGraphsNote(s)
+		return rung, reason + crossFrameNote(s) + lookupHopsNote(s.Route) + lookupSitesNote(s) + searchedGraphsNote(s)
+	case len(unboundSites(s)) > 0:
+		// A lookup whose methods are not known adds no edge, so an empty result
+		// past one is not an absence: the rung a graph below BUILT_WITH_BODIES
+		// gets, for the same reason.
+		unbound := unboundSites(s)
+		return SoundnessUnconfirmed, "the entry points reach " + plural(len(unbound), "reflective method lookup site") +
+			" whose methods are not known, which this search cannot follow, so a route may exist that it could not see: " +
+			strings.Join(firstSites(unbound), "; ") + ". A call-graph search found no path" +
+			entryPointRootingNote(s) + lookupSitesNote(s) + searchedGraphsNote(s)
 	case len(s.UnjoinedCalls) > 0:
 		// The traversal stopped at calls into modules it holds no graph for, so its
 		// empty result is not an absence; the recorded derivation keeps the rung.
 		rung, reason := soundnessFromDerivation(d)
 		return rung, reason + ". A call-graph search from the entry points found no path" +
-			entryPointRootingNote(s) + searchedGraphsNote(s)
+			entryPointRootingNote(s) + lookupSitesNote(s) + searchedGraphsNote(s)
 	default:
 		// Nothing the analysis can name as an entry point reaches the vulnerable
 		// symbol. That is the search rules 3 to 5 weigh, so the derivation
 		// becomes this tool's own, at the fidelity of the graph it ran over.
 		rung, reason := soundnessFromDerivation(
 			ReachabilityDerivation{Analyser: AnalyserCallGraphBFS, Fidelity: s.Fidelity, Rooting: d.Rooting})
-		return rung, reason + entryPointRootingNote(s) + searchedGraphsNote(s)
+		return rung, reason + entryPointRootingNote(s) + lookupSitesNote(s) + searchedGraphsNote(s)
 	}
+}
+
+// unboundSites renders the reachable lookup sites whose methods are not known.
+func unboundSites(s *NegativeSearch) []string {
+	var sites []string
+	for _, site := range s.ReflectiveDispatch {
+		if site.ReachableFromEntryPoint && !site.Bound {
+			sites = append(sites, site.Caller+" -> "+site.Callee+atSite(site.CallSite))
+		}
+	}
+	return sites
+}
+
+// atSite renders " at <position>", or nothing where none was recorded.
+func atSite(pos string) string {
+	if pos == "" {
+		return ""
+	}
+	return " at " + pos
+}
+
+// lookupSitesNote names the reachable lookup sites the search went past, and
+// what each one was bound to, or "" where the entry points reach none.
+func lookupSitesNote(s *NegativeSearch) string {
+	var sites []string
+	for _, site := range s.ReflectiveDispatch {
+		if site.ReachableFromEntryPoint && site.Bound {
+			sites = append(sites, site.String())
+		}
+	}
+	if len(sites) == 0 {
+		return ""
+	}
+	return ". The search included the methods a reflective method lookup can return, from the " +
+		plural(len(sites), "reachable lookup site") + ": " + strings.Join(firstSites(sites), "; ")
+}
+
+// firstSites keeps a reason readable on a graph with many sites; the answer's
+// reflective dispatch list names every one.
+func firstSites(sites []string) []string {
+	const shown = 5
+	if len(sites) <= shown {
+		return sites
+	}
+	return append(sites[:shown:shown], "and "+strconv.Itoa(len(sites)-shown)+" more, listed under reflective dispatch")
+}
+
+// lookupHopsNote states each hop of route the search reached over an edge it
+// added past a lookup, so the text answer says what the route's JSON hops say.
+func lookupHopsNote(route ReachabilityRoute) string {
+	var hops []string
+	for i := 1; i < len(route); i++ {
+		if route[i].Dispatch.Kind == DispatchReflect {
+			hops = append(hops, route[i-1].String()+" -> "+route[i].String()+" is "+route[i].Dispatch.String())
+		}
+	}
+	if len(hops) == 0 {
+		return ""
+	}
+	return ". On that route, " + strings.Join(hops, "; ")
 }
 
 // notJoinedNote states why the search ran over the coordinate's own graph

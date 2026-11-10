@@ -97,10 +97,11 @@ func projectCallGraph(rec callgraphdomain.CallGraphRecord) ports.CallGraphProjec
 		funcValueGuess := e.Confidence == callgraphdomain.ConfidenceUnknown && !e.ReflectDispatch
 		if domain.IsReflectiveLookup(e.ToID) && !funcValueGuess && !reflectInternal[e.FromID] {
 			proj.ReflectiveDispatch = append(proj.ReflectiveDispatch, ports.CallGraphReflectSite{
-				CallerID: e.FromID,
-				CalleeID: e.ToID,
-				File:     e.CallSite.File,
-				Line:     e.CallSite.Line,
+				CallerID:   e.FromID,
+				CalleeID:   e.ToID,
+				File:       e.CallSite.File,
+				Line:       e.CallSite.Line,
+				LookupName: e.LookupName,
 			})
 		}
 	}

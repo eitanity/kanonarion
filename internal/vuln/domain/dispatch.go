@@ -51,7 +51,8 @@ const (
 	//
 	// The edge attribute behind it, reflect_dispatch, is broader: it marks any
 	// call into package reflect, and most of those bound perfectly. It is not a
-	// count of this kind.
+	// count of this kind. A negative search also uses it for a hop over an edge
+	// it added past a reflective method lookup; see LookupHopDispatch.
 	DispatchReflect DispatchKind = "reflect"
 
 	// DispatchFramework is an edge bound by a framework model or thunk rather
@@ -260,7 +261,7 @@ func DispatchKindOfEdge(calleeID, confidence string, reflectDispatch, reference 
 // or from the value itself, so a static analysis cannot bound the callee.
 //
 // It decides the hop annotation, which is sealed on routes, so the list stays
-// as it was recorded. It is not what a negative search could not follow: that
+// as it was recorded. It is not the lookup sites a negative search binds: that
 // is IsReflectiveLookup, which includes reflect.Type's lookups and omits Call.
 func IsReflectDispatcher(calleeID string) bool {
 	switch calleeID {
@@ -278,11 +279,10 @@ func IsReflectDispatcher(calleeID string) bool {
 // IsReflectiveLookup reports whether a call-graph node id names a reflective
 // method lookup, or a standard-library function that makes one for its caller.
 //
-// These are the calls a negative search cannot follow. Go has no lookup of a
-// function by name, so a function reaches reflect.Value.Call only as a value,
-// and taking that value records a Reference edge the search does follow. A
-// method fetched by a lookup has no edge at all, which is the line the linker
-// draws when it keeps every exported method of a program that makes one.
+// A method fetched by a lookup has no call edge, so a negative search adds one
+// to each method of a name the site is known to use. Go has no lookup of a function by
+// name: a function reaches reflect.Value.Call only as a value, and taking that
+// value records a Reference edge the search already follows.
 func IsReflectiveLookup(calleeID string) bool {
 	switch calleeID {
 	case "reflect.(Value).Method",
@@ -388,4 +388,16 @@ func (t DispatchTally) String() string {
 		b.WriteString(")")
 	}
 	return b.String()
+}
+
+// LookupHopDispatch is the annotation on a hop a negative search reached over
+// an edge it added past a reflective method lookup. It names the site, so the
+// hop says which call made the lookup rather than reading not-annotated.
+func LookupHopDispatch(site ReflectiveDispatchSite) HopDispatch {
+	return HopDispatch{
+		Kind:     DispatchReflect,
+		CallSite: site.CallSite,
+		Reason: "an edge the search added for the reflective method lookup " + site.Caller + " -> " + site.Callee +
+			", " + site.Binding(),
+	}
 }

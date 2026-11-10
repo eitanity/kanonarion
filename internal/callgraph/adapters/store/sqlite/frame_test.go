@@ -42,11 +42,8 @@ func framedLedgerRecord(t *testing.T, spec ledgerSpec, f domain2.BuildFrame) dom
 func TestMigrations_FrameIsMigrationSeventeen(t *testing.T) {
 	t.Parallel()
 	migs := sqlite.Migrations()
-	if n := len(migs); n != 17 {
-		t.Fatalf("callgraph migrations = %d, want 17", n)
-	}
-	if last := migs[len(migs)-1]; last.Version != 17 {
-		t.Errorf("last callgraph migration is %d, want 17", last.Version)
+	if n := len(migs); n < 17 || migs[16].Version != 17 {
+		t.Fatalf("callgraph migrations = %d, want migration 17 as the 17th", n)
 	}
 	s := openTestStore(t)
 	for _, col := range []string{"goos", "goarch", "goarm", "tinygo_target", "tinygo_version"} {
