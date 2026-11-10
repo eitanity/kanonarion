@@ -1575,12 +1575,9 @@ reader back where they started.
 
 **`reflect_dispatch` means the callee is in package `reflect`, and nothing
 narrower.** It is not a count of calls the analysis could not follow. An edge to
-`reflect.TypeOf` carries it and has exactly one callee. The calls that really are
-unbounded are the five `reflect.Value` methods that pick their target at run time
-— `Call`, `CallSlice`, `Method`, `MethodByName`, `FieldByName` — so filter on
-`to_id` as well as on the attribute. On one 74,797-edge graph the attribute is set
-on 162 edges and 2 of them are of that kind, so reading the attribute alone
-overstates them by about eighty times.
+`reflect.TypeOf` carries it and has exactly one callee. The calls a negative search
+cannot follow are the reflective method lookups, which `reachability` names; select
+those on `to_id`, because the `reflect.Type` lookups do not carry the attribute.
 
 ## Edge kind
 

@@ -65,6 +65,7 @@ func dependencyGraph() ports.CallGraphProjection {
 			{ID: depLanguage + ".Parse", Module: depModule, Package: depLanguage, Symbol: "Parse", IsExportedAPI: true},
 			{ID: depLanguage + ".ParseAcceptLanguage", Module: depModule, Package: depLanguage, Symbol: "ParseAcceptLanguage", IsExportedAPI: true},
 			{ID: depInternal + ".parse", Module: depModule, Package: depInternal, Symbol: "parse"},
+			{ID: depInternal + ".lookup", Module: depModule, Package: depInternal, Symbol: "lookup"},
 			{ID: depUnlinked + ".decode", Module: depModule, Package: depUnlinked, Symbol: "decode"},
 			{ID: depLanguage + ".MatchStrings", Module: depModule, Package: depLanguage, Symbol: "MatchStrings", IsExportedAPI: true},
 			{ID: depUnlinked + ".Decoder", Module: depModule, Package: depUnlinked, Symbol: "Decoder", IsExportedAPI: true},
@@ -78,8 +79,10 @@ func dependencyGraph() ports.CallGraphProjection {
 			{FromID: depUnlinked + ".decode", ToID: depLanguage + ".MatchStrings"},
 		},
 		ReflectiveDispatch: []ports.CallGraphReflectSite{
-			{CallerID: depInternal + ".parse", CalleeID: "reflect.Value.Call"},
-			{CallerID: depUnlinked + ".decode", CalleeID: "reflect.Value.Call"},
+			// In a linked package and reached by nothing, so it is listed and
+			// holds no rung.
+			{CallerID: depInternal + ".lookup", CalleeID: "reflect.(Value).MethodByName"},
+			{CallerID: depUnlinked + ".decode", CalleeID: "reflect.(Value).MethodByName"},
 		},
 	}
 }
@@ -175,6 +178,30 @@ func TestSearchNegative_DependencyJoinConfirmsWithoutTheExport(t *testing.T) {
 	}
 	if s.PathFound || len(s.GraphsSearched) != 2 {
 		t.Errorf("search = %+v, want no path over both graphs", s)
+	}
+}
+
+// TestSearchNegative_DependencyJoinHoldsARouteThroughAReachableLookup: a linked
+// dependency's lookup that the project's entry point reaches leaves the search
+// with a call it cannot follow, so the empty result is not confirmed.
+func TestSearchNegative_DependencyJoinHoldsARouteThroughAReachableLookup(t *testing.T) {
+	dep := dependencyGraph()
+	dep.ReflectiveDispatch = append(dep.ReflectiveDispatch,
+		ports.CallGraphReflectSite{CallerID: depInternal + ".parse", CalleeID: "reflect.(Value).MethodByName"})
+	loader := &byCoordinateLoader{graphs: map[string]ports.CallGraphProjection{
+		projectCoord:                 projectGraph("parse", "wasmexport", "Parse", linkedClosure),
+		depModule + "@" + depVersion: dep,
+	}}
+
+	s, got, reason := searchDependency(t, loader, advisoryPackages, advisorySymbols)
+	if got != domain.SoundnessUnconfirmed {
+		t.Fatalf("soundness = %s (%s), want %s", got, reason, domain.SoundnessUnconfirmed)
+	}
+	if !strings.Contains(reason, "reach 1 reflective method lookup site (") {
+		t.Errorf("the reason does not count the reachable site: %s", reason)
+	}
+	if n := s.ReachableReflectiveDispatch(); n != 1 {
+		t.Errorf("reachable sites = %d, want 1: %+v", n, s.ReflectiveDispatch)
 	}
 }
 

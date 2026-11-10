@@ -366,17 +366,13 @@ type NegativeSearch struct {
 	// is worse than one reported with its rooting named.
 	ShippedCodePathFound bool
 	ShippedCodeRoute     ReachabilityRoute
-	// ReflectiveDispatch is every call site in the graph searched whose callee is
-	// one of the reflect.Value methods that choose their target at run time —
-	// Call, CallSlice, Method, MethodByName, FieldByName. Those are the calls the
-	// traversal above could not follow, so a route could hide behind one.
+	// ReflectiveDispatch is every call site in the graph searched whose callee
+	// IsReflectiveLookup names. Those are the calls the traversal above could not
+	// follow, so a route could hide behind one, and a reachable one holds a clean
+	// negative at unconfirmed.
 	//
-	// It is narrow on purpose, and the narrowness is the whole point. The edge
-	// attribute the analyser records, reflect_dispatch, marks any call into
-	// package reflect, and nearly all of those bound perfectly: reflect.TypeOf
-	// has exactly one callee. Counting them here would qualify every negative
-	// with a number about two orders of magnitude too large. See
-	// IsReflectDispatcher, which is the one list both readers share.
+	// It is narrow on purpose. Most calls into package reflect bound perfectly,
+	// and counting them would qualify every negative for nothing.
 	//
 	// Empty is the usual answer and it is a measurement: the search ran and found
 	// no such site. A reader must be able to tell that from a search that never
@@ -419,15 +415,13 @@ type NegativeSearch struct {
 }
 
 // ReflectiveDispatchSite is one call the search could not follow: a call site in
-// the graph searched whose callee picks what runs at run time.
+// the graph searched whose callee is a reflective method lookup.
 //
 // ReachableFromEntryPoint is the field that decides what the site is worth to a
 // reader, and it is why a bare count is not enough. A reflective call sitting in
 // code nothing entered from outside the module can reach hides no route INTO the
 // module, so naming it as a qualification on a negative would make that negative
-// look weaker without it being weaker. Measured on a working store, where the
-// only such sites are in a test-harness package: two sites, neither reachable
-// from any entry point the analysis can name.
+// look weaker without it being weaker.
 type ReflectiveDispatchSite struct {
 	// Caller and Callee are the call graph's own node ids for the two ends.
 	Caller string
@@ -543,7 +537,9 @@ const completenessBuiltWithBodies = "BUILT_WITH_BODIES"
 // negative stamped from silence is judged on the search that has since run over
 // it rather than on the silence. Where it found a path instead, rule 4 still
 // refuses to confirm and the rung says the two analysers disagree; the recorded
-// verdict is never overwritten by the search, in either direction.
+// verdict is never overwritten by the search, in either direction. A clean
+// search whose entry points reach a reflective method lookup is unconfirmed: the
+// lookup's target is a route it could not see.
 //
 //  6. THE SEARCH THAT MAY CONFIRM IS THE ONE ROOTED AT NAMED ENTRY POINTS, and a
 //     search given none of them confirms nothing. Whole-graph rooting makes every
@@ -612,6 +608,14 @@ func searchedSoundness(d ReachabilityDerivation, s *NegativeSearch) (soundness R
 		// produce.
 		rung, reason := soundnessFromDerivation(d)
 		return rung, reason + crossFrameNote(s) + searchedGraphsNote(s)
+	case s.ReachableReflectiveDispatch() > 0:
+		// A method fetched by a lookup has no edge, so an empty result past one is
+		// not an absence: the rung a graph below BUILT_WITH_BODIES gets, for the
+		// same reason.
+		return SoundnessUnconfirmed, "the entry points reach " + plural(s.ReachableReflectiveDispatch(), "reflective method lookup site") +
+			" (a lookup of a method by reflection, or a call to a standard-library function that makes one), which this" +
+			" search cannot follow, so a route may exist that it could not see. A call-graph search found no path" +
+			entryPointRootingNote(s) + searchedGraphsNote(s)
 	case len(s.UnjoinedCalls) > 0:
 		// The traversal stopped at calls into modules it holds no graph for, so its
 		// empty result is not an absence; the recorded derivation keeps the rung.

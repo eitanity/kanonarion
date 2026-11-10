@@ -317,10 +317,7 @@ func (c *cachedProjection) search(rec *domain.VulnerabilityRecord, f domain.Vuln
 //
 // The reachable set is what separates a site worth reporting from one that only
 // makes a negative look weaker. A reflective call in code no entry point reaches
-// cannot be on a route into this module, so it qualifies nothing — and on the
-// store this was measured against, every site there is is of that kind: two
-// calls in a test-harness package, neither reachable from anything the analysis
-// can name.
+// cannot be on a route into this module, so it qualifies nothing.
 //
 // The graph walk is skipped entirely where there are no sites, which is the
 // common case. Nothing is computed for a graph with none.

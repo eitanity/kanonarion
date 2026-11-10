@@ -155,7 +155,7 @@ The rungs, most to least sound:
 |---|---|
 | `confirmed` | A call-graph search ran over a graph built with function bodies and found no path **from any entry point the analysis can name** — the module's public API, its package initialisers, a command's `main`, a function with an export directive, an `http.Handler`. The only rung a clean negative may rest on. |
 | `inferred` | No search ran for this finding. An analysis loaded the whole build from source and never reported a route; the negative reads that silence. |
-| `unconfirmed` | An analysis ran that could not have found a route at all — a symbol table inspected in binary mode, a module-level scan under a TinyGo frame (see [Scanning under a TinyGo frame](vuln.md#scanning-under-a-tinygo-frame)), a call graph below `BUILT_WITH_BODIES`, or an answer that does not say what produced it. |
+| `unconfirmed` | An analysis ran that could not have found a route at all — a symbol table inspected in binary mode, a module-level scan under a TinyGo frame (see [Scanning under a TinyGo frame](vuln.md#scanning-under-a-tinygo-frame)), a call graph below `BUILT_WITH_BODIES`, a clean search whose entry points reach a reflective method lookup it cannot follow, or an answer that does not say what produced it. |
 | `unsearchable` | The advisory names no symbols for this module path, so there was never a target to search for. Unlike the rungs above, no re-scan at any fidelity changes this. |
 | `disputed` | The recorded negative is contradicted: a search from one of those entry points found a path to the symbol. Both answers stand; neither is discarded. Treat the finding as open. |
 
@@ -232,16 +232,17 @@ A negative says no route was found. It cannot say no route exists, and one of th
 ways a route hides is a call whose target is chosen while the program runs. So the
 search names those calls.
 
-A **reflective dispatch site** is a call to one of the five `reflect.Value` methods
-that pick what runs at run time: `Call`, `CallSlice`, `Method`, `MethodByName`,
-`FieldByName`. The analysis cannot say where such a call goes, so a route could be
-hiding behind it.
+A **reflective dispatch site** is a reflective method lookup, or a call to a
+standard-library function that makes one: `Method`, `MethodByName` or `Methods` on
+a `reflect.Value` or `reflect.Type`; `Execute` or `ExecuteTemplate` on a
+`text/template` or `html/template` `Template`; `Register` or `RegisterName` in
+`net/rpc`. A method fetched this way has no call edge, so a route could be hiding
+behind it.
 
 It is **not** a call into package `reflect`. `reflect.TypeOf` has exactly one
-callee and conceals nothing, and nearly every call into `reflect` is of that sort:
-on one 74,797-edge graph, 162 edges are calls into `reflect` and 2 of them are
-dispatch sites. Counting the first number would qualify every negative with a
-figure roughly eighty times too large.
+callee and conceals nothing. `Value.Call` and `FieldByName` are not sites either:
+a function reaches `Call` as a value, and taking that value is a reference the
+search follows.
 
 Two counts are reported and neither is the other's summary:
 
@@ -250,15 +251,14 @@ Two counts are reported and neither is the other's summary:
   analysis can name as an entry point actually reaches.
 
 **The second is the one that decides whether a negative is worth doubting.** A
-reflective call in code nothing enters cannot be on a route into the module, so it
-qualifies nothing. Test helpers are the usual case:
+lookup in code nothing enters cannot be on a route into the module, so it
+qualifies nothing. A reachable one holds a negative at `unconfirmed`:
 
 ```
-GO-2026-6303 affects golang.org/x/crypto@v0.54.0 but is NOT reachable [...]
-  soundness: inferred — [...]
-  reflective dispatch: 2 call sites the search could not follow, none of them reachable from an entry point the analysis can name — none can be on a route into this module, so they do not qualify this answer
-    golang.org/x/crypto/internal/testenv.CommandContext -> reflect.(Value).FieldByName at internal/testenv/exec.go:80 — not reachable from any entry point the analysis can name
-    golang.org/x/crypto/internal/testenv.CommandContext -> reflect.(Value).FieldByName at internal/testenv/exec.go:99 — not reachable from any entry point the analysis can name
+GO-0000-0000 affects example.com/mod@v1.0.0 but is NOT reachable [...]
+  soundness: unconfirmed — the entry points reach 1 reflective method lookup site [...]
+  reflective dispatch: 1 call site the search could not follow, 1 of them is reachable from an entry point the analysis can name, so a route could hide there
+    example.com/mod.render -> text/template.(*Template).Execute at render.go:9 — reachable from an entry point
 ```
 
 Finding none is the common answer, and it is stated rather than left out. A search
@@ -266,20 +266,19 @@ that ran over a graph and found no such call has measured something; an absent
 number has not:
 
 ```
-  reflective dispatch: none — the graph searched holds no call to a reflect method that picks its target at run time, so no reflective call site could be hiding a route this search failed to follow
+  reflective dispatch: none — the graph searched holds no reflective method lookup and no call to a standard-library function that makes one
 ```
 
 A search that never ran prints nothing here at all, because it measured nothing.
 `not_searched` above says why.
 
 Two calls from one function to one `reflect` method on two lines are two sites, not
-one, so each carries its own `call_site` and a reader can go and look. The raw
-attribute each site is filtered from is on every `callgraph-show --json` edge as
-`reflect_dispatch` — see [callgraph](callgraph.md), which explains why reading it
-unfiltered gives a number roughly eighty times too large.
+one, so each carries its own `call_site` and a reader can go and look. The site is
+chosen by callee; `reflect_dispatch` on a `callgraph-show --json` edge does not
+select it (see [callgraph](callgraph.md)).
 
-This states what a search could not follow. It does not change what the search
-concluded: no verdict and no soundness rung moves because of it.
+A reachable site changes the soundness rung and never the verdict: a search that
+found no route still answers NOT reachable, at `unconfirmed`.
 
 ### A search that could not be made says so
 

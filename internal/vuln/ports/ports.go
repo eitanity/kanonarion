@@ -958,11 +958,10 @@ type CallGraphProjection struct {
 	// kind the analysis could not establish takes the library roots, and the
 	// answer states that it did.
 	ArtifactKind string
-	// ReflectiveDispatch is every edge in this graph the analyser recorded as a
-	// call into package reflect AND whose callee picks its target at run time.
-	// Both conditions are applied here, once, against the vuln domain's own list
-	// — see domain.IsReflectDispatcher — so no consumer has to re-derive them and
-	// get the population wrong.
+	// ReflectiveDispatch is every edge in this graph whose callee is a reflective
+	// method lookup, from a caller outside package reflect. It is selected once,
+	// against the vuln domain's own list — see domain.IsReflectiveLookup — so no
+	// consumer has to re-derive it and get the population wrong.
 	//
 	// It is a small derived slice rather than a flag on every edge because the
 	// edge list is the hot part of this projection: a real graph holds hundreds of

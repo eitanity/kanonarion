@@ -779,14 +779,11 @@ type negativeSearchOutput struct {
 // how many calls the analysis could not bound; ReachableSiteCount is how many of
 // those sit in code anything the analysis can name as an entry point reaches. A
 // site nothing reaches hides no route into the module, so a consumer that weighs
-// a negative on the first number alone will weaken it for no reason. On the
-// store this was built against, every site found is of exactly that kind.
+// a negative on the first number alone will weaken it for no reason.
 //
-// A "reflective dispatch site" is a call to one of the five reflect.Value
-// methods that choose their target at run time: Call, CallSlice, Method,
-// MethodByName, FieldByName. It is NOT a call into package reflect — almost all
-// of those name one callee and bound perfectly, and counting them here would
-// overstate this by about two orders of magnitude.
+// A "reflective dispatch site" is a reflective method lookup, or a call to a
+// standard-library function that makes one. It is NOT a call into package
+// reflect: almost all of those name one callee and bound perfectly.
 type reflectiveDispatchOutput struct {
 	SiteCount          int `json:"site_count"`
 	ReachableSiteCount int `json:"reachable_site_count"`
@@ -1351,9 +1348,9 @@ func printSoundness(stdout io.Writer, res vulnReachabilityQuery) {
 // printReflectiveDispatch prints what the read-time search could not follow.
 //
 // It prints under a negative because that is the verdict it qualifies — or, far
-// more often, declines to qualify. A reflective dispatch site is a call to one
-// of the five reflect.Value methods that pick their target at run time, so the
-// analysis cannot say where it goes and a route could hide behind it.
+// more often, declines to qualify. A reflective dispatch site is a reflective
+// method lookup, or a call to a standard-library function that makes one, so the
+// analysis cannot say what it fetched and a route could hide behind it.
 //
 // Three things are said, in this order, because each is useless without the one
 // before it. How many sites there are. How many of those anything the analysis
@@ -1372,8 +1369,7 @@ func printReflectiveDispatch(stdout io.Writer, search *negativeSearchOutput) {
 	d := search.ReflectiveDispatch
 	if d.SiteCount == 0 {
 		_, _ = fmt.Fprintln(stdout,
-			"  reflective dispatch: none — the graph searched holds no call to a reflect method that picks its target at run time,"+
-				" so no reflective call site could be hiding a route this search failed to follow")
+			"  reflective dispatch: none — the graph searched holds no reflective method lookup and no call to a standard-library function that makes one")
 		return
 	}
 	_, _ = fmt.Fprintf(stdout, "  reflective dispatch: %d %s the search could not follow, %s\n",

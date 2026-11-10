@@ -546,10 +546,9 @@ type callEdgeJSON struct {
 	// It means THE CALLEE IS IN PACKAGE reflect, and nothing narrower. It is not
 	// a count of reflective dispatches: an edge to reflect.TypeOf carries it and
 	// has exactly one callee, and summing this field overstates the calls an
-	// analysis cannot bound by about two orders of magnitude. The calls that
-	// really are unbounded are the five reflect.Value methods that choose their
-	// target at run time — Call, CallSlice, Method, MethodByName, FieldByName —
-	// so a reader after those must filter on to_id as well.
+	// analysis cannot bound by about two orders of magnitude. The calls a
+	// negative search cannot follow are the reflective method lookups, and those
+	// are selected on to_id: the *rtype lookups do not carry this attribute.
 	//
 	// There is no third state. Migration v6 purged every row written before the
 	// column existed, so a false here is measured-and-not-reflect and never

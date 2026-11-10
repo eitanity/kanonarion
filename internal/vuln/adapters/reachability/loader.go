@@ -57,7 +57,11 @@ func projectCallGraph(rec callgraphdomain.CallGraphRecord) ports.CallGraphProjec
 		DependencyPackages: rec.DependencyPackages,
 		AnalysisRoot:       rec.AnalysisRoot,
 	}
+	reflectInternal := map[string]bool{}
 	for _, n := range rec.Nodes {
+		if n.Package == "reflect" {
+			reflectInternal[n.ID] = true
+		}
 		proj.Nodes = append(proj.Nodes, ports.CallGraphNode{
 			ID:            n.ID,
 			Module:        n.Module,
@@ -84,12 +88,12 @@ func projectCallGraph(rec callgraphdomain.CallGraphRecord) ports.CallGraphProjec
 	// hops.
 	for _, e := range rec.Edges {
 		proj.Edges = append(proj.Edges, ports.CallGraphEdge{FromID: e.FromID, ToID: e.ToID})
-		// The reflective dispatch sites are picked out on the same pass, because
-		// this is the only place that sees both the edge's reflect attribute and
-		// its call-site position. Both conditions are required: the attribute is
-		// what the analyser measured, and the callee list is what makes it a
-		// DISPATCH rather than a plain call into package reflect.
-		if e.ReflectDispatch && domain.IsReflectDispatcher(e.ToID) {
+		// The reflective lookup sites are picked out on the same pass, because this
+		// is the only place that sees the edge's call-site position. The callee
+		// alone decides: reflect_dispatch is unset on the *rtype edges. reflect's
+		// own (Value).MethodByName calls (*rtype).MethodByName, and that call is
+		// the implementation of a lookup, not another one.
+		if domain.IsReflectiveLookup(e.ToID) && !reflectInternal[e.FromID] {
 			proj.ReflectiveDispatch = append(proj.ReflectiveDispatch, ports.CallGraphReflectSite{
 				CallerID: e.FromID,
 				CalleeID: e.ToID,
