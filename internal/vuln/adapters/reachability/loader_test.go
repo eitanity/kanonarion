@@ -140,12 +140,17 @@ func TestLoad_StoreError(t *testing.T) {
 // hide nothing (reflect.TypeOf) and unset on lookups that do (the *rtype
 // receiver), so reading it either way gets the population wrong.
 func TestLoad_PicksOutOnlyTheReflectiveDispatchSites(t *testing.T) {
+	// The analyser pairs the attribute with Unknown and stores a plain call Direct.
 	edge := func(to string, flagged bool, file string, line int) callgraphdomain.CallEdge {
+		conf := callgraphdomain.ConfidenceDirect
+		if flagged {
+			conf = callgraphdomain.ConfidenceUnknown
+		}
 		return callgraphdomain.CallEdge{
 			FromID:          "github.com/foo/bar.bind",
 			ToID:            to,
 			CallSite:        callgraphdomain.SourcePosition{File: file, Line: line},
-			Confidence:      callgraphdomain.ConfidenceUnknown,
+			Confidence:      conf,
 			ReflectDispatch: flagged,
 		}
 	}
@@ -234,11 +239,15 @@ func TestLoad_EveryLookupIsASiteWithoutTheAttribute(t *testing.T) {
 		"net/rpc.Register", "net/rpc.RegisterName", "net/rpc.(*Server).Register", "net/rpc.(*Server).RegisterName",
 	} {
 		for _, flagged := range []bool{false, true} {
+			conf := callgraphdomain.ConfidenceDirect
+			if flagged {
+				conf = callgraphdomain.ConfidenceUnknown
+			}
 			rec := callgraphdomain.CallGraphRecord{
 				Completeness: callgraphdomain.CompletenessBuiltWithBodies,
 				ArtifactKind: callgraphdomain.ArtifactLibrary,
 				Nodes:        []callgraphdomain.CallNode{{ID: "m.f", Module: "m", Package: "m", Symbol: "f"}},
-				Edges:        []callgraphdomain.CallEdge{{FromID: "m.f", ToID: callee, ReflectDispatch: flagged}},
+				Edges:        []callgraphdomain.CallEdge{{FromID: "m.f", ToID: callee, Confidence: conf, ReflectDispatch: flagged}},
 			}
 			l := reachability.NewCallGraphStoreLoader(&fakeStore{record: rec, found: true}, "p1")
 			proj, err := l.Load(context.Background(), loaderCoord)
@@ -249,5 +258,56 @@ func TestLoad_EveryLookupIsASiteWithoutTheAttribute(t *testing.T) {
 				t.Errorf("callee %s, flagged %t: sites = %+v, want the one call", callee, flagged, proj.ReflectiveDispatch)
 			}
 		}
+	}
+}
+
+// TestLoad_AFunctionValueCallIsNotALookup: CHA binds a call through a function
+// value to every function of its signature, so dec(in) with func(interface{})
+// error names net/rpc.Register. That edge is Unknown without the attribute and
+// is no lookup. Every other shape the analyser stores for a lookup stays a site.
+func TestLoad_AFunctionValueCallIsNotALookup(t *testing.T) {
+	const caller = "github.com/foo/bar.handler"
+	cases := []struct {
+		name    string
+		edge    callgraphdomain.CallEdge
+		capture bool
+	}{
+		{"function-value call naming net/rpc.Register", callgraphdomain.CallEdge{
+			ToID: "net/rpc.Register", Confidence: callgraphdomain.ConfidenceUnknown}, false},
+		{"direct call to net/rpc.Register", callgraphdomain.CallEdge{
+			ToID: "net/rpc.Register", Confidence: callgraphdomain.ConfidenceDirect}, true},
+		{"net/rpc.Register taken as a value", callgraphdomain.CallEdge{
+			ToID: "net/rpc.Register", Confidence: callgraphdomain.ConfidenceDirect, Kind: callgraphdomain.EdgeKindReference}, true},
+		{"reflect.Value lookup", callgraphdomain.CallEdge{
+			ToID: "reflect.(Value).MethodByName", Confidence: callgraphdomain.ConfidenceUnknown, ReflectDispatch: true}, true},
+		{"reflect.Type lookup through the interface", callgraphdomain.CallEdge{
+			ToID: "reflect.(*rtype).MethodByName", Confidence: callgraphdomain.ConfidenceCHAOverapprox}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tc.edge.FromID = caller
+			tc.edge.CallSite = callgraphdomain.SourcePosition{File: "h.go", Line: 7}
+			rec := callgraphdomain.CallGraphRecord{
+				Completeness: callgraphdomain.CompletenessBuiltWithBodies,
+				ArtifactKind: callgraphdomain.ArtifactLibrary,
+				Nodes:        []callgraphdomain.CallNode{{ID: caller, Module: "github.com/foo/bar", Package: "github.com/foo/bar", Symbol: "handler"}},
+				Edges:        []callgraphdomain.CallEdge{tc.edge},
+			}
+			l := reachability.NewCallGraphStoreLoader(&fakeStore{record: rec, found: true}, "p1")
+			proj, err := l.Load(t.Context(), loaderCoord)
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if len(proj.Edges) != 1 {
+				t.Errorf("the projection carries %d edges, want the one; the site rule drops no edge", len(proj.Edges))
+			}
+			var want []ports.CallGraphReflectSite
+			if tc.capture {
+				want = []ports.CallGraphReflectSite{{CallerID: caller, CalleeID: tc.edge.ToID, File: "h.go", Line: 7}}
+			}
+			if !slices.Equal(proj.ReflectiveDispatch, want) {
+				t.Errorf("sites = %+v, want %+v", proj.ReflectiveDispatch, want)
+			}
+		})
 	}
 }

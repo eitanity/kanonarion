@@ -5,6 +5,8 @@ import (
 
 	"code.eitanity.com/kanonarion/internal/coordinate/coordinatetest"
 
+	callgraphdomain "code.eitanity.com/kanonarion/internal/callgraph/domain"
+
 	"code.eitanity.com/kanonarion/internal/vuln/adapters/reachability"
 	"code.eitanity.com/kanonarion/internal/vuln/domain"
 	"code.eitanity.com/kanonarion/internal/vuln/ports"
@@ -127,5 +129,41 @@ func TestSearchNegative_ReflectiveSitesCostOneGraphWalkPerGraph(t *testing.T) {
 		if f.NegativeSearch == nil || len(f.NegativeSearch.ReflectiveDispatch) != 5 {
 			t.Errorf("finding %d does not carry the graph's 5 reflective dispatch sites: %+v", i, f.NegativeSearch)
 		}
+	}
+}
+
+// TestSearchNegative_AFunctionValueCallNamingALookupStillConfirms runs the real
+// loader. The entry point reaches a call through a function value that CHA
+// bound to net/rpc.Register; no lookup is made, so the clean search confirms.
+func TestSearchNegative_AFunctionValueCallNamingALookupStillConfirms(t *testing.T) {
+	t.Parallel()
+
+	rec := callgraphdomain.CallGraphRecord{
+		Completeness: callgraphdomain.CompletenessBuiltWithBodies,
+		ArtifactKind: callgraphdomain.ArtifactLibrary,
+		Nodes: []callgraphdomain.CallNode{
+			{ID: "entry", Module: searchedModule, Package: searchedModule, Symbol: "Serve", IsExportedAPI: true},
+			{ID: "handler", Module: searchedModule, Package: searchedModule, Symbol: "handler"},
+			{ID: "vuln", Module: searchedModule, Package: searchedModule, Symbol: "vulnerable"},
+		},
+		Edges: []callgraphdomain.CallEdge{
+			{FromID: "entry", ToID: "handler", Confidence: callgraphdomain.ConfidenceDirect},
+			{FromID: "handler", ToID: "net/rpc.Register", CallSite: callgraphdomain.SourcePosition{File: "h.go", Line: 3},
+				Confidence: callgraphdomain.ConfidenceUnknown},
+		},
+	}
+	loader := reachability.NewCallGraphStoreLoader(&fakeStore{record: rec, found: true}, "p1")
+	vrec := searchedRecord(domain.TargetRootedAt(coordinatetest.MustNew(searchedModule, "v1.0.0")), []string{"vulnerable"})
+	reachability.NewNegativeSearcher(loader).Search(t.Context(), &vrec)
+
+	search := vrec.Findings[0].NegativeSearch
+	if search == nil || search.NotSearched != "" {
+		t.Fatalf("the search did not run: %+v", search)
+	}
+	if len(search.ReflectiveDispatch) != 0 {
+		t.Errorf("sites = %+v, want none", search.ReflectiveDispatch)
+	}
+	if got, reason := domain.NegativeSoundness(vrec.Findings[0]); got != domain.SoundnessConfirmed {
+		t.Errorf("soundness = %s (%s), want %s", got, reason, domain.SoundnessConfirmed)
 	}
 }

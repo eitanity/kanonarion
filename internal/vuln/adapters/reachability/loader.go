@@ -90,10 +90,12 @@ func projectCallGraph(rec callgraphdomain.CallGraphRecord) ports.CallGraphProjec
 		proj.Edges = append(proj.Edges, ports.CallGraphEdge{FromID: e.FromID, ToID: e.ToID})
 		// The reflective lookup sites are picked out on the same pass, because this
 		// is the only place that sees the edge's call-site position. The callee
-		// alone decides: reflect_dispatch is unset on the *rtype edges. reflect's
-		// own (Value).MethodByName calls (*rtype).MethodByName, and that call is
-		// the implementation of a lookup, not another one.
-		if domain.IsReflectiveLookup(e.ToID) && !reflectInternal[e.FromID] {
+		// decides, except for an Unknown edge without reflect_dispatch: that is a
+		// call through a function value CHA bound to every function of its
+		// signature, not a lookup. reflect's own (Value).MethodByName calls
+		// (*rtype).MethodByName, and that call is the implementation of a lookup.
+		funcValueGuess := e.Confidence == callgraphdomain.ConfidenceUnknown && !e.ReflectDispatch
+		if domain.IsReflectiveLookup(e.ToID) && !funcValueGuess && !reflectInternal[e.FromID] {
 			proj.ReflectiveDispatch = append(proj.ReflectiveDispatch, ports.CallGraphReflectSite{
 				CallerID: e.FromID,
 				CalleeID: e.ToID,

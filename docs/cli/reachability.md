@@ -272,10 +272,10 @@ number has not:
 A search that never ran prints nothing here at all, because it measured nothing.
 `not_searched` above says why.
 
-Two calls from one function to one `reflect` method on two lines are two sites, not
-one, so each carries its own `call_site` and a reader can go and look. The site is
-chosen by callee; `reflect_dispatch` on a `callgraph-show --json` edge does not
-select it (see [callgraph](callgraph.md)).
+Two calls from one function to one `reflect` method on two lines are two sites, each
+with its own `call_site`. The callee picks the site, except an `Unknown` edge
+without `reflect_dispatch`: that is a call through a function value, not a lookup
+(see [callgraph](callgraph.md)).
 
 A reachable site changes the soundness rung and never the verdict: a search that
 found no route still answers NOT reachable, at `unconfirmed`.
