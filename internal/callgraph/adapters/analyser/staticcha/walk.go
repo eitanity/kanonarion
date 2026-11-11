@@ -3,6 +3,7 @@ package staticcha
 import (
 	"context"
 	"go/token"
+	"go/types"
 
 	"code.eitanity.com/kanonarion/internal/callgraph/domain"
 
@@ -143,6 +144,7 @@ func (a *Analyser) walkGraph(
 	mem moduleMembership,
 	fset *token.FileSet,
 	roots sourceRoots,
+	embeds map[types.Object]string,
 ) ([]domain.CallNode, []domain.CallEdge, domain.CallGraphStatus) {
 	seenNodes := make(map[string]domain.CallNode)
 	seenEdges := make(map[edgeKey]int)
@@ -150,7 +152,7 @@ func (a *Analyser) walkGraph(
 
 	// Cache for built nodes to avoid redundant buildNode calls
 	nodeCache := make(map[*ssa.Function]domain.CallNode)
-	templates := newTemplateNames()
+	templates := newTemplateNames(cg, embeds)
 
 	walkErr := callgraph.GraphVisitEdges(cg, func(edge *callgraph.Edge) error {
 		if ctx.Err() != nil {

@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"go/token"
+	"go/types"
 	"io"
 	"log/slog"
 	"os"
@@ -213,6 +214,7 @@ func (a *Analyser) loadAndBuildSSA(ctx context.Context, fset *token.FileSet, tem
 // linknames. TinyGo's own packages carry the vector table's and the runtime's.
 func (a *Analyser) readDirectives(ctx context.Context, coord coordinate.ModuleCoordinate, res *ssaBuildResult, pkgs []*packages.Package, fset *token.FileSet) {
 	res.ExportDirectives = a.readExportDirectives(ctx, coord, pkgs, fset)
+	res.Embeds = readEmbeds(pkgs)
 	if a.tinygo.Declared() {
 		res.Linknames = readLinknames(pkgs)
 	}
@@ -429,6 +431,8 @@ type ssaBuildResult struct {
 	// Linknames is what //go:linkname makes of each package-level function under
 	// a TinyGo frame, keyed by node ID; nil under any other.
 	Linknames map[string]linknameDecl
+	// Embeds is the file each //go:embed var holds, keyed by the var's object.
+	Embeds map[types.Object]string
 }
 
 // Registered returns every package registered from syntax, production and test

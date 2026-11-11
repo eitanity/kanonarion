@@ -137,7 +137,11 @@ import (
 // lookup can use (CallEdge.LookupName), test types' wrappers and instances
 // started reading as test code, and a module function no edge names started
 // being a node. A 0.13.0 record has none of the three.
-const PipelineVersion = "0.14.0"
+//
+// Bumped to "0.15.0" when a template Execute edge's LookupName started reading
+// text held in a package-level var or a //go:embed file. A 0.14.0 record leaves
+// such an edge empty.
+const PipelineVersion = "0.15.0"
 
 // ExtractCallGraphUseCase extracts the call graph of a module and persists a
 // CallGraphRecord.

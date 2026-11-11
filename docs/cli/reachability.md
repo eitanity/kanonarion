@@ -234,19 +234,19 @@ a `reflect.Value` or `reflect.Type`; `Execute` or `ExecuteTemplate` on a
 `text/template` or `html/template` `Template`; `Register` or `RegisterName` in
 `net/rpc`.
 
-It is **not** a call into package `reflect`. `reflect.TypeOf` has exactly one
-callee and conceals nothing. `Value.Call` and `FieldByName` are not sites either:
+It is **not** a call into package `reflect`. `Value.Call` and `FieldByName` are not sites either:
 a function reaches `Call` as a value, and taking that value is a reference the
 search follows.
 
 A site an entry point reaches gets an edge to each exported, non-test method of
 the names it is known to use: a `MethodByName` call's constant name, or for `Execute` and
 `ExecuteTemplate` the field and method names in every template text its module
-parses, when all of them are constants. Every other site binds nothing:
-a computed name, `Method`, `Methods`, `net/rpc`, and a module that calls `Parse`
-with other text, `ParseFiles`, `ParseGlob`, `ParseFS` or `Delims`, or parses
-none. A reachable site that binds nothing holds a clean negative at
-`unconfirmed` and is named in the reason. A site nothing reaches adds nothing.
+parses, when each is a constant or an unexported package var set to one once
+outside tests or by `//go:embed`. Others bind nothing: a computed name,
+`Method`, `Methods`, `net/rpc`, and a module that calls `Parse` with other
+text, `ParseFiles`, `ParseGlob`, `ParseFS` or `Delims`, or parses none. A
+reachable site that binds nothing holds a clean negative at `unconfirmed` and
+is named in the reason. A site nothing reaches adds nothing.
 Each site in `sites` carries `reachable_from_entry_point`, `bound`,
 `methods_bound` and `lookup_name`, the names:
 

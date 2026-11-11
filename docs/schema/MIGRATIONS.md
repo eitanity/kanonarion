@@ -170,6 +170,19 @@ values there, as they did when `verdict` and `reachability_state` gained theirs)
   a record that names no frame. `callgraph-show` text gains a `frame:` line and
   `--history` a `frame:` line per generation, both absent on such a record.
 
+## Call graph record: pipeline `0.14.0` → `0.15.0` - template text in a package var or an embedded file
+
+**Record content change; no store migration; no schema-version bump.** A
+template `Execute` or `ExecuteTemplate` edge's `lookup_name` now also reads the
+text `Parse` is given as an unexported package-level var whose only store
+outside test code is a constant, or an unexported `//go:embed` `string` or
+`[]byte` var naming one file. A
+`0.14.0` record left such an edge's `lookup_name` empty. Unchanged otherwise.
+
+Records are keyed `(module, version, pipeline_version)`: `0.14.0` rows stay and
+become unreachable. Cost is one re-extraction per coordinate on its next
+`callgraph` or `local` run.
+
 ## Call graph record: pipeline `0.13.0` → `0.14.0`, and callgraph migration 18 - the name a reflective lookup passes
 
 **Record shape change; store migration 18; no schema-version bump.** An edge

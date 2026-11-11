@@ -619,14 +619,9 @@ func TestReachabilityJSON_ReachIsDerivedByWalkingARealGraph(t *testing.T) {
 	}
 }
 
-// clearSiteAnswer is searchedReflectAnswer with the advisory's symbol unexported
-// so the search runs clean, and the given callees at the site under bindFields.
-func clearSiteAnswer(t *testing.T, callee string) vulnReachabilityQuery {
-	t.Helper()
-	return clearNamedSiteAnswer(t, callee, "")
-}
-
-// clearNamedSiteAnswer is clearSiteAnswer with name recorded on both sites.
+// clearNamedSiteAnswer is searchedReflectAnswer with the advisory's symbol
+// unexported so the search runs clean, and the given callee and name on the
+// sites under bindFields.
 func clearNamedSiteAnswer(t *testing.T, callee, name string) vulnReachabilityQuery {
 	t.Helper()
 

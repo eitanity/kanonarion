@@ -103,10 +103,19 @@ func TestAnalyse_RecordsTheConstantNameOfAMethodByNameLookup(t *testing.T) {
 // lookup name its template Execute edges record.
 func analyseTemplateModule(t *testing.T, name, src string) []string {
 	t.Helper()
+	return analyseTemplateFiles(t, name, src, nil)
+}
+
+// analyseTemplateFiles is analyseTemplateModule with more files beside src.
+func analyseTemplateFiles(t *testing.T, name, src string, extra map[string]string) []string {
+	t.Helper()
 	coord := coordinatetest.MustNew("example.com/"+name, "v1.0.0")
 	files := map[string]string{
 		"go.mod":  "module example.com/" + name + "\n\ngo 1.21\n",
 		"tmpl.go": "package " + name + "\n\n" + src,
+	}
+	for f, content := range extra {
+		files[f] = content
 	}
 	a := staticcha.New("0.1.0", "", slog.Default())
 	rec, err := a.Analyse(context.Background(), writeZipToTemp(t, makeZip(t, coord, files)), coord, domain.AnalysisInputs{})
@@ -218,6 +227,143 @@ func Render(w io.Writer, v any) error {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			for _, got := range analyseTemplateModule(t, tt.name, tt.src) {
+				if got != tt.want {
+					t.Errorf("the Execute edge records lookup name %q, want %q", got, tt.want)
+				}
+			}
+		})
+	}
+}
+
+// TestAnalyse_ReadsTheTextOfAPackageVarOrEmbedThatHoldsOne: a Parse of an
+// unexported package-level var set once from a constant, or of an unexported
+// //go:embed var, binds the names of that text. An exported var, one production
+// code could write otherwise, a text read from an embed.FS, a parameter and a
+// concatenation stay unbound.
+func TestAnalyse_ReadsTheTextOfAPackageVarOrEmbedThatHoldsOne(t *testing.T) {
+	t.Parallel()
+
+	const imports = `import (
+	_ "embed"
+	"io"
+	"text/template"
+)
+`
+	const execute = `
+func Render(w io.Writer, v any) error {
+	return template.Must(template.New("a").Parse(text)).Execute(w, v)
+}
+`
+	tmplFile := map[string]string{"t.tmpl": "{{.Name}}"}
+	for _, tt := range []struct {
+		name, src, want string
+		extra           map[string]string
+	}{
+		{name: "tmplvaronce", want: "Name", src: imports + `
+var text = "{{.Name}}"
+` + execute},
+		{name: "tmplvartestwrite", want: "Name", src: imports + `
+var text = "{{.Name}}"
+` + execute, extra: map[string]string{"tmpl_test.go": `package tmplvartestwrite
+
+import "testing"
+
+func TestSwap(t *testing.T) { text = "{{.Other}}" }
+`}},
+		{name: "tmplvartestonly", want: "", src: imports + `
+var text = "{{.Name}}"
+` + execute, extra: map[string]string{"tmpl_test.go": `package tmplvartestonly
+
+import (
+	"testing"
+	"text/template"
+)
+
+var unset string
+
+func TestParse(t *testing.T) { template.Must(template.New("b").Parse(unset)) }
+`}},
+		{name: "tmplembedstring", want: "Name", extra: tmplFile, src: imports + `
+//go:embed t.tmpl
+var text string
+` + execute},
+		{name: "tmplembedbytes", want: "Name", extra: tmplFile, src: imports + `
+//go:embed t.tmpl
+var raw []byte
+
+func Render(w io.Writer, v any) error {
+	return template.Must(template.New("a").Parse(string(raw))).Execute(w, v)
+}
+`},
+		{name: "tmplvarexported", want: "", src: imports + `
+var Text = "{{.Name}}"
+
+func Render(w io.Writer, v any) error {
+	return template.Must(template.New("a").Parse(Text)).Execute(w, v)
+}
+`},
+		{name: "tmplembedexported", want: "", extra: tmplFile, src: imports + `
+//go:embed t.tmpl
+var Text string
+
+func Render(w io.Writer, v any) error {
+	return template.Must(template.New("a").Parse(Text)).Execute(w, v)
+}
+`},
+		{name: "tmplvartwice", want: "", src: imports + `
+var text = "{{.Name}}"
+
+func init() { text = "{{.Name}}" }
+` + execute},
+		{name: "tmplvarreassigned", want: "", src: imports + `
+var text = "{{.Name}}"
+
+func Set() { text = "{{.Other}}" }
+` + execute},
+		{name: "tmplvaraddress", want: "", src: `import (
+	"flag"
+	"io"
+	"text/template"
+)
+
+var text = "{{.Name}}"
+
+func init() { flag.StringVar(&text, "t", text, "") }
+` + execute},
+		{name: "tmplembedstored", want: "", extra: tmplFile, src: imports + `
+//go:embed t.tmpl
+var text string
+
+func Set(s string) { text = s }
+` + execute},
+		{name: "tmplembedfs", want: "", extra: tmplFile, src: `import (
+	"embed"
+	"io"
+	"text/template"
+)
+
+//go:embed t.tmpl
+var files embed.FS
+
+func Render(w io.Writer, v any) error {
+	raw, _ := files.ReadFile("t.tmpl")
+	return template.Must(template.New("a").Parse(string(raw))).Execute(w, v)
+}
+`},
+		{name: "tmplparam", want: "", src: imports + `
+func Render(w io.Writer, text string, v any) error {
+	return template.Must(template.New("a").Parse(text)).Execute(w, v)
+}
+`},
+		{name: "tmplconcat", want: "", src: imports + `
+func Render(w io.Writer, s string, v any) error {
+	return template.Must(template.New("a").Parse("{{.Name}}" + s)).Execute(w, v)
+}
+`},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			for _, got := range analyseTemplateFiles(t, tt.name, tt.src, tt.extra) {
 				if got != tt.want {
 					t.Errorf("the Execute edge records lookup name %q, want %q", got, tt.want)
 				}
