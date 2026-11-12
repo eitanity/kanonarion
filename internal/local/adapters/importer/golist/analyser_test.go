@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"slices"
 	"testing"
+
+	"code.eitanity.com/kanonarion/internal/local/domain"
 )
 
 // Tests for the unexported parseGoListOutput helper.
@@ -73,11 +75,7 @@ func TestParseGoListOutput_PreservesStandardAndModuleFields(t *testing.T) {
 		ImportPath: "example.com/dep/sub",
 		Standard:   false,
 		Imports:    []string{"fmt", "example.com/other"},
-		Module: &struct {
-			Path    string
-			Version string
-			Main    bool
-		}{Path: modPath, Version: "v1.2.3", Main: false},
+		Module:     &goListModule{Path: modPath, Version: "v1.2.3", Main: false},
 	}
 	data := mustMarshal(t, pkg)
 
@@ -233,5 +231,24 @@ func TestBuildModules_StaysAtProductionScope(t *testing.T) {
 	// dependency module, so the assertion is on the count.
 	if len(mods) != 1 {
 		t.Fatalf("BuildModules = %v, want the single replaced dependency", mods)
+	}
+}
+
+// TestBuildModule_Replaces pins the two replace forms: each names the
+// coordinate the walk scanned, and a directory's is the module's own path @local.
+func TestBuildModule_Replaces(t *testing.T) {
+	versioned := buildModule(goListPackage{Module: &goListModule{
+		Path: "golang.org/x/text", Version: "v0.3.7",
+		Replace: &goListModule{Path: "github.com/golang/text", Version: "v0.3.7"},
+	}})
+	want := domain.BuildModule{Path: "golang.org/x/text", Version: "v0.3.7", ReplacePath: "github.com/golang/text", ReplaceVersion: "v0.3.7"}
+	if versioned != want {
+		t.Errorf("versioned replace = %+v, want %+v", versioned, want)
+	}
+	dir := buildModule(goListPackage{Module: &goListModule{
+		Path: "example.com/lib", Version: "v1.0.0", Replace: &goListModule{Path: "../lib"},
+	}})
+	if want := (domain.BuildModule{Path: "example.com/lib", Version: "v1.0.0", ReplacePath: "example.com/lib", ReplaceVersion: "local"}); dir != want {
+		t.Errorf("directory replace = %+v, want %+v", dir, want)
 	}
 }

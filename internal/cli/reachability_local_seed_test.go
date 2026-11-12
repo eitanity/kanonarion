@@ -9,6 +9,7 @@ import (
 
 	"code.eitanity.com/kanonarion/internal/adapters/sqlitestore"
 	"code.eitanity.com/kanonarion/internal/coordinate"
+	"code.eitanity.com/kanonarion/internal/coordinate/coordinatetest"
 	fetchdomain "code.eitanity.com/kanonarion/internal/fetch/domain"
 	"code.eitanity.com/kanonarion/internal/gotoolchain"
 	localdomain "code.eitanity.com/kanonarion/internal/local/domain"
@@ -47,6 +48,28 @@ type seedWalkSpec struct {
 	noRun bool
 	// pipeline is the record's pipeline version; empty means this build's.
 	pipeline string
+	// dep is the coordinate the walk and record name; zero means jsonDocDep.
+	dep coordinate.ModuleCoordinate
+}
+
+// seedLocalDep is the coordinate a walk records for the fixture tree's
+// directory replace of example.com/dep, which a local probe reads it under.
+var seedLocalDep = coordinatetest.MustNew(jsonDocDep.Path(), coordinate.LocalVersion)
+
+// depNode is the spec's dependency and how the walk resolved it.
+func (s seedWalkSpec) depNode() (coordinate.ModuleCoordinate, walkdomain.ResolutionSource) {
+	if s.dep.IsZero() {
+		return jsonDocDep, walkdomain.ResolutionMVS
+	}
+	return s.dep, walkdomain.ResolutionLocalReplace
+}
+
+// localDep points every spec at seedLocalDep.
+func localDep(specs []seedWalkSpec) []seedWalkSpec {
+	for i := range specs {
+		specs[i].dep = seedLocalDep
+	}
+	return specs
 }
 
 // twoWalkStore builds the store after a Go upgrade: an older walk of the tree
@@ -55,7 +78,7 @@ type seedWalkSpec struct {
 // With sameToolchain both walks state this host's toolchain: the control. With
 // noWalks the walk records are left out, so the probe falls back to the
 // frame-wide seed it took before a walk anchored it.
-func twoWalkStore(t *testing.T, sameToolchain, noWalks bool) (storeRoot, treeDir string) {
+func twoWalkStore(t *testing.T, sameToolchain, noWalks bool, dep coordinate.ModuleCoordinate) (storeRoot, treeDir string) {
 	t.Helper()
 	storeRoot, treeDir, host := upgradeStoreHost(t)
 	old := seedOldToolchain
@@ -67,6 +90,9 @@ func twoWalkStore(t *testing.T, sameToolchain, noWalks bool) (storeRoot, treeDir
 			snapshotV: "v2026-03-01", status: vulndomain.StatusClean},
 		{walkID: seedNewWalkID, runID: seedNewRunID, toolchain: host.toolchain, at: jsonDocAt.Add(48 * time.Hour),
 			snapshotV: "v2026-03-03", status: vulndomain.StatusAffected, findingID: jsonDocFindingID},
+	}
+	for i := range specs {
+		specs[i].dep = dep
 	}
 	seedWalkStore(t, storeRoot, treeDir, host, specs, noWalks)
 	return storeRoot, treeDir
@@ -114,13 +140,14 @@ func seedProjectWalk(t *testing.T, ctx context.Context, db sqlitestore.DB, root 
 	host walkBuildEnv, treeDir string, s seedWalkSpec,
 ) {
 	t.Helper()
+	dep, source := s.depNode()
 	graph := walkdomain.Graph{
 		Target: root,
 		Nodes: []walkdomain.GraphNode{
 			{Coordinate: root, ResolutionSource: walkdomain.ResolutionLocalMainModule},
-			{Coordinate: jsonDocDep, DirectDependency: true, ResolutionSource: walkdomain.ResolutionMVS},
+			{Coordinate: dep, DirectDependency: true, ResolutionSource: source},
 		},
-		Edges:           []walkdomain.GraphEdge{{From: root, To: jsonDocDep, ConstraintVersion: jsonDocDep.Version()}},
+		Edges:           []walkdomain.GraphEdge{{From: root, To: dep, ConstraintVersion: jsonDocDep.Version()}},
 		BuildEnv:        walkdomain.BuildEnv{GOOS: host.platform.GOOS, GOARCH: host.platform.GOARCH, GoVersion: s.toolchain},
 		ResolvedAt:      s.at,
 		PipelineVersion: walkapp.PipelineVersion,
@@ -130,8 +157,8 @@ func seedProjectWalk(t *testing.T, ctx context.Context, db sqlitestore.DB, root 
 		Target: root,
 		Graph:  graph,
 		PerNodeResults: map[coordinate.ModuleCoordinate]walkdomain.NodeResult{
-			root:       {Coordinate: root, Status: walkdomain.NodeSucceeded},
-			jsonDocDep: {Coordinate: jsonDocDep, Status: walkdomain.NodeSucceeded},
+			root: {Coordinate: root, Status: walkdomain.NodeSucceeded},
+			dep:  {Coordinate: dep, Status: walkdomain.NodeSucceeded},
 		},
 		StartedAt:     s.at,
 		CompletedAt:   s.at.Add(time.Second),
@@ -151,6 +178,7 @@ func seedProjectWalk(t *testing.T, ctx context.Context, db sqlitestore.DB, root 
 
 func seedWalkVulnRecord(t *testing.T, ctx context.Context, db sqlitestore.DB, root coordinate.ModuleCoordinate, s seedWalkSpec) {
 	t.Helper()
+	dep, _ := s.depNode()
 	store := vulnsqlite.New(db)
 	snapAt := s.snapAt
 	if snapAt.IsZero() {
@@ -162,7 +190,7 @@ func seedWalkVulnRecord(t *testing.T, ctx context.Context, db sqlitestore.DB, ro
 	}
 	record := vulndomain.VulnerabilityRecord{
 		Ecosystem:        fetchdomain.EcosystemGo,
-		Coordinate:       jsonDocDep,
+		Coordinate:       dep,
 		WalkID:           s.walkID,
 		OverallStatus:    s.status,
 		DatabaseSnapshot: snapshot,
@@ -189,7 +217,7 @@ func seedWalkVulnRecord(t *testing.T, ctx context.Context, db sqlitestore.DB, ro
 	}
 	run := vulndomain.WalkScanRun{
 		ID: s.runID, WalkID: s.walkID, Snapshot: snapshot,
-		PerModuleResults: map[coordinate.ModuleCoordinate]string{jsonDocDep: record.ContentHash},
+		PerModuleResults: map[coordinate.ModuleCoordinate]string{dep: record.ContentHash},
 		StartedAt:        s.at, CompletedAt: s.at.Add(time.Second),
 		OverallStatus: status, Operator: "guard", PipelineVersion: pipelineOr(s.pipeline),
 	}
@@ -209,7 +237,7 @@ func seedWalkVulnRecord(t *testing.T, ctx context.Context, db sqlitestore.DB, ro
 // newest project walk alone and names it, where composing every walk of the
 // frame refused on a conflict no re-scan could clear.
 func TestLocalReachability_SeedsFromTheNewestProjectWalk(t *testing.T) {
-	fixtureRoot, treeDir := twoWalkStore(t, false, false)
+	fixtureRoot, treeDir := twoWalkStore(t, false, false, seedLocalDep)
 
 	stdout, stderr, err := runAside("reachability", "--local", treeDir, "--store-root", fixtureRoot)
 	if err != nil {
@@ -230,7 +258,7 @@ func TestLocalReachability_SeedsFromTheNewestProjectWalk(t *testing.T) {
 // measured against two advisory snapshots, so their difference is not the
 // toolchain's, and the newer snapshot is served. Both pins answer too.
 func TestVulnShow_TwoToolchainsOnTwoSnapshotsAnswer(t *testing.T) {
-	fixtureRoot, treeDir := twoWalkStore(t, false, false)
+	fixtureRoot, treeDir := twoWalkStore(t, false, false, coordinate.ModuleCoordinate{})
 
 	stdout, stderr, err := runAside("vuln-show", jsonDocDepCoord, "--store-root", fixtureRoot)
 	if err != nil {
@@ -297,8 +325,8 @@ func TestVulnShow_ToolchainConflictNamesThePinsNotARescan(t *testing.T) {
 // anchored seed serves exactly what the frame-wide seed serves over the same
 // records. Only the seed line, which names the walk, and the clock differ.
 func TestLocalReachability_OneToolchainServesTheSameAnswer(t *testing.T) {
-	anchoredStore, anchoredTree := twoWalkStore(t, true, false)
-	frameStore, frameTree := twoWalkStore(t, true, true)
+	anchoredStore, anchoredTree := twoWalkStore(t, true, false, seedLocalDep)
+	frameStore, frameTree := twoWalkStore(t, true, true, seedLocalDep)
 
 	anchored, stderr, err := runAside("reachability", "--local", anchoredTree, "--store-root", anchoredStore)
 	if err != nil {
@@ -357,12 +385,12 @@ func pipelineOr(v string) string {
 // names the newer one, and says how to complete it.
 func TestLocalReachability_AnIncompleteScanSeedsFromTheLastCompletedWalk(t *testing.T) {
 	fixtureRoot, treeDir, host := upgradeStoreHost(t)
-	seedWalkStore(t, fixtureRoot, treeDir, host, []seedWalkSpec{
+	seedWalkStore(t, fixtureRoot, treeDir, host, localDep([]seedWalkSpec{
 		{walkID: seedOldWalkID, runID: seedOldRunID, toolchain: seedOldToolchain, at: jsonDocAt,
 			snapshotV: "v2026-03-01", status: vulndomain.StatusAffected, findingID: jsonDocFindingID},
 		{walkID: seedNewWalkID, runID: seedNewRunID, toolchain: host.toolchain, at: jsonDocAt.Add(48 * time.Hour),
 			snapshotV: "v2026-03-03", status: vulndomain.StatusClean, noRun: true},
-	}, false)
+	}), false)
 
 	stdout, stderr, err := runAside("reachability", "--local", treeDir, "--store-root", fixtureRoot)
 	if err != nil {
@@ -384,18 +412,18 @@ func TestLocalReachability_AnIncompleteScanSeedsFromTheLastCompletedWalk(t *test
 // remedy completes the scan, and nothing covered exits 4.
 func TestLocalReachability_NoCompletedScanSaysSoOnEveryLine(t *testing.T) {
 	fixtureRoot, treeDir, host := upgradeStoreHost(t)
-	seedWalkStore(t, fixtureRoot, treeDir, host, []seedWalkSpec{
+	seedWalkStore(t, fixtureRoot, treeDir, host, localDep([]seedWalkSpec{
 		{walkID: seedOldWalkID, runID: seedOldRunID, toolchain: seedOldToolchain, at: jsonDocAt,
 			snapshotV: "v2026-03-01", status: vulndomain.StatusClean, noRun: true},
 		{walkID: seedNewWalkID, runID: seedNewRunID, toolchain: host.toolchain, at: jsonDocAt.Add(48 * time.Hour),
 			snapshotV: "v2026-03-03", status: vulndomain.StatusClean, noRun: true},
-	}, false)
+	}), false)
 
 	stdout, _, err := runAside("reachability", "--local", treeDir, "--store-root", fixtureRoot)
 	if code := ExitCodeForError(err); code != ExitNotFound {
 		t.Fatalf("exit %d (%v), want %d: nothing is covered\n%s", code, err, ExitNotFound, stdout)
 	}
-	if !strings.Contains(stdout, jsonDocDepCoord+" — "+localdomain.UncoveredScanIncomplete) {
+	if !strings.Contains(stdout, seedLocalDep.String()+" — "+localdomain.UncoveredScanIncomplete) {
 		t.Errorf("the uncovered line does not say the scan did not complete:\n%s", stdout)
 	}
 	if strings.Contains(stdout, localdomain.UncoveredNotInSeedWalk) || strings.Contains(stdout, localdomain.UncoveredNoStoredRecord) {
@@ -414,10 +442,10 @@ func TestLocalReachability_NoCompletedScanSaysSoOnEveryLine(t *testing.T) {
 // in JSON. The JSON document is still printed in full.
 func TestLocalReachability_AllSupersededCoversNothingAndExits4(t *testing.T) {
 	fixtureRoot, treeDir, host := upgradeStoreHost(t)
-	seedWalkStore(t, fixtureRoot, treeDir, host, []seedWalkSpec{
+	seedWalkStore(t, fixtureRoot, treeDir, host, localDep([]seedWalkSpec{
 		{walkID: seedNewWalkID, runID: seedNewRunID, toolchain: host.toolchain, at: jsonDocAt,
 			snapshotV: "v2026-03-03", status: vulndomain.StatusClean, pipeline: "v1"},
-	}, false)
+	}), false)
 
 	stdout, _, err := runAside("reachability", "--local", treeDir, "--store-root", fixtureRoot)
 	if code := ExitCodeForError(err); code != ExitNotFound {
@@ -449,21 +477,30 @@ func TestLocalReachability_AllSupersededCoversNothingAndExits4(t *testing.T) {
 // an unpinned read refuses. The second scan's write completes, and every read
 // that names the build answers from the new walk's record alone.
 func TestLocalReachability_AGoUpgradeOnOneSnapshotAnswersFromTheNewWalk(t *testing.T) {
-	fixtureRoot, treeDir, host := upgradeStoreHost(t)
-	seedWalkStore(t, fixtureRoot, treeDir, host, []seedWalkSpec{
-		{walkID: seedOldWalkID, runID: seedOldRunID, toolchain: seedOldToolchain, at: jsonDocAt,
-			snapshotV: "v2026-03-01", status: vulndomain.StatusClean},
-		{walkID: seedNewWalkID, runID: seedNewRunID, toolchain: host.toolchain, at: jsonDocAt.Add(48 * time.Hour),
-			snapshotV: "v2026-03-01", snapAt: jsonDocAt, status: vulndomain.StatusAffected, findingID: jsonDocFindingID},
-	}, false)
+	probeRoot, probeTree, host := upgradeStoreHost(t)
+	specs := func() []seedWalkSpec {
+		return []seedWalkSpec{
+			{walkID: seedOldWalkID, runID: seedOldRunID, toolchain: seedOldToolchain, at: jsonDocAt,
+				snapshotV: "v2026-03-01", status: vulndomain.StatusClean},
+			{walkID: seedNewWalkID, runID: seedNewRunID, toolchain: host.toolchain, at: jsonDocAt.Add(48 * time.Hour),
+				snapshotV: "v2026-03-01", snapAt: jsonDocAt, status: vulndomain.StatusAffected, findingID: jsonDocFindingID},
+		}
+	}
+	seedWalkStore(t, probeRoot, probeTree, host, localDep(specs()), false)
 
-	stdout, stderr, err := runAside("reachability", "--local", treeDir, "--store-root", fixtureRoot)
+	stdout, stderr, err := runAside("reachability", "--local", probeTree, "--store-root", probeRoot)
 	if err != nil {
 		t.Fatalf("reachability --local: exit %d: %v\n%s", ExitCodeForError(err), err, stderr)
 	}
 	if !strings.Contains(stdout, `scanned by walk "`+seedNewWalkID+`"`) || !strings.Contains(stdout, "1 covered, 1 with findings") {
 		t.Errorf("the probe does not cover the build from the new walk:\n%s", stdout)
 	}
+
+	// The reads below still look a directory replace up under its require
+	// version, so they keep a store seeded there.
+	fixtureRoot, treeDir := t.TempDir(), t.TempDir()
+	writeJSONDocPopulatedTree(t, treeDir)
+	seedWalkStore(t, fixtureRoot, treeDir, host, specs(), false)
 	if _, _, unpinned := runAside("vuln-show", jsonDocDepCoord, "--store-root", fixtureRoot); unpinned == nil ||
 		!strings.Contains(unpinned.Error(), "two Go toolchains scanned it") {
 		t.Errorf("the unpinned read did not refuse on the two toolchains: %v", unpinned)

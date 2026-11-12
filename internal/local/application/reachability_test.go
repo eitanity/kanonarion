@@ -3,6 +3,7 @@ package application_test
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -341,6 +342,61 @@ func TestLocalReachability_SubpackageSymbolPresent(t *testing.T) {
 	}
 	if len(f.MatchedSymbols) != 1 || f.MatchedSymbols[0] != "github.com/foo/bar/sub.(*Form).Transform" {
 		t.Errorf("MatchedSymbols = %v", f.MatchedSymbols)
+	}
+}
+
+// TestLocalReachability_ReplacedModuleReadsTheReplacementsRecord pins a
+// versioned replace: the walk scanned the replacement's coordinate, while the
+// linked symbols keep the replaced module's import path.
+func TestLocalReachability_ReplacedModuleReadsTheReplacementsRecord(t *testing.T) {
+	fork := mustCoord(t, "github.com/golang/text", "v0.3.7")
+	uc := makeUC(
+		&fakeSnapshotBuilder{snap: makeSnap("example.com/app")},
+		&fakeBuildLister{modules: []domain.BuildModule{
+			{Path: "golang.org/x/text", Version: "v0.3.7", ReplacePath: "github.com/golang/text", ReplaceVersion: "v0.3.7"},
+		}},
+		&fakeVulnLoader{findings: map[coordinate.ModuleCoordinate][]ports.VulnFinding{
+			fork: {
+				{ID: "GO-2022-1059", AffectedSymbols: []string{"ParseAcceptLanguage"}},
+				{ID: "GO-2021-0113", AffectedSymbols: []string{"Parse"}},
+			},
+		}},
+		&fakeProber{result: ports.SymbolProbeResult{
+			Kind: "binary",
+			BinarySymbols: map[string]struct{}{
+				"golang.org/x/text/language.ParseAcceptLanguage": {},
+				"github.com/golang/text/language.Parse":          {},
+			},
+		}},
+	)
+
+	result, err := uc.Execute(context.Background(), "/ws")
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if len(result.Coverage.Uncovered) != 0 || result.Coverage.Covered != 1 {
+		t.Fatalf("coverage = %+v, want the replacement covered", result.Coverage)
+	}
+	want := []domain.ReplacedModule{{Path: "github.com/golang/text", Version: "v0.3.7", Replaces: "golang.org/x/text@v0.3.7"}}
+	if !reflect.DeepEqual(result.Coverage.Replaced, want) {
+		t.Errorf("Coverage.Replaced = %+v, want %+v", result.Coverage.Replaced, want)
+	}
+	m := result.Modules[0]
+	if m.Path != "github.com/golang/text" || m.Replaces != "golang.org/x/text@v0.3.7" {
+		t.Errorf("module = %s@%s replacing %q, want the replacement naming what it replaces", m.Path, m.Version, m.Replaces)
+	}
+	for _, f := range m.Findings {
+		switch f.CVEID {
+		case "GO-2022-1059":
+			if f.Verdict != domain.SymbolProbePresent || f.MatchedSymbols[0] != "golang.org/x/text/language.ParseAcceptLanguage" {
+				t.Errorf("%s = %s %v, want present under the replaced module's path", f.CVEID, f.Verdict, f.MatchedSymbols)
+			}
+		case "GO-2021-0113":
+			// The replacement's own path names no linked symbol.
+			if f.Verdict != domain.SymbolProbeAbsent {
+				t.Errorf("%s = %s %v, want absent", f.CVEID, f.Verdict, f.MatchedSymbols)
+			}
+		}
 	}
 }
 

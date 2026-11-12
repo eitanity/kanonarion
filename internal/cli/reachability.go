@@ -101,8 +101,10 @@ type reachabilityFinding struct {
 }
 
 type reachabilityModule struct {
-	Path     string                `json:"path"`
-	Version  string                `json:"version"`
+	Path    string `json:"path"`
+	Version string `json:"version"`
+	// Replaces names the module@version this coordinate replaces in the build.
+	Replaces string                `json:"replaces,omitempty"`
 	Findings []reachabilityFinding `json:"findings"`
 }
 
@@ -112,6 +114,22 @@ type reachabilityUncovered struct {
 	Path    string `json:"path"`
 	Version string `json:"version,omitempty"`
 	Reason  string `json:"reason"`
+}
+
+// reachabilityReplaced is one replace in the local build: the
+// coordinate the probe read, and the module@version it replaces.
+type reachabilityReplaced struct {
+	Path     string `json:"path"`
+	Version  string `json:"version"`
+	Replaces string `json:"replaces"`
+}
+
+// replacesNote renders what a coordinate replaces in the build, or "".
+func replacesNote(replaces string) string {
+	if replaces == "" {
+		return ""
+	}
+	return " (replaces " + replaces + ")"
 }
 
 // reachabilityProbedBinary is one main package of the local build and whether
@@ -171,6 +189,8 @@ type reachabilityCoverage struct {
 	// the harness left out. An absence says nothing about a route only through
 	// one of them. Absent when nothing was left out.
 	HarnessOmitted []reachabilityHarnessOmission `json:"harness_omitted,omitempty"`
+	// Replaced names every replace in the build. Absent when none.
+	Replaced []reachabilityReplaced `json:"replaced_modules,omitempty"`
 }
 
 type reachabilityOutput struct {
@@ -1161,6 +1181,11 @@ func findingReachabilityAnswer(coord coordinate.ModuleCoordinate, rec vuldomain.
 	// Empty on the positive: NegativeSoundness states a rung only where there is
 	// an absence to qualify, and a route answers its own soundness question.
 	soundness, soundnessReason := vuldomain.NegativeSoundness(f)
+	// A TinyGo frame's artefact is not linked by go build, so the probe's
+	// confirmed absence is not on offer there.
+	if !declaredTinyGo.Declared() && vuldomain.LocalProbeSettles(f) {
+		soundnessReason += vuldomain.LocalProbeClause
+	}
 	remedy, search := "", negativeSearchToOutput(f.NegativeSearch, classify)
 	if moduleLevel {
 		// A read-time search over the host's graphs names remedies that search
@@ -1584,7 +1609,7 @@ func printLocalReachability(stdout io.Writer, r reachabilityOutput) error {
 	}
 	w.printf("\nfindings:\n")
 	for _, m := range r.Modules {
-		w.printf("  %s@%s\n", m.Path, m.Version)
+		w.printf("  %s@%s%s\n", m.Path, m.Version, replacesNote(m.Replaces))
 		for _, f := range m.Findings {
 			printLocalFinding(w, f)
 		}
@@ -1656,6 +1681,9 @@ func printLocalCoverage(w *errWriter, c reachabilityCoverage) {
 			continue
 		}
 		w.printf("  binary probed:     %s\n", b.ImportPath)
+	}
+	for _, r := range c.Replaced {
+		w.printf("  replacement:       %s@%s replaces %s\n", r.Path, r.Version, r.Replaces)
 	}
 	if len(c.UncoveredModules) > 0 {
 		w.printf("  uncovered (%d) — this answer does not speak about them:\n", len(c.UncoveredModules))
@@ -1844,6 +1872,7 @@ func reachabilityResultToOutput(r localdomain.LocalReachabilityResult) reachabil
 		mods = append(mods, reachabilityModule{
 			Path:     m.Path,
 			Version:  m.Version,
+			Replaces: m.Replaces,
 			Findings: findings,
 		})
 	}
@@ -1891,6 +1920,9 @@ func coverageToOutput(c localdomain.ProbeCoverage) reachabilityCoverage {
 	}
 	for _, o := range c.HarnessOmitted {
 		out.HarnessOmitted = append(out.HarnessOmitted, reachabilityHarnessOmission{Symbol: o.Symbol, Reason: o.Reason})
+	}
+	for _, r := range c.Replaced {
+		out.Replaced = append(out.Replaced, reachabilityReplaced{Path: r.Path, Version: r.Version, Replaces: r.Replaces})
 	}
 	return out
 }

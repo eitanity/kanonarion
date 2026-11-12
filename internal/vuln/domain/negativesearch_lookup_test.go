@@ -85,3 +85,37 @@ func TestSearchedNegative_ARouteOverAnAddedEdgeSaysSoInText(t *testing.T) {
 		t.Errorf("the reason does not cap the list at five: %s", reason)
 	}
 }
+
+// TestLocalProbeSettles_NamesOnlyTheNegativesTheProbeCanSettle: a local-rooted
+// negative held by an unknown lookup, or disputed, is one a linked build
+// answers; an isolated, a module-level (TinyGo) and an inferred one are not.
+func TestLocalProbeSettles_NamesOnlyTheNegativesTheProbeCanSettle(t *testing.T) {
+	t.Parallel()
+
+	unbound := domain.NegativeSearch{EntryPointRoots: 1, Fidelity: "BUILT_WITH_BODIES",
+		ReflectiveDispatch: []domain.ReflectiveDispatchSite{{Caller: "m.f", Callee: "text/template.(*Template).Execute", ReachableFromEntryPoint: true}}}
+	disputed := domain.NegativeSearch{EntryPointRoots: 1, Fidelity: "BUILT_WITH_BODIES", PathFound: true, InRecordedFrame: true,
+		Route: domain.ReachabilityRoute{{ModulePath: "m", Package: "m", Symbol: "main"}, {ModulePath: "x", Package: "x", Symbol: "Vulnerable"}}}
+	isolated := searchedNegative(&unbound)
+	isolated.Reachable.DerivedBy.Rooting = domain.RootingIsolated
+	moduleLevel := searchedNegative(&unbound)
+	moduleLevel.Reachable.DerivedBy.Fidelity = string(domain.ScanModeModule)
+	inferred := searchedNegative(&domain.NegativeSearch{NotSearched: "no graph"})
+
+	for _, tt := range []struct {
+		name string
+		f    domain.VulnerabilityFinding
+		want bool
+	}{
+		{"local-rooted, unknown lookup", searchedNegative(&unbound), true},
+		{"local-rooted, disputed", searchedNegative(&disputed), true},
+		{"isolated frame", isolated, false},
+		{"module-level TinyGo answer", moduleLevel, false},
+		{"inferred", inferred, false},
+	} {
+		if got := domain.LocalProbeSettles(tt.f); got != tt.want {
+			rung, reason := domain.NegativeSoundness(tt.f)
+			t.Errorf("%s: LocalProbeSettles = %v, want %v (rung %s: %s)", tt.name, got, tt.want, rung, reason)
+		}
+	}
+}

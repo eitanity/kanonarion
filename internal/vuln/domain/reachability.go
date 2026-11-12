@@ -3,6 +3,8 @@ package domain
 import (
 	"strconv"
 	"strings"
+
+	"code.eitanity.com/kanonarion/internal/coordinate"
 )
 
 // ReachabilityAnalyser names the instrument that produced a reachability
@@ -499,9 +501,11 @@ func (s *NegativeSearch) ReachableReflectiveDispatch() int {
 // in either.
 func disputedReason(recorded ReachabilityDerivation, s *NegativeSearch) string {
 	var b strings.Builder
-	b.WriteString("the negative was recorded by " + recorded.Analyser.String())
+	b.WriteString("the negative was recorded by ")
+	b.WriteString(recorded.Analyser.String())
 	if recorded.Fidelity != "" {
-		b.WriteString(" at fidelity " + recorded.Fidelity)
+		b.WriteString(" at fidelity ")
+		b.WriteString(recorded.Fidelity)
 	}
 	b.WriteString(", but a call-graph search over kanonarion's own ")
 	b.WriteString(s.Fidelity)
@@ -513,10 +517,12 @@ func disputedReason(recorded ReachabilityDerivation, s *NegativeSearch) string {
 		// disagreement — a root is shipped code an application enters by dispatch
 		// no static analysis can enumerate, or a library's own exported API, and
 		// the recorded analyser treated it as entered by nothing.
-		b.WriteString(" as a traversal root: " + s.Route[0].String() +
-			" is itself an entry point of the analysed module's graph, not a symbol behind one")
+		b.WriteString(" as a traversal root: ")
+		b.WriteString(s.Route[0].String())
+		b.WriteString(" is itself an entry point of the analysed module's graph, not a symbol behind one")
 	} else if r := s.Route.String(); r != "" {
-		b.WriteString(" along " + r)
+		b.WriteString(" along ")
+		b.WriteString(r)
 	}
 	b.WriteString(". The two disagree — the recorded answer is about the build that analyser saw, " +
 		"the search is about the graph this store holds — so the negative is reported as measured " +
@@ -666,6 +672,35 @@ func searchedSoundness(d ReachabilityDerivation, s *NegativeSearch) (soundness R
 		rung, reason := soundnessFromDerivation(
 			ReachabilityDerivation{Analyser: AnalyserCallGraphBFS, Fidelity: s.Fidelity, Rooting: d.Rooting})
 		return rung, reason + entryPointRootingNote(s) + lookupSitesNote(s) + searchedGraphsNote(s)
+	}
+}
+
+// LocalProbeClause closes the reason of a negative LocalProbeSettles holds for.
+const LocalProbeClause = ". kanonarion reachability --local <dir> confirms it for that build if the linker dropped the affected symbols"
+
+// LocalProbeSettles reports whether a local probe settles this negative: one
+// held at unconfirmed by a reflective lookup whose methods are not known, or
+// disputed, in a non-TinyGo answer rooted at a local project. The linker keeps
+// every method such a lookup can return, so the probe's symbol tables answer it.
+func LocalProbeSettles(f VulnerabilityFinding) bool {
+	if f.NotEstablished || f.Reachable == nil || f.Reachable.IsReachable || f.AdvisoryNamesNoSymbols {
+		return false
+	}
+	d := f.Reachable.DerivedBy
+	if ScanMode(d.Fidelity) == ScanModeModule {
+		return false
+	}
+	if _, version, _ := strings.Cut(d.Rooting.RootTarget(), "@"); version != coordinate.LocalVersion {
+		return false
+	}
+	switch rung, _ := NegativeSoundness(f); rung {
+	case SoundnessDisputed:
+		return true
+	case SoundnessUnconfirmed:
+		s := f.NegativeSearch
+		return s.unsearchedReason() == "" && !s.PathFound && len(unboundSites(s)) > 0
+	default:
+		return false
 	}
 }
 

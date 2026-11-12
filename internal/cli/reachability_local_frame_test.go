@@ -57,7 +57,7 @@ func TestReachabilityLocal_RefusesWasmFramesByName(t *testing.T) {
 // The answer names the frame it probed in, after the module line, and --json
 // carries it in callgraph-show's shape.
 func TestReachabilityLocal_PrintsTheFrame(t *testing.T) {
-	fixtureRoot, treeDir := twoWalkStore(t, true, false)
+	fixtureRoot, treeDir := twoWalkStore(t, true, false, seedLocalDep)
 	stdout, stderr, err := runAside("reachability", "--local", treeDir, "--store-root", fixtureRoot)
 	if err != nil {
 		t.Fatalf("exit %d: %v\n%s", ExitCodeForError(err), err, stderr)
@@ -117,10 +117,10 @@ func TestLocalReachability_SeedsFromTheWalkOfItsFrame(t *testing.T) {
 	fixtureRoot, treeDir, host := upgradeStoreHost(t)
 	wasm := host
 	wasm.platform.GOOS, wasm.platform.GOARCH = "wasip1", "wasm"
-	seedWalkStore(t, fixtureRoot, treeDir, host, []seedWalkSpec{
+	seedWalkStore(t, fixtureRoot, treeDir, host, localDep([]seedWalkSpec{
 		{walkID: seedOldWalkID, runID: seedOldRunID, toolchain: host.toolchain, at: jsonDocAt,
 			snapshotV: "v2026-03-01", status: vuldomain.StatusAffected, findingID: jsonDocFindingID},
-	}, false)
+	}), false)
 	seedEmptyScannedWalk(t, fixtureRoot, treeDir, wasm, seedNewWalkID, seedNewRunID, jsonDocAt.Add(time.Hour))
 
 	declareForTest(t, "wasip1/wasm")

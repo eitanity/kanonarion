@@ -16,6 +16,7 @@ import (
 
 	"code.eitanity.com/kanonarion/internal/adapters/childproc"
 	"code.eitanity.com/kanonarion/internal/adapters/goenv"
+	"code.eitanity.com/kanonarion/internal/coordinate"
 	"code.eitanity.com/kanonarion/internal/local/domain"
 	"code.eitanity.com/kanonarion/internal/local/ports"
 )
@@ -119,11 +120,17 @@ type goListPackage struct {
 	// ForTest names the package under test, set only on the two test variants.
 	// It is how a test-scope package is told from a production one.
 	ForTest string
-	Module  *struct {
-		Path    string
-		Version string
-		Main    bool
-	}
+	Module  *goListModule
+}
+
+// goListModule is the module providing a package.
+type goListModule struct {
+	Path    string
+	Version string
+	Main    bool
+	// Replace is the module a replace directive substitutes, nil when none
+	// does. A directory replacement carries a path and no version.
+	Replace *goListModule
 }
 
 // isTestScope reports whether this main-module package is a test variant or
@@ -280,7 +287,7 @@ func (a *Analyser) BuildModules(ctx context.Context, root string) ([]domain.Buil
 		}
 		pkgToMod[pkg.ImportPath] = pkg.Module.Path
 		if _, seen := mods[pkg.Module.Path]; !seen {
-			mods[pkg.Module.Path] = domain.BuildModule{Path: pkg.Module.Path, Version: pkg.Module.Version}
+			mods[pkg.Module.Path] = buildModule(pkg)
 		}
 	}
 	for _, imp := range mainImports {
@@ -297,6 +304,21 @@ func (a *Analyser) BuildModules(ctx context.Context, root string) ([]domain.Buil
 	}
 	sort.Slice(out2, func(i, j int) bool { return out2[i].Path < out2[j].Path })
 	return out2, nil
+}
+
+// buildModule projects one package's module and the coordinate a replace
+// makes the walk record: the replacement's, or the module's own path at
+// coordinate.LocalVersion for a directory, whose code no published version holds.
+func buildModule(pkg goListPackage) domain.BuildModule {
+	m := domain.BuildModule{Path: pkg.Module.Path, Version: pkg.Module.Version}
+	switch r := pkg.Module.Replace; {
+	case r == nil:
+	case r.Version == "":
+		m.ReplacePath, m.ReplaceVersion = m.Path, coordinate.LocalVersion
+	default:
+		m.ReplacePath, m.ReplaceVersion = r.Path, r.Version
+	}
+	return m
 }
 
 func parseGoListOutput(data []byte) ([]goListPackage, error) {

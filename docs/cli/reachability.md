@@ -153,7 +153,7 @@ The rungs, most to least sound:
 
 | `soundness` | What was searched |
 |---|---|
-| `confirmed` | A call-graph search ran over a graph built with function bodies and found no path **from any entry point the analysis can name** — the module's public API, its package initialisers, a command's `main`, a function with an export directive, an `http.Handler`. The only rung a clean negative may rest on. |
+| `confirmed` | A call-graph search ran over a graph built with function bodies and found no path **from any entry point the analysis can name** — the module's public API, its package initialisers, a command's `main`, a function with an export directive, an `http.Handler`. Or, from `reachability --local`, the symbols are in none of the symbol tables of the mains the build declares, each built by `go build`. The only rung a clean negative may rest on. |
 | `inferred` | No search ran for this finding. An analysis loaded the whole build from source and never reported a route; the negative reads that silence. |
 | `unconfirmed` | An analysis ran that could not have found a route at all — a symbol table inspected in binary mode, a module-level scan under a TinyGo frame (see [Scanning under a TinyGo frame](vuln.md#scanning-under-a-tinygo-frame)), a call graph below `BUILT_WITH_BODIES`, a clean search whose entry points reach a reflective method lookup whose methods are not known, or an answer that does not say what produced it. |
 | `unsearchable` | The advisory names no symbols for this module path, so there was never a target to search for. Unlike the rungs above, no re-scan at any fidelity changes this. |
@@ -863,7 +863,7 @@ examined eleven and cleared one.
 | `reason` | Means |
 |---|---|
 | `no stored vulnerability record for this coordinate; it has never been vuln-scanned` | Nothing is known about it either way. This is **not** "no known vulnerabilities" — a record with no findings is an answer and counts as covered. |
-| `the local build resolves this module without a version (a directory replacement), so it names no coordinate to look up` | Nothing asked the store about it. |
+| `the local build resolves this module without a version, so it names no coordinate to look up` | Nothing asked the store about it. A replace is read as the walk records it (the replacement, or `<path>@local` for a directory); see `coverage.replaced_modules`. |
 | `the store holds a vulnerability record for this coordinate, but only from another build's frame; this build has not been vuln-scanned` | The module has been scanned — for a different project. Nothing measured this build, so nothing seeded the probe. Scan this build to cover it. |
 | `the store holds vulnerability records for this coordinate only at superseded pipeline versions; it has been vuln-scanned and must be scanned again` | The module has been scanned for this build, under scan logic this build supersedes. Re-scan it to cover it. |
 | `the stored scan record for this coordinate says it was not analysed (the scan failed or the module was unscannable), so it is no answer about this build` | A scan ran and did not analyse the module. A record like that found nothing because nothing was looked at, so it is not counted as covered. Read the record's reason with `kanonarion vuln-show <module>@<version> --gomod ./go.mod`. |
@@ -1108,16 +1108,13 @@ they do not carry the same rung.
 
 | `reachability_state` | `state_source` | `soundness` |
 |---|---|---|
-| `absent` | `symbol-table` | `unconfirmed` - the affected symbols are not in the symbol table of the binaries this build links, so the linker did not keep them. Real evidence, and not a search: no call graph was built, so nothing could have found a route whether or not one exists. |
+| `absent` | `symbol-table` | `confirmed` when every main the build declares was built by `go build`: none of their symbol tables, each built with inlining off, holds an affected symbol, so the linker kept no route to them, reflection included. Otherwise `unconfirmed`. |
 | `unreachable` | `govulncheck` | whatever the stored scan's own analyser and fidelity earn, usually `inferred`. This answer was not measured here; it was carried from the store, and it states the rung of the search it actually came from. |
 | `present`, `reachable`, `unknown` | - | `not stated`. There is no absence to qualify. |
 
-An `absent` answer never reads `confirmed`, whatever the probe built.
-`confirmed` means a call-graph search ran over a graph built with function bodies;
-this probe reads a linker's output. Where the probe could not read every main
-package, or where the workspace declares no main and a synthetic harness was
-compiled instead, `soundness_reason` says so - an absence from tables that do not
-cover the product is a weaker claim than one from tables that do.
+An `absent` answer reads `unconfirmed` when a main package did not build, when
+the workspace declares no main and a synthetic harness was compiled instead, or
+under `--tinygo`. `soundness_reason` names which.
 
 `notice` is set when the store has no findings for the analysed dependency
 modules - typically because they have not been scanned. An empty `modules` array
