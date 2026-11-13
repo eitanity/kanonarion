@@ -690,6 +690,9 @@ func joinProjections(consumer, subject ports.CallGraphProjection, linked []strin
 		ServableAsCacheHit: consumer.ServableAsCacheHit && subject.ServableAsCacheHit,
 		StdlibPackages:     consumer.StdlibPackages,
 		DependencyPackages: consumer.DependencyPackages,
+		// The consumer's frame is the build, so its reflect decides every site.
+		TinyGoTarget:  consumer.TinyGoTarget,
+		TinyGoVersion: consumer.TinyGoVersion,
 	}
 }
 

@@ -222,9 +222,8 @@ nothing you can enter reaches the vulnerable symbol but some function the module
 ships does, the rung is `confirmed` against the entry points, **and the reason
 says so and names the route**. Read both before acting on it.
 
-A graph that names no entry point at all confirms nothing. The search would start
-nowhere, so of course it finds nothing, and `entry_point_roots: 0` in the JSON is
-what says that happened.
+A graph that names no entry point confirms nothing: the search starts nowhere.
+`entry_point_roots: 0` in the JSON says so.
 
 ### Reflective method lookups
 
@@ -244,9 +243,10 @@ the names it is known to use: a `MethodByName` call's constant name, or for `Exe
 parses, when each is a constant or an unexported package var set to one once
 outside tests or by `//go:embed`. Others bind nothing: a computed name,
 `Method`, `Methods`, `net/rpc`, and a module that calls `Parse` with other
-text, `ParseFiles`, `ParseGlob`, `ParseFS` or `Delims`, or parses none. A
-reachable site that binds nothing holds a clean negative at `unconfirmed` and
-is named in the reason. A site nothing reaches adds nothing.
+text, `ParseFiles`, `ParseGlob`, `ParseFS` or `Delims`, or parses none, and
+hold a clean negative at `unconfirmed`, named in the reason. Under a TinyGo
+0.44 or older frame a lookup returns no method, so a site binds nothing,
+holds no rung and `no_method` says why. An unreached site adds nothing.
 Each site in `sites` carries `reachable_from_entry_point`, `bound`,
 `methods_bound` and `lookup_name`, the names:
 
@@ -264,7 +264,7 @@ graph is not joined is an unjoined call. Finding no site is stated:
   reflective dispatch: none — the graph searched holds no reflective method lookup and no call to a standard-library function that makes one
 ```
 
-A search that never ran prints nothing here at all, because it measured nothing.
+A search that never ran prints nothing here.
 `not_searched` above says why.
 
 Two calls from one function to one `reflect` method on two lines are two sites, each

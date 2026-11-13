@@ -3,6 +3,8 @@ package domain
 import (
 	"slices"
 	"strings"
+
+	"golang.org/x/mod/semver"
 )
 
 // TinyGoSupply is which standard packages of a TinyGo build TinyGo supplies.
@@ -61,4 +63,12 @@ func notEstablished(f *VulnerabilityFinding, note string) {
 	r.IsReachable = false
 	r.Confidence = ConfidenceUnknown
 	f.Reachable = &r
+}
+
+// TinyGoReflectReturnsNoMethod reports whether TinyGo at version has a reflect
+// that panics on every method lookup: 0.44.x and older. An unrecorded or
+// unparseable version keeps Go's rule, since nothing says which reflect it is.
+func TinyGoReflectReturnsNoMethod(version string) bool {
+	v := "v" + version
+	return semver.IsValid(v) && semver.Compare(semver.MajorMinor(v), "v0.44") <= 0
 }

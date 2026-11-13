@@ -825,6 +825,9 @@ type reflectiveDispatchSiteOutput struct {
 	Bound        bool   `json:"bound"`
 	LookupName   string `json:"lookup_name,omitempty"`
 	MethodsBound int    `json:"methods_bound"`
+	// NoMethod says why the site bound nothing whatever its names: the frame's
+	// TinyGo reflect returns no method. Empty under Go's rule.
+	NoMethod string `json:"no_method,omitempty"`
 	// binding is the domain's rendering of the above, for the text surface.
 	binding string
 }
@@ -878,10 +881,19 @@ func reflectiveDispatchToOutput(s *vuldomain.NegativeSearch) reflectiveDispatchO
 			Bound:                   site.Bound,
 			LookupName:              site.LookupName,
 			MethodsBound:            site.MethodsBound,
+			NoMethod:                noMethod(site),
 			binding:                 site.Binding(),
 		})
 	}
 	return out
+}
+
+// noMethod is a reached TinyGo site's binding, and "" for every other site.
+func noMethod(site vuldomain.ReflectiveDispatchSite) string {
+	if !site.ReachableFromEntryPoint || !site.ReturnsNoMethod {
+		return ""
+	}
+	return site.Binding()
 }
 
 // reachabilityRouteOutput is one route in the curated JSON shape. Versioned

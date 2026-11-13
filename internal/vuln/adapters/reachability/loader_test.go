@@ -65,6 +65,7 @@ func TestLoad_ProjectsRecord(t *testing.T) {
 		Edges:              []callgraphdomain.CallEdge{{FromID: "github.com/foo/bar.Fn", ToID: "net/http.Get"}},
 		StdlibPackages:     []string{"net/http"},
 		DependencyPackages: []string{"golang.org/x/text/language"},
+		Frame:              callgraphdomain.BuildFrame{GOOS: "wasip1", GOARCH: "wasm", TinyGoTarget: "wasip1", TinyGoVersion: "0.44.0"},
 	}
 	l := reachability.NewCallGraphStoreLoader(&fakeStore{record: rec, found: true}, "p1")
 
@@ -112,6 +113,10 @@ func TestLoad_ProjectsRecord(t *testing.T) {
 	// Both closures survive: a joined search restricts the other graph to them.
 	if !slices.Equal(proj.StdlibPackages, rec.StdlibPackages) || !slices.Equal(proj.DependencyPackages, rec.DependencyPackages) {
 		t.Errorf("closures = %v / %v, want %v / %v", proj.StdlibPackages, proj.DependencyPackages, rec.StdlibPackages, rec.DependencyPackages)
+	}
+	// The TinyGo frame survives: it decides what a reflective lookup returns.
+	if proj.TinyGoTarget != "wasip1" || proj.TinyGoVersion != "0.44.0" {
+		t.Errorf("TinyGo frame = %q %q, want wasip1 0.44.0", proj.TinyGoTarget, proj.TinyGoVersion)
 	}
 }
 
@@ -198,11 +203,17 @@ func TestLoad_PicksOutOnlyTheReflectiveDispatchSites(t *testing.T) {
 }
 
 // TestLoad_ReflectsOwnLookupIsNotASite: in a joined standard-library graph,
-// reflect's (Value).MethodByName calls (*rtype).MethodByName. That call is the
-// lookup's implementation, and only a caller's own lookup is a site.
+// reflect's (Value).MethodByName calls (*rtype).MethodByName, or TinyGo's
+// (*rawType). That call is the lookup's implementation, and only a caller's own lookup is a site.
 func TestLoad_ReflectsOwnLookupIsNotASite(t *testing.T) {
+	for _, callee := range []string{"reflect.(*rtype).MethodByName", "reflect.(*rawType).MethodByName"} {
+		reflectsOwnLookupIsNotASite(t, callee)
+	}
+}
+
+func reflectsOwnLookupIsNotASite(t *testing.T, callee string) {
+	t.Helper()
 	const caller = "reflect.(Value).MethodByName"
-	const callee = "reflect.(*rtype).MethodByName"
 	rec := callgraphdomain.CallGraphRecord{
 		Completeness: callgraphdomain.CompletenessBuiltWithBodies,
 		ArtifactKind: callgraphdomain.ArtifactLibrary,
@@ -234,6 +245,7 @@ func TestLoad_EveryLookupIsASiteWithoutTheAttribute(t *testing.T) {
 	for _, callee := range []string{
 		"reflect.(Value).Method", "reflect.(Value).MethodByName", "reflect.(Value).Methods",
 		"reflect.(*rtype).Method", "reflect.(*rtype).MethodByName", "reflect.(*rtype).Methods",
+		"reflect.(*rawType).Method", "reflect.(*rawType).MethodByName", "reflect.(*rawType).Methods",
 		"text/template.(*Template).Execute", "text/template.(*Template).ExecuteTemplate",
 		"html/template.(*Template).Execute", "html/template.(*Template).ExecuteTemplate",
 		"net/rpc.Register", "net/rpc.RegisterName", "net/rpc.(*Server).Register", "net/rpc.(*Server).RegisterName",

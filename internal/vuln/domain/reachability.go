@@ -447,6 +447,9 @@ type ReflectiveDispatchSite struct {
 	// MethodsBound is how many method nodes the search bound the site to. Zero
 	// on a site no entry point reaches, which adds nothing.
 	MethodsBound int
+	// ReturnsNoMethod says the graph's TinyGo reflect panics on a method lookup,
+	// so the site binds nothing and holds no rung, whatever its name set.
+	ReturnsNoMethod bool
 }
 
 // String renders the site for a reason: where it is and what it was bound to.
@@ -459,6 +462,8 @@ func (s ReflectiveDispatchSite) Binding() string {
 	switch {
 	case !s.ReachableFromEntryPoint:
 		return "not reached, so nothing bound"
+	case s.ReturnsNoMethod:
+		return "TinyGo's reflect panics on a method lookup, so it returns no method and nothing was bound"
 	case !s.Bound:
 		return "the methods it can return are not known, so the search cannot follow it"
 	case s.NameCount == 1 && s.MethodsBound == 0:
@@ -708,7 +713,7 @@ func LocalProbeSettles(f VulnerabilityFinding) bool {
 func unboundSites(s *NegativeSearch) []string {
 	var sites []string
 	for _, site := range s.ReflectiveDispatch {
-		if site.ReachableFromEntryPoint && !site.Bound {
+		if site.ReachableFromEntryPoint && !site.Bound && !site.ReturnsNoMethod {
 			sites = append(sites, site.Caller+" -> "+site.Callee+atSite(site.CallSite))
 		}
 	}
@@ -728,7 +733,7 @@ func atSite(pos string) string {
 func lookupSitesNote(s *NegativeSearch) string {
 	var sites []string
 	for _, site := range s.ReflectiveDispatch {
-		if site.ReachableFromEntryPoint && site.Bound {
+		if site.ReachableFromEntryPoint && (site.Bound || site.ReturnsNoMethod) {
 			sites = append(sites, site.String())
 		}
 	}

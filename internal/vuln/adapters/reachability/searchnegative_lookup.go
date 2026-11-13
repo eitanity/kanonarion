@@ -22,11 +22,13 @@ type lookupEdge struct{ from, to string }
 // module's constant templates use) binds the exported methods of those names;
 // any other site binds nothing. Only reachable sites add edges, and a method
 // reached through one can reach a further site, so the reached set is
-// recomputed until no site joins.
+// recomputed until no site joins. Under a TinyGo whose reflect returns no
+// method, a reached site binds nothing and says why.
 func searchPastLookups(proj ports.CallGraphProjection, entryRoots []string) (ports.CallGraphProjection, []domain.ReflectiveDispatchSite, map[lookupEdge]domain.ReflectiveDispatchSite) {
 	if len(proj.ReflectiveDispatch) == 0 {
 		return proj, nil, nil
 	}
+	noMethod := proj.TinyGoTarget != "" && domain.TinyGoReflectReturnsNoMethod(proj.TinyGoVersion)
 	byName := exportedMethods(proj)
 	called := make(map[lookupEdge]bool, len(proj.Edges))
 	for _, e := range proj.Edges {
@@ -44,13 +46,10 @@ func searchPastLookups(proj ports.CallGraphProjection, entryRoots []string) (por
 			if sites[i].ReachableFromEntryPoint || !reached[s.CallerID] {
 				continue
 			}
-			var bound []string
-			names, _ := callgraphdomain.LookupNames(s.LookupName)
-			for _, name := range names {
-				bound = append(bound, byName[name]...)
-			}
+			bound := methodsFor(s, byName, noMethod)
 			sites[i] = siteOf(s)
 			sites[i].ReachableFromEntryPoint = true
+			sites[i].ReturnsNoMethod = noMethod
 			sites[i].MethodsBound = len(bound)
 			for _, m := range bound {
 				key := lookupEdge{s.CallerID, m}
@@ -73,6 +72,20 @@ func searchPastLookups(proj ports.CallGraphProjection, entryRoots []string) (por
 	}
 	sortSites(sites)
 	return aug, sites, added
+}
+
+// methodsFor is every method a reached site's lookup can return: none under a
+// TinyGo whose reflect returns no method, else the exported ones of its names.
+func methodsFor(s ports.CallGraphReflectSite, byName map[string][]string, noMethod bool) []string {
+	if noMethod {
+		return nil
+	}
+	var bound []string
+	names, _ := callgraphdomain.LookupNames(s.LookupName)
+	for _, name := range names {
+		bound = append(bound, byName[name]...)
+	}
+	return bound
 }
 
 // siteOf is the reported form of a site, not yet told whether it is reached.

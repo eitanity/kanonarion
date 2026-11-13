@@ -210,6 +210,33 @@ func TestSearchNegative_DependencyJoinDisputesThroughAReachableLookup(t *testing
 	}
 }
 
+// TestSearchNegative_DependencyJoinAppliesTheConsumersTinyGo: the same lookup
+// joined under a consumer's TinyGo 0.44 frame binds no method, whatever the
+// dependency's own graph records, so no route is found through Tag.Run.
+func TestSearchNegative_DependencyJoinAppliesTheConsumersTinyGo(t *testing.T) {
+	dep := dependencyGraph()
+	tagRun := depLanguage + ".(Tag).Run"
+	dep.Nodes = append(dep.Nodes, ports.CallGraphNode{ID: tagRun, Module: depModule, Package: depLanguage, Receiver: "Tag", Symbol: "Run"})
+	dep.Edges = append(dep.Edges, ports.CallGraphEdge{FromID: tagRun, ToID: depLanguage + ".ParseAcceptLanguage"})
+	dep.ReflectiveDispatch = append(dep.ReflectiveDispatch,
+		ports.CallGraphReflectSite{CallerID: depInternal + ".parse", CalleeID: "reflect.(Value).MethodByName", LookupName: "Run"})
+	dep.TinyGoTarget, dep.TinyGoVersion = "wasip1", "0.100.0"
+	project := projectGraph("parse", "wasmexport", "Parse", linkedClosure)
+	project.TinyGoTarget, project.TinyGoVersion = "wasip1", "0.44.0"
+	loader := &byCoordinateLoader{graphs: map[string]ports.CallGraphProjection{
+		projectCoord:                 project,
+		depModule + "@" + depVersion: dep,
+	}}
+
+	s, got, reason := searchDependency(t, loader, advisoryPackages, advisorySymbols)
+	if s.PathFound || got == domain.SoundnessDisputed {
+		t.Fatalf("soundness = %s, path found %v (%s), want no route through the lookup", got, s.PathFound, reason)
+	}
+	if site := siteFor(t, s, depInternal+".parse"); !site.ReachableFromEntryPoint || !site.ReturnsNoMethod || site.MethodsBound != 0 {
+		t.Errorf("site = %+v, want reached, returning no method, nothing bound", site)
+	}
+}
+
 // TestSearchNegative_DependencyJoinKeepsOnlyTheLinkedPackages: an export that
 // calls Parse, as the fixtures do, reaches MatchStrings only through a package
 // the build does not link, which is a call the binary cannot make. With that

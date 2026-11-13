@@ -998,6 +998,10 @@ type CallGraphProjection struct {
 	// name the directory a re-analysis must run in, rather than telling the
 	// reader a tree is unnamed when the record names it.
 	AnalysisRoot string
+	// TinyGoTarget and TinyGoVersion are the graph's TinyGo frame, empty for a
+	// graph with none. TinyGo's reflect decides what a method lookup returns.
+	TinyGoTarget  string
+	TinyGoVersion string
 }
 
 // CallGraphNode is the subset of a call graph node the analyser needs.

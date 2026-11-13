@@ -282,7 +282,8 @@ func IsReflectDispatcher(calleeID string) bool {
 // A method fetched by a lookup has no call edge, so a negative search adds one
 // to each method of a name the site is known to use. Go has no lookup of a function by
 // name: a function reaches reflect.Value.Call only as a value, and taking that
-// value records a Reference edge the search already follows.
+// value records a Reference edge the search already follows. TinyGo's
+// reflect.Type is *rawType, so its lookups are listed under that receiver too.
 func IsReflectiveLookup(calleeID string) bool {
 	switch calleeID {
 	case "reflect.(Value).Method",
@@ -291,6 +292,9 @@ func IsReflectiveLookup(calleeID string) bool {
 		"reflect.(*rtype).Method",
 		"reflect.(*rtype).MethodByName",
 		"reflect.(*rtype).Methods",
+		"reflect.(*rawType).Method",
+		"reflect.(*rawType).MethodByName",
+		"reflect.(*rawType).Methods",
 		"text/template.(*Template).Execute",
 		"text/template.(*Template).ExecuteTemplate",
 		"html/template.(*Template).Execute",

@@ -119,3 +119,49 @@ func TestLocalProbeSettles_NamesOnlyTheNegativesTheProbeCanSettle(t *testing.T) 
 		}
 	}
 }
+
+// TestTinyGoSite_ReturnsNoMethodAndHoldsNoRung: under TinyGo's reflect a reached
+// lookup binds nothing, says why, and a clean search past it confirms whether
+// or not its names were known.
+func TestTinyGoSite_ReturnsNoMethodAndHoldsNoRung(t *testing.T) {
+	t.Parallel()
+
+	want := "TinyGo's reflect panics on a method lookup, so it returns no method and nothing was bound"
+	for _, site := range []domain.ReflectiveDispatchSite{
+		{Caller: "m.main", Callee: "reflect.(Value).MethodByName", ReachableFromEntryPoint: true, ReturnsNoMethod: true},
+		{Caller: "m.main", Callee: "reflect.(*rawType).MethodByName", ReachableFromEntryPoint: true, ReturnsNoMethod: true,
+			LookupName: "Run", Bound: true, NameCount: 1},
+	} {
+		if got := site.Binding(); got != want {
+			t.Errorf("Binding(%+v) = %q, want %q", site, got, want)
+		}
+		search := domain.NegativeSearch{EntryPointRoots: 1, Fidelity: "BUILT_WITH_BODIES",
+			ReflectiveDispatch: []domain.ReflectiveDispatchSite{site}}
+		rung, reason := domain.NegativeSoundness(searchedNegative(&search))
+		if rung != domain.SoundnessConfirmed {
+			t.Errorf("bound=%v: rung = %s (%s), want %s", site.Bound, rung, reason, domain.SoundnessConfirmed)
+		}
+		if !strings.Contains(reason, site.Callee+" ("+want+")") {
+			t.Errorf("bound=%v: the reason does not name the TinyGo site: %s", site.Bound, reason)
+		}
+	}
+	unreached := domain.ReflectiveDispatchSite{ReturnsNoMethod: true}
+	if got := unreached.Binding(); got != "not reached, so nothing bound" {
+		t.Errorf("an unreached TinyGo site's binding = %q", got)
+	}
+}
+
+// TestTinyGoReflectReturnsNoMethod_ComparesTheVersion: 0.44.x and older return
+// no method; a newer release, and an unrecorded or unparseable one, do not.
+func TestTinyGoReflectReturnsNoMethod_ComparesTheVersion(t *testing.T) {
+	t.Parallel()
+
+	for version, want := range map[string]bool{
+		"0.40.0": true, "0.44.0": true, "0.44.9": true, "0.44.1-dev": true,
+		"0.45.0": false, "0.100.0": false, "1.0.0": false, "": false, "dev": false,
+	} {
+		if got := domain.TinyGoReflectReturnsNoMethod(version); got != want {
+			t.Errorf("TinyGoReflectReturnsNoMethod(%q) = %v, want %v", version, got, want)
+		}
+	}
+}

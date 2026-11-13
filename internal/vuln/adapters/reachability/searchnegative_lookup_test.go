@@ -308,3 +308,48 @@ func TestSearchNegative_ACallerWithManySitesAddsEachMethodOnce(t *testing.T) {
 		t.Errorf("the two sites in bind are ordered %q, want them ordered by name set", names)
 	}
 }
+
+// TestSearchNegative_UnderTinyGoALookupReturnsNoMethod: a TinyGo graph at 0.44
+// or older binds no method to a reached site, so the route through T.Run is not
+// found and the negative confirms. No frame, a newer TinyGo, and a TinyGo graph
+// with no version keep Go's rule and find it.
+func TestSearchNegative_UnderTinyGoALookupReturnsNoMethod(t *testing.T) {
+	t.Parallel()
+
+	for _, tt := range []struct {
+		name, target, version string
+		noMethod              bool
+	}{
+		{name: "TinyGo 0.44.0", target: "wasip1", version: "0.44.0", noMethod: true},
+		{name: "TinyGo 0.40.0", target: "pico", version: "0.40.0", noMethod: true},
+		{name: "no TinyGo frame"},
+		{name: "TinyGo 0.45.0", target: "wasip1", version: "0.45.0"},
+		{name: "TinyGo 0.100.0", target: "wasip1", version: "0.100.0"},
+		{name: "TinyGo, no version", target: "wasip1"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			proj := lookupGraph(ports.CallGraphReflectSite{
+				CallerID: "bind", CalleeID: "reflect.(*rawType).MethodByName", File: "bind.go", Line: 7, LookupName: "Run",
+			})
+			proj.TinyGoTarget, proj.TinyGoVersion = tt.target, tt.version
+			s, got, reason := searchLookup(t, proj)
+			site := siteFor(t, s, "bind")
+			if !tt.noMethod {
+				if got != domain.SoundnessDisputed || site.ReturnsNoMethod || site.MethodsBound != 2 {
+					t.Fatalf("Go's rule: soundness = %s, site = %+v (%s), want disputed with 2 bound", got, site, reason)
+				}
+				return
+			}
+			if s.PathFound || got != domain.SoundnessConfirmed {
+				t.Fatalf("soundness = %s, path found %v (%s), want confirmed with no path", got, s.PathFound, reason)
+			}
+			if !site.ReachableFromEntryPoint || !site.ReturnsNoMethod || site.MethodsBound != 0 {
+				t.Errorf("site = %+v, want reached, returning no method, nothing bound", site)
+			}
+			if !strings.Contains(reason, "bind -> reflect.(*rawType).MethodByName at bind.go:7 (TinyGo's reflect panics on a method lookup") {
+				t.Errorf("the reason does not name the TinyGo site: %s", reason)
+			}
+		})
+	}
+}

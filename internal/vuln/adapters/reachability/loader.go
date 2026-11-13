@@ -56,6 +56,8 @@ func projectCallGraph(rec callgraphdomain.CallGraphRecord) ports.CallGraphProjec
 		StdlibPackages:     rec.StdlibPackages,
 		DependencyPackages: rec.DependencyPackages,
 		AnalysisRoot:       rec.AnalysisRoot,
+		TinyGoTarget:       rec.Frame.TinyGoTarget,
+		TinyGoVersion:      rec.Frame.TinyGoVersion,
 	}
 	reflectInternal := map[string]bool{}
 	for _, n := range rec.Nodes {
