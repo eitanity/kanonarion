@@ -53,10 +53,16 @@ func childLines(t *testing.T, logPath string) []string {
 	return strings.Split(strings.TrimSpace(string(raw)), "\n")
 }
 
-func tinyGoFrame(t *testing.T, target, goos, goarch string, tags []string) goenv.TinyGo {
+// tinyGoFrame is a frame whose merged root's bin/go is goBin.
+func tinyGoFrame(t *testing.T, goBin, target, goos, goarch string, tags []string) goenv.TinyGo {
 	t.Helper()
 	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, "src"), 0o750); err != nil {
+	for _, d := range []string{"src", "bin"} {
+		if err := os.MkdirAll(filepath.Join(root, d), 0o750); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(goBin, filepath.Join(root, "bin", "go")); err != nil {
 		t.Fatal(err)
 	}
 	f, err := goenv.NewTinyGo(target, "0.42.0", "go1.27.2", goos, goarch, "6", root, root, "thumbv6m-unknown-unknown-eabi", tags)
@@ -70,7 +76,7 @@ func tinyGoFrame(t *testing.T, target, goos, goarch string, tags []string) goenv
 // reads the table with go tool nm outside the frame, and reports Go's spelling.
 func TestProbe_TinyGoFrameBuildsWithTinyGo(t *testing.T) {
 	goBin, logPath := frameStubs(t)
-	pico := tinyGoFrame(t, "pico", "linux", "arm", []string{"tinygo", "pico"})
+	pico := tinyGoFrame(t, goBin, "pico", "linux", "arm", []string{"tinygo", "pico"})
 	res, err := New(goBin).WithTinyGo(pico).Probe(context.Background(), t.TempDir())
 	if err != nil {
 		t.Fatalf("Probe: %v", err)
@@ -102,6 +108,32 @@ func TestProbe_TinyGoFrameBuildsWithTinyGo(t *testing.T) {
 		if _, ok := res.BinarySymbols[sym]; !ok {
 			t.Errorf("symbol %s is not in Go's spelling in %v", sym, res.BinarySymbols)
 		}
+	}
+}
+
+// Under a TinyGo frame every go child runs the merged root's own go, never
+// --go-binary, and tinygo's own go is that one too: first on its PATH, pinned.
+func TestProbe_TinyGoFrameRunsTheMergedRootsGo(t *testing.T) {
+	goBin, logPath := frameStubs(t)
+	pico := tinyGoFrame(t, goBin, "pico", "linux", "arm", []string{"tinygo", "pico"})
+	wrap := t.TempDir()
+	envLog := filepath.Join(wrap, "tinygo-env.log")
+	script := "#!/bin/sh\necho \"${PATH%%:*} $GOTOOLCHAIN\" >> " + envLog + "\nexec " + filepath.Join(filepath.Dir(goBin), "tinygo") + " \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(wrap, "tinygo"), []byte(script), 0o700); err != nil { // #nosec G306 -- test stubs must be executable
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", wrap+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	if _, err := New(filepath.Join(t.TempDir(), "not-the-frames-go")).WithTinyGo(pico).Probe(context.Background(), t.TempDir()); err != nil {
+		t.Fatalf("Probe: %v", err)
+	}
+
+	lines := childLines(t, logPath)
+	if len(lines) != 3 || !strings.HasPrefix(lines[0], "go list ") || !strings.HasPrefix(lines[2], "go tool nm ") {
+		t.Errorf("children = %q, want the frame's go to list and read the table", lines)
+	}
+	if got, want := strings.Join(childLines(t, envLog), "\n"), filepath.Join(pico.GOROOT(), "bin")+" local"; got != want {
+		t.Errorf("tinygo build saw %q, want PATH led by %s and GOTOOLCHAIN=local", got, filepath.Join(pico.GOROOT(), "bin"))
 	}
 }
 
@@ -142,8 +174,8 @@ func TestProbe_WasmFramesAreRefusedBeforeAnyChild(t *testing.T) {
 		flag string
 	}{
 		{New(goBin).WithTarget(wasip1), "--target wasip1/wasm"},
-		{New(goBin).WithTinyGo(tinyGoFrame(t, "wasip1", "wasip1", "wasm", []string{"tinygo.wasm"})), "--tinygo wasip1"},
-		{New(goBin).WithTinyGo(tinyGoFrame(t, "wasip2", "linux", "arm", []string{"tinygo.wasm", "wasip2"})), "--tinygo wasip2"},
+		{New(goBin).WithTinyGo(tinyGoFrame(t, goBin, "wasip1", "wasip1", "wasm", []string{"tinygo.wasm"})), "--tinygo wasip1"},
+		{New(goBin).WithTinyGo(tinyGoFrame(t, goBin, "wasip2", "linux", "arm", []string{"tinygo.wasm", "wasip2"})), "--tinygo wasip2"},
 	} {
 		_, perr := tc.p.Probe(context.Background(), t.TempDir())
 		var refusal *WasmArtefactError

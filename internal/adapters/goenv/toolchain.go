@@ -54,10 +54,25 @@ type Toolchains struct {
 	selected string
 	refusal  string
 	settled  bool
+	tinygo   TinyGo
 }
 
 // NewToolchains starts an operation running under the installed toolchain.
 func NewToolchains() *Toolchains { return &Toolchains{} }
+
+// NewToolchainsFor starts an operation under the frame f. Under a declared
+// TinyGo frame it never escalates: its children run the merged root's go, and
+// any other toolchain reads another GOROOT. The toolchain was chosen at the probe.
+func NewToolchainsFor(f TinyGo) *Toolchains { return &Toolchains{tinygo: f} }
+
+// GoBinary is the go command this operation's children run: the TinyGo frame's
+// merged root's own, or "go" from PATH.
+func (t *Toolchains) GoBinary() string {
+	if t.tinygo.Declared() {
+		return t.tinygo.GoBinary()
+	}
+	return "go"
+}
 
 // Apply returns env as this operation's next child must see it.
 //
@@ -94,7 +109,7 @@ func (t *Toolchains) Apply(env []string) []string {
 // depends on which child happened to fail, and the scan surface shows it every
 // time, since the child whose failure is recorded is never the first one run.
 func (t *Toolchains) Escalate(detail string) (retry bool, refusal string) {
-	if !IsToolchainTooOld(detail) {
+	if t.tinygo.Declared() || !IsToolchainTooOld(detail) {
 		return false, ""
 	}
 	if t.settled {
@@ -243,6 +258,17 @@ func OnDiskToolchainsAtLeast(min string) []OnDiskToolchain {
 		out = append(out, tc)
 	}
 	return out
+}
+
+// OnDiskToolchainNamed is the toolchain named exactly name ("go1.27.3") unpacked
+// on this host, searched as OnDiskToolchainsAtLeast searches.
+func OnDiskToolchainNamed(name string) (OnDiskToolchain, bool) {
+	for _, tc := range OnDiskToolchainsAtLeast(strings.TrimPrefix(name, "go")) {
+		if tc.Name == name {
+			return tc, true
+		}
+	}
+	return OnDiskToolchain{}, false
 }
 
 // candidateToolchainRoots lists the directories that might be a GOROOT, in the

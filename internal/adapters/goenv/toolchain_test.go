@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -357,5 +358,54 @@ func TestToolchains_IgnoresAFailureThatIsNotTheToolchainGap(t *testing.T) {
 		if retry || refusal != "" {
 			t.Errorf("Escalate(%q) = (%t, %q), want neither", detail, retry, refusal)
 		}
+	}
+}
+
+// Under a TinyGo frame no child escalates, even with a toolchain on disk that
+// would serve: any other go reads another GOROOT. The children run the frame's go.
+func TestToolchains_NeverEscalatesUnderATinyGoFrame(t *testing.T) {
+	home, _ := isolate(t)
+	fakeSDK(t, filepath.Join(home, "sdk", "go1.30.0"), "go1.30.0")
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "src"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	f, err := goenv.NewTinyGo("pico", "0.42.0", "go1.27.2", "linux", "arm", "6", root, root, "thumbv6m-unknown-unknown-eabi", nil)
+	if err != nil {
+		t.Fatalf("NewTinyGo: %v", err)
+	}
+	tc := goenv.NewToolchainsFor(f)
+	base := []string{"PATH=/usr/bin", "GOTOOLCHAIN=local"}
+
+	retry, refusal := tc.Escalate("go: go.mod requires go >= 1.28 (running go 1.27.2; GOTOOLCHAIN=local)")
+
+	if retry || refusal != "" || tc.Selected() != "" {
+		t.Errorf("Escalate = (%t, %q), selected %q; under a TinyGo frame it escalates to nothing", retry, refusal, tc.Selected())
+	}
+	if got := tc.Apply(base); !reflect.DeepEqual(got, base) {
+		t.Errorf("the environment changed: %v", got)
+	}
+	if want := filepath.Join(root, "bin", "go"); tc.GoBinary() != want {
+		t.Errorf("GoBinary = %s, want the frame's %s", tc.GoBinary(), want)
+	}
+	if got := goenv.NewToolchains().GoBinary(); got != "go" {
+		t.Errorf("with no frame GoBinary = %s, want go from PATH", got)
+	}
+	if got := goenv.NewToolchainsFor(goenv.TinyGo{}).GoBinary(); got != "go" {
+		t.Errorf("with an undeclared frame GoBinary = %s, want go from PATH", got)
+	}
+}
+
+// Only the exact name is offered: a walk resolved under go1.27.3 is not served
+// by go1.27.4.
+func TestOnDiskToolchainNamed_IsExact(t *testing.T) {
+	home, _ := isolate(t)
+	fakeSDK(t, filepath.Join(home, "sdk", "go1.27.4"), "go1.27.4")
+	if tc, ok := goenv.OnDiskToolchainNamed("go1.27.3"); ok {
+		t.Errorf("go1.27.3 was served by %+v", tc)
+	}
+	root := fakeSDK(t, filepath.Join(home, "sdk", "go1.27.3"), "go1.27.3")
+	if tc, ok := goenv.OnDiskToolchainNamed("go1.27.3"); !ok || tc.Root != root {
+		t.Errorf("OnDiskToolchainNamed = %+v, %t, want %s", tc, ok, root)
 	}
 }

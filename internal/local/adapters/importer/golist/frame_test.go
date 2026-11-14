@@ -38,18 +38,24 @@ func loggedChildren(t *testing.T, logPath string) []string {
 }
 
 // The declared frame reaches every go list: its platform and GOROOT in the
-// environment, its tags as -tags right after the subcommand.
+// environment, its tags as -tags right after the subcommand. The go that runs
+// is the merged root's own, never --go-binary.
 func TestBuildModules_ListsUnderTheDeclaredFrame(t *testing.T) {
 	goBin, logPath := listStub(t)
 	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, "src"), 0o750); err != nil {
+	for _, d := range []string{"src", "bin"} {
+		if err := os.MkdirAll(filepath.Join(root, d), 0o750); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(goBin, filepath.Join(root, "bin", "go")); err != nil {
 		t.Fatal(err)
 	}
 	pico, err := goenv.NewTinyGo("pico", "0.42.0", "go1.27.2", "linux", "arm", "6", root, root, "thumbv6m-unknown-unknown-eabi", []string{"tinygo", "pico"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	a := New(goBin).WithTinyGo(pico)
+	a := New(filepath.Join(t.TempDir(), "not-the-frames-go")).WithTinyGo(pico)
 	if _, err := a.BuildModules(context.Background(), t.TempDir()); err != nil {
 		t.Fatalf("BuildModules: %v", err)
 	}

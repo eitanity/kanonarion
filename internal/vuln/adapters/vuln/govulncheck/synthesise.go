@@ -39,8 +39,8 @@ import (
 // one scan child that can be a toolchain DOWNLOAD, which is neither short nor
 // interruptible from the parent alone, and an orphan of it keeps writing into
 // the module cache after the scan that asked for it is gone.
-func toolchainGoVersion(ctx context.Context, dir string, env []string) string {
-	cmd := childproc.CommandContext(ctx, "go", "env", "GOVERSION") // #nosec G204 -- fixed command and literal arguments
+func toolchainGoVersion(ctx context.Context, bin, dir string, env []string) string {
+	cmd := childproc.CommandContext(ctx, bin, "env", "GOVERSION") // #nosec G204 -- "go" or the TinyGo frame's go, literal arguments
 	cmd.Dir = dir
 	cmd.Env = env
 	out, err := cmd.Output()

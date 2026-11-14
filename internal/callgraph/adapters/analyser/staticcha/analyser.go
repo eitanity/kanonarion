@@ -474,7 +474,7 @@ func (a *Analyser) analyseDir(
 	mode analysisMode,
 	goModCache string,
 ) (domain.CallGraphRecord, error) {
-	toolchains := goenv.NewToolchains()
+	toolchains := goenv.NewToolchainsFor(a.tinygo)
 	defer func() {
 		if cerr := toolchains.Close(); cerr != nil {
 			a.logger.WarnContext(ctx, "callgraph_toolchain_cleanup_failed", slog.String("error", cerr.Error()))

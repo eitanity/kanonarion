@@ -90,7 +90,7 @@ func (s *Scanner) ScanProject(ctx context.Context, req ports.ProjectScanRequest)
 	// Stamped on every result this scan returns, faults included: a project's
 	// reachable set is the toolchain's, and it is resolved from the project
 	// directory, so it is asked there rather than wherever this process runs.
-	toolchain := gotoolchain.Version(toolchainGoVersion(ctx, projectDir, env))
+	toolchain := gotoolchain.Version(toolchainGoVersion(ctx, s.goBinary(), projectDir, env))
 	defer func() { res.Toolchain = toolchain }()
 
 	dbArg, advisories, dbCleanup, err := s.prepareDBArg(ctx, req.Snapshot, req.DBDir)
@@ -104,7 +104,7 @@ func (s *Scanner) ScanProject(ctx context.Context, req ports.ProjectScanRequest)
 		return domain.ProjectScanResult{}, err
 	}
 
-	toolchains := goenv.NewToolchains()
+	toolchains := goenv.NewToolchainsFor(s.tinygo)
 	defer func() {
 		if cerr := toolchains.Close(); cerr != nil {
 			s.logger.Warn("vuln-scan: failed to remove the staged toolchain directory", "error", cerr)

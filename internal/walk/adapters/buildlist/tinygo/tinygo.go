@@ -33,13 +33,14 @@ func (e *UnknownTargetError) Error() string {
 	return fmt.Sprintf("tinygo does not know the target %q: run `tinygo targets` for the names it offers", e.Target)
 }
 
-// Probe returns the frame binary defines for target. binary may be empty for
-// "tinygo" on PATH. A success is memoised per resolved binary and target for
-// the process; a failure is not, since it describes the moment.
+// Probe returns the frame binary defines for target, merged from the Go
+// toolchain tc. binary may be empty for "tinygo" on PATH. A success is memoised
+// per resolved binary, target and toolchain for the process; a failure is not,
+// since it describes the moment.
 //
 // info's goroot is never read: it names a root TinyGo does not build with, so
 // GOROOT is taken from where `tinygo list` finds the runtime package.
-func Probe(ctx context.Context, binary, target string) (goenv.TinyGo, error) {
+func Probe(ctx context.Context, binary, target string, tc goenv.OnDiskToolchain) (goenv.TinyGo, error) {
 	if binary == "" {
 		binary = "tinygo"
 	}
@@ -47,9 +48,32 @@ func Probe(ctx context.Context, binary, target string) (goenv.TinyGo, error) {
 	if err != nil {
 		return goenv.TinyGo{}, ErrNotOnPath
 	}
-	key := bin + "\x00" + target
+	if tc.Name == "" || tc.Root == "" {
+		return goenv.TinyGo{}, errors.New("a TinyGo frame is resolved for a Go toolchain, and none was named")
+	}
+	key := strings.Join([]string{bin, target, tc.Name, tc.Root}, "\x00")
 	if f, ok := load(key); ok {
 		return f, nil
+	}
+	f, err := probe(ctx, bin, target, tc)
+	if err != nil {
+		return goenv.TinyGo{}, err
+	}
+	store(key, f)
+	return f, nil
+}
+
+// probe asks tinygo the four questions a frame is made of.
+func probe(ctx context.Context, bin, target string, tc goenv.OnDiskToolchain) (goenv.TinyGo, error) {
+	// TinyGo merges from the go it finds, which follows GOTOOLCHAIN and the
+	// directory it runs in; both are fixed so the frame is tc's wherever this runs.
+	dir, err := os.MkdirTemp("", "kanonarion-tinygo-*")
+	if err != nil {
+		return goenv.TinyGo{}, fmt.Errorf("creating a directory to ask tinygo in: %w", err)
+	}
+	defer func() { _ = os.RemoveAll(dir) }()
+	run := func(ctx context.Context, bin string, args ...string) ([]byte, error) {
+		return runIn(ctx, dir, toolchainEnv(os.Environ(), tc), bin, args...)
 	}
 	versionOut, err := run(ctx, bin, "version")
 	if err != nil {
@@ -101,7 +125,6 @@ func Probe(ctx context.Context, binary, target string) (goenv.TinyGo, error) {
 	if goos, goarch, ok := strings.Cut(host, "/"); ok {
 		f = f.WithHost(goos, goarch)
 	}
-	store(key, f)
 	return f, nil
 }
 
@@ -124,10 +147,26 @@ func Provides(ctx context.Context, pkg string) bool {
 	return err == nil && info.IsDir()
 }
 
+// toolchainEnv runs a tinygo child's go as tc: its bin first on PATH, so no
+// toolchain is downloaded, and GOTOOLCHAIN naming it.
+func toolchainEnv(env []string, tc goenv.OnDiskToolchain) []string {
+	path := filepath.Join(tc.Root, "bin")
+	if prev := os.Getenv("PATH"); prev != "" {
+		path += string(os.PathListSeparator) + prev
+	}
+	return append(env[:len(env):len(env)], "GOTOOLCHAIN="+tc.Name, "PATH="+path)
+}
+
 // run executes one probe. It inherits the caller's environment unchanged: these
 // are TinyGo's own questions about itself, not analysis children.
 func run(ctx context.Context, bin string, args ...string) ([]byte, error) {
+	return runIn(ctx, "", nil, bin, args...)
+}
+
+// runIn is run in dir under env; empty and nil inherit this process's.
+func runIn(ctx context.Context, dir string, env []string, bin string, args ...string) ([]byte, error) {
 	cmd := childproc.CommandContext(ctx, bin, args...) // #nosec G204 -- bin is the resolved tinygo binary, args are literals and the declared target
+	cmd.Dir, cmd.Env = dir, env
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()

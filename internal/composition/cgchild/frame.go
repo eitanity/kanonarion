@@ -47,10 +47,21 @@ func walkFlagSpelling(env walkdomain.BuildEnv) string {
 }
 
 // ProbeTinyGo settles a TinyGo target through the tinygo command rather than
-// `go tool dist list`, which knows no board names. Both refusals are
-// invocation errors: the command or the target name is what has to change.
-func ProbeTinyGo(ctx context.Context, name string) (goenv.Target, goenv.TinyGo, error) {
-	frame, err := tinygo.Probe(ctx, "", name)
+// `go tool dist list`, which knows no board names, merged from the toolchain the
+// tree at dir resolves; an empty dir is a tree with no go.mod. Every refusal is
+// an invocation error: the command, the target name or the host's Go is what
+// has to change.
+func ProbeTinyGo(ctx context.Context, name, goBinary, dir string) (goenv.Target, goenv.TinyGo, error) {
+	tc, err := tinygo.Toolchain(ctx, goBinary, dir)
+	if err != nil {
+		return goenv.Target{}, goenv.TinyGo{}, &exitcode.Error{Code: exitcode.Config, Msg: err.Error()}
+	}
+	return probeFrame(ctx, name, tc)
+}
+
+// probeFrame is ProbeTinyGo for a toolchain already chosen.
+func probeFrame(ctx context.Context, name string, tc goenv.OnDiskToolchain) (goenv.Target, goenv.TinyGo, error) {
+	frame, err := tinygo.Probe(ctx, "", name, tc)
 	if err != nil {
 		return goenv.Target{}, goenv.TinyGo{}, &exitcode.Error{Code: exitcode.Config, Msg: err.Error()}
 	}
@@ -63,10 +74,11 @@ func ProbeTinyGo(ctx context.Context, name string) (goenv.Target, goenv.TinyGo, 
 
 // AdoptBuildEnv declares a walk's frame. A TinyGo frame is asked of the
 // tinygo command again: its GOROOT is this host's, and the walk does not
-// record it.
+// record it. It merges from the toolchain the walk resolved under, so the
+// dependency graphs match the project's; a walk naming none uses the installed Go.
 func AdoptBuildEnv(ctx context.Context, env walkdomain.BuildEnv, declare func(goenv.Target, goenv.TinyGo)) error {
 	if env.TinyGoTarget != "" {
-		pair, frame, err := ProbeTinyGo(ctx, env.TinyGoTarget)
+		pair, frame, err := probeWalkFrame(ctx, env)
 		if err != nil {
 			return err
 		}
@@ -79,6 +91,18 @@ func AdoptBuildEnv(ctx context.Context, env walkdomain.BuildEnv, declare func(go
 	}
 	declare(t, goenv.TinyGo{})
 	return nil
+}
+
+// probeWalkFrame resolves a walk's TinyGo frame for the toolchain it names.
+func probeWalkFrame(ctx context.Context, env walkdomain.BuildEnv) (goenv.Target, goenv.TinyGo, error) {
+	if env.GoVersion == "" {
+		return ProbeTinyGo(ctx, env.TinyGoTarget, "", "")
+	}
+	tc, err := tinygo.NamedToolchain(ctx, "", env.GoVersion)
+	if err != nil {
+		return goenv.Target{}, goenv.TinyGo{}, &exitcode.Error{Code: exitcode.Config, Msg: err.Error()}
+	}
+	return probeFrame(ctx, env.TinyGoTarget, tc)
 }
 
 // adoptWalkFrame makes the walk --from-walk names the extraction frame.

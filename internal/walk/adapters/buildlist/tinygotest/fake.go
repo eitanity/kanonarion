@@ -40,6 +40,7 @@ type Fake struct {
 	// SourceRoot is the TINYGOROOT the fake's env prints: an empty src.
 	SourceRoot string
 	log        string
+	envLog     string
 }
 
 // Install writes the fake into a fresh directory. The script shell-quotes
@@ -72,9 +73,11 @@ func Install(t testing.TB, targets map[string]Target) Fake {
 		})
 	}
 	log := filepath.Join(dir, "calls.log")
+	envLog := filepath.Join(dir, "env.log")
 	script := strings.Join([]string{
 		"#!/bin/sh",
 		`echo "$*" >> ` + log,
+		`echo "$GOTOOLCHAIN ${PATH%%:*} $(pwd -P)" >> ` + envLog,
 		`case "$1" in`,
 		`version) echo "` + VersionLine + `" ;;`,
 		`info) t="${3#-target=}"; f=` + fixtures + `/info-"$t".json`,
@@ -89,13 +92,19 @@ func Install(t testing.TB, targets map[string]Target) Fake {
 	if err := os.WriteFile(bin, []byte(script), 0o700); err != nil { // #nosec G306 -- an executable test fixture
 		t.Fatalf("writing the fake tinygo: %v", err)
 	}
-	return Fake{Dir: dir, Bin: bin, SourceRoot: sourceRoot, log: log}
+	return Fake{Dir: dir, Bin: bin, SourceRoot: sourceRoot, log: log, envLog: envLog}
 }
 
 // Calls is every invocation the fake has answered, one argument line each.
-func (f Fake) Calls(t testing.TB) []string {
+func (f Fake) Calls(t testing.TB) []string { return readLines(t, f.log) }
+
+// Envs is, per invocation, the GOTOOLCHAIN it saw, its first PATH entry and its
+// working directory, space-separated.
+func (f Fake) Envs(t testing.TB) []string { return readLines(t, f.envLog) }
+
+func readLines(t testing.TB, path string) []string {
 	t.Helper()
-	b, err := os.ReadFile(f.log)
+	b, err := os.ReadFile(path) // #nosec G304 -- one of the two logs this fake writes
 	if os.IsNotExist(err) {
 		return nil
 	}

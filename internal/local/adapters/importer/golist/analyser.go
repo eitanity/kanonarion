@@ -48,7 +48,11 @@ func (a *Analyser) WithTinyGo(f goenv.TinyGo) *Analyser {
 	return a
 }
 
+// goBin is the go every list runs: under a TinyGo frame the merged root's own.
 func (a *Analyser) goBin() string {
+	if a.tinygo.Declared() {
+		return a.tinygo.GoBinary()
+	}
 	if a.goBinary == "" {
 		return "go"
 	}
@@ -70,7 +74,7 @@ func listEnv(root string) []string { return goenv.Worktree(os.Environ(), root) }
 // it needed. goenv.Toolchains decides that once and this runs the child again
 // under its answer.
 func (a *Analyser) list(ctx context.Context, root string, args ...string) ([]byte, error) {
-	toolchains := goenv.NewToolchains()
+	toolchains := goenv.NewToolchainsFor(a.tinygo)
 	defer func() { _ = toolchains.Close() }()
 
 	// TinyGo's tags go after the subcommand, never in GOFLAGS, as the call-graph

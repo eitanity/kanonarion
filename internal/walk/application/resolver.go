@@ -96,7 +96,9 @@ import (
 // require closure rather than the set that compiles, and a cached 1.10.0 walk
 // of that kind is sealed as succeeded, so those are re-resolved rather than
 // served as complete.
-const PipelineVersion = "1.11.0"
+// 1.12.0: under a TinyGo frame the closure is listed by the merged GOROOT's own
+// go, so a tree whose go line names a newer Go records TinyGo's packages as TinyGo's.
+const PipelineVersion = "1.12.0"
 
 // GraphResolver resolves the transitive dependency graph for a target module.
 // It is safe for concurrent use once constructed.

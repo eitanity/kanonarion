@@ -68,6 +68,15 @@ func resolvingEnv(env []string) []string {
 	return declaredTinyGo.Apply(declaredTarget.Apply(env))
 }
 
+// resolvingGo is the go a resolving child runs: under a declared TinyGo frame
+// the merged root's own, otherwise "go" from PATH.
+func resolvingGo() string {
+	if declaredTinyGo.Declared() {
+		return declaredTinyGo.GoBinary()
+	}
+	return "go"
+}
+
 // withTinyGoTags passes the declared TinyGo tag set to a go list child, right
 // after "list". Other children take the environment alone.
 func withTinyGoTags(args []string) []string {
@@ -174,7 +183,7 @@ func resolveBuildTarget(ctx context.Context, f buildTargetFlags, goBinary, dir s
 		return err
 	}
 	if f.tinygo != "" {
-		return resolveTinyGoTarget(ctx, f.tinygo)
+		return resolveTinyGoTarget(ctx, f.tinygo, goBinary, dir)
 	}
 	supported, offered, err := gotoolchain.New(goBinary, nil).Supports(ctx, t)
 	if err != nil {
@@ -188,9 +197,9 @@ func resolveBuildTarget(ctx context.Context, f buildTargetFlags, goBinary, dir s
 }
 
 // resolveTinyGoTarget settles a --tinygo declaration through the tinygo
-// command, as the call-graph child does.
-func resolveTinyGoTarget(ctx context.Context, name string) error {
-	pair, frame, err := cgchild.ProbeTinyGo(ctx, name)
+// command, as the call-graph child does, for the toolchain the tree at dir resolves.
+func resolveTinyGoTarget(ctx context.Context, name, goBinary, dir string) error {
+	pair, frame, err := cgchild.ProbeTinyGo(ctx, name, goBinary, dir)
 	if err != nil {
 		return asExitError(err)
 	}

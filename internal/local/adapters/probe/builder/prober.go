@@ -115,7 +115,11 @@ type Prober struct {
 // New constructs a Prober. goBinary may be empty (uses "go" from PATH).
 func New(goBinary string) *Prober { return &Prober{goBinary: goBinary} }
 
+// goBin is the go every child runs: under a TinyGo frame the merged root's own.
 func (p *Prober) goBin() string {
+	if p.tinygo.Declared() {
+		return p.tinygo.GoBinary()
+	}
 	if p.goBinary == "" {
 		return "go"
 	}
@@ -206,7 +210,7 @@ func (p *Prober) build(ctx context.Context, tc *goenv.Toolchains, root, pkg, out
 	if p.tinygo.Declared() {
 		// The target flag is tinygo's whole frame: its own GOROOT in the
 		// environment stops tinygo resolving the standard library.
-		_, detail, err := runChild(ctx, tc, root, "tinygo", noFrame, combinedCapture,
+		_, detail, err := runChild(ctx, tc, root, "tinygo", p.tinygo.ApplyGo, combinedCapture,
 			"build", "-target="+p.tinygo.Target(), "-opt=0", "-o", outBin, pkg)
 		return detail, err
 	}
@@ -228,7 +232,7 @@ func (p *Prober) Probe(ctx context.Context, root string) (ports.SymbolProbeResul
 	if p.buildsWasm() {
 		return ports.SymbolProbeResult{}, &WasmArtefactError{Flag: p.frameFlag()}
 	}
-	toolchains := goenv.NewToolchains()
+	toolchains := goenv.NewToolchainsFor(p.tinygo)
 	defer func() { _ = toolchains.Close() }()
 
 	mainPkgs, err := p.findMainPackages(ctx, toolchains, root)

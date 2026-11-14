@@ -229,7 +229,7 @@ const readPackageModulesFmt = "{{if and (not .Standard) .Module}}{{.Module.Path}
 // dies without warning does not leave it resolving a build nobody is waiting
 // for.
 func readPackageModules(ctx context.Context, pattern string) ([]string, error) {
-	cmd := childproc.CommandContext(ctx, "go", withTinyGoTags([]string{"list", "-deps", "-f", // #nosec G204 -- pattern is a Go package path from a developer CLI flag
+	cmd := childproc.CommandContext(ctx, resolvingGo(), withTinyGoTags([]string{"list", "-deps", "-f", // #nosec G204 -- pattern is a Go package path from a developer CLI flag
 		readPackageModulesFmt + goListIgnoredFmt, pattern})...)
 	// The allow-list is the import closure of one package, and the Go toolchain
 	// resolves that against the build target. It is stated here rather than
@@ -584,7 +584,7 @@ func goListDepsArgs(patterns []string, ts testScope) []string {
 // that was killed rather than asked to stop, and went on holding the memory
 // that got it killed.
 func runGoList(ctx context.Context, dir string, args []string) ([]byte, error) {
-	cmd := childproc.CommandContext(ctx, "go", withTinyGoTags(args)...) // #nosec G204 -- args are ./..., a Go package pattern from a developer CLI flag, go.mod tool directive package paths, or the fixed `list -m all`
+	cmd := childproc.CommandContext(ctx, resolvingGo(), withTinyGoTags(args)...) // #nosec G204 -- args are ./..., a Go package pattern from a developer CLI flag, go.mod tool directive package paths, or the fixed `list -m all`
 	cmd.Dir = dir
 	// The scope is platform-specific: build constraints select files per target,
 	// so `go list -deps` over one tree answers differently for each. The pair is

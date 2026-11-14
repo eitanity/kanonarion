@@ -46,7 +46,7 @@ func (s *Scanner) Scan(ctx context.Context, req ports.ScanRequest) (rec domain.V
 	// The environment above pins the toolchain so no scan child can download one,
 	// which also refuses a toolchain already unpacked on this host. One decision
 	// covers every child of this scan; see runGovulncheck.
-	toolchains := goenv.NewToolchains()
+	toolchains := goenv.NewToolchainsFor(s.tinygo)
 	defer func() {
 		if cerr := toolchains.Close(); cerr != nil {
 			s.logger.Warn("vuln-scan: failed to remove the staged toolchain directory", "error", cerr)
@@ -59,7 +59,7 @@ func (s *Scanner) Scan(ctx context.Context, req ports.ScanRequest) (rec domain.V
 	// written before the field existed. It is asked in the directory the scan will
 	// run in, under the scan's own environment, so it names the toolchain that
 	// will run rather than the one this process was compiled by.
-	toolchainVersion := toolchainGoVersion(ctx, tmpDir, env)
+	toolchainVersion := toolchainGoVersion(ctx, toolchains.GoBinary(), tmpDir, env)
 	defer func() { rec.Toolchain = gotoolchain.Version(toolchainVersion) }()
 
 	scanDir, fault, err := s.prepareScanDir(ctx, tmpDir, coord, moduleSource, env, req.BuildList)
@@ -329,7 +329,7 @@ func (s *Scanner) prepareScanDir(
 		// real: the module is analysable, and treating it as permanently
 		// unscannable would leave its advisories matched by coordinate alone,
 		// with no reachability, for a condition kanonarion can lift.
-		root, skipped, werr := writeSynthesisedGoMod(tmpDir, coord, toolchainGoVersion(ctx, scanDir, env), buildList)
+		root, skipped, werr := writeSynthesisedGoMod(tmpDir, coord, toolchainGoVersion(ctx, s.goBinary(), scanDir, env), buildList)
 		if len(skipped) > 0 {
 			// The require set was assembled from less than the whole module. Name
 			// the files so a later unresolved-package failure is attributable here

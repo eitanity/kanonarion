@@ -53,8 +53,24 @@ func newMergedTree(t *testing.T) mergedTree {
 	link(filepath.Join(m.tinygo, "src", "sync", "mutex.go"), filepath.Join(m.merged, "src", "sync", "mutex.go"))
 	link(filepath.Join(m.golang, "src", "sync", "once.go"), filepath.Join(m.merged, "src", "sync", "once.go"))
 	link(filepath.Join(m.golang, "src", "sync", "pool.go"), filepath.Join(m.merged, "src", "sync", "pool.go"))
+	if err := os.MkdirAll(filepath.Join(m.golang, "bin"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	link(filepath.Join(m.golang, "bin"), filepath.Join(m.merged, "bin"))
 	return m
 }
+
+// goStub writes script as Go's own go, which the merged root's bin links to.
+func (m mergedTree) goStub(t *testing.T, script string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(m.golang, "bin", "go"), []byte(script), 0o700); err != nil { // #nosec G306 -- a test stand-in that must be executable
+		t.Fatal(err)
+	}
+}
+
+// notTheFramesGo is a --go-binary that does not exist: under a TinyGo frame the
+// merged root's go runs instead.
+func notTheFramesGo(t *testing.T) string { return filepath.Join(t.TempDir(), "go") }
 
 func (m mergedTree) listing(t *testing.T, pkgs ...listedStdPackage) []byte {
 	t.Helper()
@@ -199,7 +215,8 @@ func TestAttributeStandard_CustodyRefusesAFileItCannotRead(t *testing.T) {
 }
 
 // TestResolve_AListingThatFailsFailsTheBuildList: a closure nobody could list
-// yields no build list, never one with the split silently missing.
+// yields no build list, never one with the split silently missing. Every child
+// runs the merged root's own go, so the listing's refusal is the one reported.
 func TestResolve_AListingThatFailsFailsTheBuildList(t *testing.T) {
 	m := newMergedTree(t)
 	frame, err := goenv.NewTinyGo("pico", "0.42.0", "go1.27.2", "linux", "arm", "6", m.merged, m.tinygo,
@@ -208,14 +225,10 @@ func TestResolve_AListingThatFailsFailsTheBuildList(t *testing.T) {
 		t.Fatal(err)
 	}
 	dir := t.TempDir()
-	bin := filepath.Join(dir, "go")
-	script := "#!/bin/sh\n" +
-		`case "$*" in *-deps*) echo 'package machine is not in std' >&2; exit 1 ;; list*) echo '{"Path":"example.com/frame","Main":true}' ;; env*) printf 'go1.27.2\nlinux\narm\n' ;; esac` + "\n"
-	if werr := os.WriteFile(bin, []byte(script), 0o700); werr != nil { // #nosec G306 -- a test stand-in that must be executable
-		t.Fatal(werr)
-	}
+	m.goStub(t, "#!/bin/sh\n"+
+		`case "$*" in *-deps*) echo 'package machine is not in std' >&2; exit 1 ;; list*) echo '{"Path":"example.com/frame","Main":true}' ;; env*) printf 'go1.27.2\nlinux\narm\n' ;; esac`+"\n")
 
-	_, err = New(bin, nil).WithTinyGo(frame).Resolve(context.Background(), dir)
+	_, err = New(notTheFramesGo(t), nil).WithTinyGo(frame).Resolve(context.Background(), dir)
 
 	if err == nil {
 		t.Fatal("Resolve succeeded although the package listing failed")
@@ -240,14 +253,10 @@ func TestResolve_GoRootThatCannotBeAskedFailsTheBuildList(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			dir := t.TempDir()
-			bin := filepath.Join(dir, "go")
-			script := "#!/bin/sh\n" +
-				`case "$*" in *-deps*) ;; list*) echo '{"Path":"example.com/frame","Main":true}' ;; ` + envBranch +
-				` env*) printf 'go1.27.2\nlinux\narm\n' ;; esac` + "\n"
-			if err := os.WriteFile(bin, []byte(script), 0o700); err != nil { // #nosec G306 -- a test stand-in that must be executable
-				t.Fatal(err)
-			}
-			if _, err := New(bin, nil).WithTinyGo(frame).Resolve(context.Background(), dir); err == nil ||
+			m.goStub(t, "#!/bin/sh\n"+
+				`case "$*" in *-deps*) ;; list*) echo '{"Path":"example.com/frame","Main":true}' ;; `+envBranch+
+				` env*) printf 'go1.27.2\nlinux\narm\n' ;; esac`+"\n")
+			if _, err := New(notTheFramesGo(t), nil).WithTinyGo(frame).Resolve(context.Background(), dir); err == nil ||
 				!strings.Contains(err.Error(), "GOROOT") {
 				t.Errorf("err = %v, want the GOROOT probe named", err)
 			}

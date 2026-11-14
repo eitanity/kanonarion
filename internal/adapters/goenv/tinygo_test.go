@@ -95,6 +95,12 @@ func TestTinyGoApply_UndeclaredLeavesTheEnvironment(t *testing.T) {
 	if got := f.Apply(base); !reflect.DeepEqual(got, base) {
 		t.Errorf("an undeclared frame changed the environment: %v", got)
 	}
+	if got := f.ApplyGo(base); !reflect.DeepEqual(got, base) {
+		t.Errorf("an undeclared frame pinned a go: %v", got)
+	}
+	if f.GoBinary() != "" {
+		t.Errorf("an undeclared frame names the go %q", f.GoBinary())
+	}
 	if f.Declared() {
 		t.Error("the zero value reports itself as a declaration")
 	}
@@ -189,5 +195,30 @@ func TestTinyGoBuildsWasm(t *testing.T) {
 		if got := f.BuildsWasm(); got != tc.want {
 			t.Errorf("%s: BuildsWasm = %v, want %v", tc.target, got, tc.want)
 		}
+	}
+}
+
+// Every go child under the frame runs the merged root's own go, never switching,
+// and a grandchild that runs go from PATH finds it first.
+func TestTinyGoApply_PinsTheMergedRootsGo(t *testing.T) {
+	root := tinyGoRoot(t)
+	f, err := goenv.NewTinyGo("pico", "0.42.0", "go1.27.2", "linux", "arm", "6", root, root, "thumbv6m-unknown-unknown-eabi", nil)
+	if err != nil {
+		t.Fatalf("NewTinyGo: %v", err)
+	}
+	bin := filepath.Join(root, "bin")
+
+	if want := filepath.Join(bin, "go"); f.GoBinary() != want {
+		t.Errorf("GoBinary = %s, want %s", f.GoBinary(), want)
+	}
+	got := f.Apply([]string{"PATH=/elsewhere", "GOTOOLCHAIN=auto", "PATH=/usr/bin"})
+	if v := lastEnvValue(got, "GOTOOLCHAIN"); v != "local" {
+		t.Errorf("the child sees GOTOOLCHAIN=%q, want local", v)
+	}
+	if v := lastEnvValue(got, "PATH"); v != bin+string(os.PathListSeparator)+"/usr/bin" {
+		t.Errorf("the child sees PATH=%q, want %s first before the inherited one", v, bin)
+	}
+	if v := lastEnvValue(f.ApplyGo(nil), "PATH"); v != bin {
+		t.Errorf("with no PATH inherited the child sees PATH=%q, want %s", v, bin)
 	}
 }

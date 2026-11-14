@@ -25,14 +25,21 @@ import (
 // chose — on the one flag whose entire purpose is choosing the toolchain. A run
 // that cannot honour it must say so; the caller files that as an environment
 // failure, which is what it is.
+//
+// Under a TinyGo frame the chosen binary is the merged root's own go, since
+// go/packages finds go on this process's PATH, not the child's.
 func (a *Analyser) setupGoEnv(ctx context.Context) (func(), error) {
-	if a.goBinary == "" {
+	goBinary := a.goBinary
+	if a.tinygo.Declared() {
+		goBinary = a.tinygo.GoBinary()
+	}
+	if goBinary == "" {
 		return func() {}, nil
 	}
 
 	binDir, err := os.MkdirTemp("", "kanonarion-bin-*")
 	if err != nil {
-		return nil, fmt.Errorf("creating a directory to stage %s in: %w", a.goBinary, err)
+		return nil, fmt.Errorf("creating a directory to stage %s in: %w", goBinary, err)
 	}
 	cleanupBin := func() {
 		if rerr := os.RemoveAll(binDir); rerr != nil {
@@ -42,9 +49,9 @@ func (a *Analyser) setupGoEnv(ctx context.Context) (func(), error) {
 			)
 		}
 	}
-	if err := os.Symlink(a.goBinary, filepath.Join(binDir, "go")); err != nil {
+	if err := os.Symlink(goBinary, filepath.Join(binDir, "go")); err != nil {
 		cleanupBin()
-		return nil, fmt.Errorf("staging %s as the analysis toolchain: %w", a.goBinary, err)
+		return nil, fmt.Errorf("staging %s as the analysis toolchain: %w", goBinary, err)
 	}
 
 	oldPath := os.Getenv("PATH")

@@ -139,8 +139,56 @@ func (a *Analyser) loadAndBuildSSA(ctx context.Context, fset *token.FileSet, tem
 	// _test.go files), and the external test package. The synthetic test-binary
 	// main is skipped — it is generated code, and its package main would
 	// otherwise make every library look like an application to the rooting rule.
-	built := registerTargetPackages(&res, loaded, markFailed)
-	built = append(built, registerTinyGoPackages(&res, tinyGoPkgs, markFailed)...)
+	//
+	// A Build that panics leaves its builder's shared tasks undone, and a later build
+	// sharing an instance or wrapper with it waits forever. The program is rebuilt
+	// with that package type-only, which keeps every other package's bodies.
+	typeOnly := map[string]bool{}
+	loadErrs := len(res.LoadErrs)
+	var panics []string
+	for {
+		builtPaths, panicked := a.registerAndBuild(ctx, coord, &res, loaded, tinyGoPkgs, markFailed, typeOnly)
+		if panicked == "" {
+			res.LoadErrs = append(res.LoadErrs, panics...)
+			// Which modules other than this one had their packages built here. The target
+			// set was selected by path prefix and Go module paths nest, so this is
+			// routinely non-empty; it is taken from the packages that actually BUILT,
+			// because the claim being recorded is about bodies and not about selection.
+			res.ForeignModulesBuilt = res.Membership.foreignModules(builtPaths)
+			break
+		}
+		panics = append(panics, res.LoadErrs[len(res.LoadErrs)-1])
+		if typeOnly[panicked] {
+			// No progress is possible: keep what built rather than loop.
+			res.LoadErrs = append(res.LoadErrs[:loadErrs], panics...)
+			break
+		}
+		typeOnly[panicked] = true
+		res.Prog = ssa.NewProgram(fset, ssa.BuilderMode(0))
+		res.TestPkgs, res.TargetPkgs, res.BodiesBuilt = map[*ssa.Package]bool{}, nil, 0
+		res.LoadErrs = res.LoadErrs[:loadErrs]
+	}
+	// The ASTs and type info are held only until the packages that need them are
+	// built; ssa keeps its own references while building and drops them after.
+	for _, p := range append(loaded, tinyGoPkgs...) {
+		p.Syntax = nil
+		p.TypesInfo = nil
+	}
+	runtime.GC()
+	a.logMem(ctx, "ssa_built")
+	a.step(coord, fmt.Sprintf("SSA built (%d packages with bodies)", res.BodiesBuilt))
+
+	recordFailedPackages(&res, failedSet)
+
+	return res, nil
+}
+
+// registerAndBuild registers every package with res.Prog and builds the ones
+// with syntax, returning the paths that built and the package whose Build
+// panicked, if one did; typeOnly names the packages registered without bodies.
+func (a *Analyser) registerAndBuild(ctx context.Context, coord coordinate.ModuleCoordinate, res *ssaBuildResult, loaded, tinyGoPkgs []*packages.Package, markFailed func(string), typeOnly map[string]bool) ([]string, string) {
+	built := registerTargetPackages(res, loaded, markFailed, typeOnly)
+	built = append(built, registerTinyGoPackages(res, tinyGoPkgs, markFailed, typeOnly)...)
 
 	// Every import the loader could not resolve because the module providing it is
 	// not on this host and the analysis is not permitted to fetch one. It is read
@@ -189,25 +237,7 @@ func (a *Analyser) loadAndBuildSSA(ctx context.Context, fset *token.FileSet, tem
 	// that difference is only knowable here: downstream, a program with registered
 	// packages and no built bodies is indistinguishable from one built from
 	// metadata. Recording it is what gives CompletenessTypeOnly a producer.
-	builtPaths := a.buildSSAPackages(coord, built, &res, markFailed)
-	// Which modules other than this one had their packages built here. The target
-	// set was selected by path prefix and Go module paths nest, so this is
-	// routinely non-empty; it is taken from the packages that actually BUILT,
-	// because the claim being recorded is about bodies and not about selection.
-	res.ForeignModulesBuilt = res.Membership.foreignModules(builtPaths)
-	// The ASTs and type info are held only until the packages that need them are
-	// built; ssa keeps its own references while building and drops them after.
-	for _, p := range append(loaded, tinyGoPkgs...) {
-		p.Syntax = nil
-		p.TypesInfo = nil
-	}
-	runtime.GC()
-	a.logMem(ctx, "ssa_built")
-	a.step(coord, fmt.Sprintf("SSA built (%d packages with bodies)", res.BodiesBuilt))
-
-	recordFailedPackages(&res, failedSet)
-
-	return res, nil
+	return a.buildSSAPackages(coord, built, res, markFailed)
 }
 
 // readDirectives reads the export directives and, under a TinyGo frame, the
@@ -258,8 +288,9 @@ func (a *Analyser) loadTinyGo(ctx context.Context, coord coordinate.ModuleCoordi
 }
 
 // registerTargetPackages registers every loaded target package from syntax,
-// returning the packages created for it.
-func registerTargetPackages(res *ssaBuildResult, loaded []*packages.Package, markFailed func(string)) []*ssa.Package {
+// returning the packages created for it. A package in typeOnly is registered
+// from its types alone, with no bodies to build.
+func registerTargetPackages(res *ssaBuildResult, loaded []*packages.Package, markFailed func(string), typeOnly map[string]bool) []*ssa.Package {
 	var built []*ssa.Package
 	for _, p := range loaded {
 		if isSyntheticTestMain(p) {
@@ -284,13 +315,19 @@ func registerTargetPackages(res *ssaBuildResult, loaded []*packages.Package, mar
 		// A test variant is registered but not importable: production code never
 		// imports it, and leaving the importable slot to the production package
 		// keeps ImportedPackage answering with the package consumers see.
-		ssaPkg, cerr := createSSAPackageSafe(res.Prog, p, !testPkg)
-		if cerr != nil {
-			res.LoadErrs = append(res.LoadErrs, fmt.Sprintf("SSA package creation panic for %s: %v", p.PkgPath, cerr))
-			markFailed(p.PkgPath)
-			continue
+		var ssaPkg *ssa.Package
+		if typeOnly[p.PkgPath] {
+			ssaPkg = res.Prog.CreatePackage(p.Types, nil, nil, !testPkg)
+		} else {
+			var cerr error
+			ssaPkg, cerr = createSSAPackageSafe(res.Prog, p, !testPkg)
+			if cerr != nil {
+				res.LoadErrs = append(res.LoadErrs, fmt.Sprintf("SSA package creation panic for %s: %v", p.PkgPath, cerr))
+				markFailed(p.PkgPath)
+				continue
+			}
+			built = append(built, ssaPkg)
 		}
-		built = append(built, ssaPkg)
 		if testPkg {
 			res.TestPkgs[ssaPkg] = true
 		} else {
@@ -303,7 +340,7 @@ func registerTargetPackages(res *ssaBuildResult, loaded []*packages.Package, mar
 // registerTinyGoPackages registers TinyGo's own packages from syntax, so their
 // functions are built with bodies like the module's. They are analysed, so a
 // package that failed to type-check makes the record Partial as a target does.
-func registerTinyGoPackages(res *ssaBuildResult, pkgs []*packages.Package, markFailed func(string)) []*ssa.Package {
+func registerTinyGoPackages(res *ssaBuildResult, pkgs []*packages.Package, markFailed func(string), typeOnly map[string]bool) []*ssa.Package {
 	var built []*ssa.Package
 	for _, p := range pkgs {
 		for _, e := range p.Errors {
@@ -313,6 +350,10 @@ func registerTinyGoPackages(res *ssaBuildResult, pkgs []*packages.Package, markF
 			markFailed(p.PkgPath)
 		}
 		if p.Types == nil || res.Prog.Package(p.Types) != nil {
+			continue
+		}
+		if typeOnly[p.PkgPath] {
+			res.Prog.CreatePackage(p.Types, nil, nil, true)
 			continue
 		}
 		ssaPkg, cerr := createSSAPackageSafe(res.Prog, p, true)
@@ -337,8 +378,9 @@ func (a *Analyser) tinyGoConfig(coord coordinate.ModuleCoordinate, fset *token.F
 }
 
 // buildSSAPackages builds each registered target package's bodies, returning
-// the paths of those that built.
-func (a *Analyser) buildSSAPackages(coord coordinate.ModuleCoordinate, built []*ssa.Package, res *ssaBuildResult, markFailed func(string)) []string {
+// the paths of those that built. It stops at a Build that panics and returns
+// that package's path: the program it leaves cannot be built further.
+func (a *Analyser) buildSSAPackages(coord coordinate.ModuleCoordinate, built []*ssa.Package, res *ssaBuildResult, markFailed func(string)) ([]string, string) {
 	var builtPaths []string
 	for i, ssaPkg := range built {
 		// Progress inside the phase, not only at its end: SSA construction over a
@@ -352,16 +394,16 @@ func (a *Analyser) buildSSAPackages(coord coordinate.ModuleCoordinate, built []*
 			if ssaPkg.Pkg != nil {
 				path = ssaPkg.Pkg.Path()
 			}
-			res.LoadErrs = append(res.LoadErrs, fmt.Sprintf("SSA construction panic for %s: %v", path, berr))
+			res.LoadErrs = append(res.LoadErrs, fmt.Sprintf("SSA construction panic for %s: %v; it is analysed without its bodies", path, berr))
 			markFailed(path)
-			continue
+			return builtPaths, path
 		}
 		res.BodiesBuilt++
 		if ssaPkg.Pkg != nil {
 			builtPaths = append(builtPaths, ssaPkg.Pkg.Path())
 		}
 	}
-	return builtPaths
+	return builtPaths, ""
 }
 
 // recordFailedPackages states the failed target packages on res, sorted.

@@ -38,12 +38,12 @@ func (r *Resolver) attributeTinyGo(ctx context.Context, dir string) (standardSpl
 	return split, nil
 }
 
-// goRoot is Go's own GOROOT, asked without the TinyGo frame, whose GOROOT is the
-// merged tree that links into this one.
+// goRoot is Go's own GOROOT, asked of the merged root's go without the frame's
+// GOROOT, so it names the tree the merged one links into.
 func (r *Resolver) goRoot(ctx context.Context, dir string) (string, error) {
 	cmd := childproc.CommandContext(ctx, r.goBin(), "env", "GOROOT") // #nosec G204 -- binary path is either "go" (hardcoded) or caller-supplied and trusted
 	cmd.Dir = dir
-	cmd.Env = r.target.Apply(os.Environ())
+	cmd.Env = append(r.target.Apply(os.Environ()), "GOTOOLCHAIN=local")
 	out, err := cmd.Output()
 	if err != nil {
 		return "", fmt.Errorf("go env GOROOT, to tell Go's standard library from TinyGo's: %w", err)

@@ -114,7 +114,7 @@ func TestTinyGoPackage_FetchedRecordRemedy(t *testing.T) {
 // A declared TinyGo frame is never sent to --tinygo.
 func TestTinyGoPackage_NotUnderADeclaredTinyGoFrame(t *testing.T) {
 	installFakeTinyGo(t)
-	if err := resolveTinyGoTarget(context.Background(), "pico"); err != nil {
+	if err := resolveTinyGoTarget(context.Background(), "pico", "", ""); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { declare(goenv.Target{}, goenv.TinyGo{}); invokedCmd = nil })
@@ -255,5 +255,37 @@ func TestSBOMPackage_AMissingPackageFailsOnlyInGosWords(t *testing.T) {
 	_, stderr, code := runTinyGoCLI(t, t.TempDir(), "sbom", "--package", ".")
 	if code != ExitConfig || strings.Contains(stderr, "nil pointer evaluating") || !strings.Contains(stderr, "package machine is not in std") {
 		t.Errorf("sbom --package . (exit %d):\n%s", code, stderr)
+	}
+}
+
+// Under a declared TinyGo frame a resolving go list runs the merged root's own
+// go; with none it runs go from PATH.
+func TestRunGoList_UnderATinyGoFrameRunsTheMergedRootsGo(t *testing.T) {
+	root := writeTree(t, map[string]string{
+		"src/runtime/x.go": "package runtime\n",
+		"bin/go":           "#!/bin/sh\necho \"frame go $GOTOOLCHAIN\"\n",
+	})
+	if err := os.Chmod(filepath.Join(root, "bin", "go"), 0o700); err != nil { // #nosec G302 -- a stand-in go must be executable
+		t.Fatal(err)
+	}
+	frame, err := goenv.NewTinyGo("pico", "0.42.0", "go1.27.2", "linux", "arm", "6", root, root, "thumbv6m-unknown-unknown-eabi", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pair, err := goenv.NewTarget("linux", "arm")
+	if err != nil {
+		t.Fatal(err)
+	}
+	declare(pair, frame)
+	t.Cleanup(func() { declare(goenv.Target{}, goenv.TinyGo{}) })
+
+	out, err := runGoList(context.Background(), t.TempDir(), []string{"list", "-m"})
+
+	if err != nil || strings.TrimSpace(string(out)) != "frame go local" {
+		t.Errorf("runGoList = %q, %v; want the frame's go, pinned", out, err)
+	}
+	declare(goenv.Target{}, goenv.TinyGo{})
+	if got := resolvingGo(); got != "go" {
+		t.Errorf("with no frame resolvingGo = %s, want go from PATH", got)
 	}
 }

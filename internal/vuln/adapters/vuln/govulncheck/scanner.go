@@ -56,6 +56,15 @@ func (s *Scanner) WithTinyGo(f goenv.TinyGo) *Scanner {
 	return &copy
 }
 
+// goBinary is the go this scanner's own children run: under a TinyGo frame the
+// merged root's own, otherwise "go" from PATH.
+func (s *Scanner) goBinary() string {
+	if s.tinygo.Declared() {
+		return s.tinygo.GoBinary()
+	}
+	return "go"
+}
+
 // sourceArgs is a source-mode govulncheck invocation over ./..., carrying the
 // TinyGo tag set when one was declared.
 func (s *Scanner) sourceArgs(dbArg string) []string {

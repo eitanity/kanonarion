@@ -61,7 +61,11 @@ func TestTinyGoOracle_EveryLinkedFunctionIsReachable(t *testing.T) {
 			dir := t.TempDir()
 			_, file, _, _ := runtime.Caller(0)
 			copyFixture(t, filepath.Join(filepath.Dir(file), "testdata", "tinygooracle", c.program), dir)
-			frame, err := tinygo.Probe(ctx, "", c.target)
+			tc, err := tinygo.Toolchain(ctx, "", dir)
+			if err != nil {
+				t.Fatalf("resolving the toolchain: %v", err)
+			}
+			frame, err := tinygo.Probe(ctx, "", c.target, tc)
 			if err != nil {
 				t.Fatalf("probing %s: %v", c.target, err)
 			}

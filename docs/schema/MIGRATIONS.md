@@ -170,6 +170,30 @@ values there, as they did when `verdict` and `reachability_state` gained theirs)
   a record that names no frame. `callgraph-show` text gains a `frame:` line and
   `--history` a `frame:` line per generation, both absent on such a record.
 
+## Vulnerability record: pipeline `v26` → `v27`
+
+**Record content change; no store migration; no schema-version bump.** Under
+`--tinygo`, every `go` child of a scan, and govulncheck's own loader, runs the
+`go` of TinyGo's merged `GOROOT` with `GOTOOLCHAIN=local`. A project whose `go`
+line names a newer Go than the installed one was scanned by that newer Go
+against its own `GOROOT`, so a closure TinyGo builds with C read as one without:
+its findings read `fidelity: source` where they now read `module`. Unchanged
+otherwise, and unchanged for every scan without `--tinygo`.
+
+Records are keyed by `(module, version, pipeline_version, snapshot, frame)`:
+`v26` rows stay, are not served for a `v27` question, and remain readable in the
+ledger. Cost is one re-scan per coordinate.
+
+## Walk record: pipeline `1.11.0` → `1.12.0`, no migration
+
+**Record content change; no DDL and no store migration.** Under `--tinygo`, the
+walk lists the closure with the `go` of TinyGo's merged `GOROOT`, merged from the
+Go the project's `go` line resolves to on this host. A project whose `go` line
+names a newer Go than the installed one recorded every standard package as Go's
+and none as TinyGo's; it now records the split TinyGo builds. Unchanged for
+every walk without `--tinygo`. Rows at `1.11.0` stay and are re-resolved rather
+than read.
+
 ## Call graph record: pipeline `0.14.0` → `0.15.0` - template text in a package var or an embedded file
 
 **Record content change; no store migration; no schema-version bump.** A
@@ -177,7 +201,12 @@ template `Execute` or `ExecuteTemplate` edge's `lookup_name` now also reads the
 text `Parse` is given as an unexported package-level var whose only store
 outside test code is a constant, or an unexported `//go:embed` `string` or
 `[]byte` var naming one file. A
-`0.14.0` record left such an edge's `lookup_name` empty. Unchanged otherwise.
+`0.14.0` record left such an edge's `lookup_name` empty. Under `--tinygo`, a
+tree whose `go` line names a newer Go than the installed one is loaded with the
+`go` of TinyGo's merged `GOROOT`, so its graph holds TinyGo's `reflect` and
+`runtime` rather than Go's. A package whose SSA construction panics is now kept
+without its bodies and the rest of the program rebuilt, where before the build
+went on and could wait forever on the panicked package. Unchanged otherwise.
 
 Records are keyed `(module, version, pipeline_version)`: `0.14.0` rows stay and
 become unreachable. Cost is one re-extraction per coordinate on its next
