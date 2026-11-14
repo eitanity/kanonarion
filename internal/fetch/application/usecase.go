@@ -950,16 +950,7 @@ func (uc *FetchModuleUseCase) verify(
 		establishedBinding = domain2.VCSURLBindingAbsent
 	}
 
-	// VCS reproduction failure downgrades to VerifiedBySumDBOnly when sumdb has
-	// already verified the proxy zip against the transparency log. Independently
-	// reproducing a zip from git is a weaker signal than transparency-log
-	// attestation; many legitimate repo shapes fail naive reproduction (major-
-	// version subdirs, submodules, generated files, proxy normalisation).
-	// Reserve a hard fail for when sumdb itself disagrees with the proxy zip
-	// (earlyStatus already captures that case).
-	if vcsStatus == domain2.UnverifiedHashMismatch && earlyStatus == "" {
-		vcsStatus = domain2.VerifiedBySumDBOnly
-	}
+	vcsStatus, earlyStatus = weighGitMismatch(vcsStatus, earlyStatus)
 
 	// Apply any earlier content-level failure.
 	if earlyStatus != "" {
@@ -979,6 +970,31 @@ func (uc *FetchModuleUseCase) verify(
 	}
 	// sumdb passed but VCS was not available or missing.
 	return domain2.VerifiedBySumDBOnly, withOriginRefusal(vcsDetail, originRefusal), gitRef, retracted, sumdbLookupFailed, sumdbResult.Available, vcsLegUnavailable, establishedBinding
+}
+
+// weighGitMismatch settles a git reproduction mismatch against the zip's own
+// verdict so far, returning the VCS and early statuses the combine reads.
+//
+// It downgrades to VerifiedBySumDBOnly when sumdb has already verified the
+// proxy zip against the transparency log. Independently reproducing a zip from
+// git is a weaker signal than transparency-log attestation; many legitimate
+// repo shapes fail naive reproduction (major-version subdirs, submodules,
+// generated files, proxy normalisation). A hard fail is reserved for when sumdb
+// itself disagrees with the proxy zip, which earlyStatus already captures.
+//
+// With no database answer, git is the only check independent of the project
+// go.sum, so a git mismatch outranks the go.sum match.
+func weighGitMismatch(vcsStatus, earlyStatus domain2.VerificationStatus) (domain2.VerificationStatus, domain2.VerificationStatus) {
+	if vcsStatus != domain2.UnverifiedHashMismatch {
+		return vcsStatus, earlyStatus
+	}
+	switch earlyStatus {
+	case "":
+		return domain2.VerifiedBySumDBOnly, earlyStatus
+	case domain2.VerifiedByGoSum:
+		return vcsStatus, domain2.UnverifiedHashMismatch
+	}
+	return vcsStatus, earlyStatus
 }
 
 // zipContentStatus is the first content-level failure in the download, if

@@ -16,9 +16,11 @@ package gosum
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -31,6 +33,7 @@ import (
 	domain2 "code.eitanity.com/kanonarion/internal/fetch/domain"
 	"code.eitanity.com/kanonarion/internal/fetch/ports"
 	"golang.org/x/mod/sumdb"
+	"golang.org/x/mod/sumdb/note"
 )
 
 const (
@@ -58,6 +61,80 @@ type Client struct {
 	disabledReason string
 }
 
+// ErrInvalidGOSUMDB marks a GOSUMDB value the go command would refuse.
+var ErrInvalidGOSUMDB = errors.New("invalid GOSUMDB")
+
+// database is one checksum database as GOSUMDB names it.
+type database struct {
+	// name is the verifier key's name, which is the database's name.
+	name string
+	// key is the note verifier key the database's signed tree heads are checked against.
+	key string
+	// url is the base URL GOSUMDB gave after the key; empty means https://<name>.
+	url string
+}
+
+// parseGOSUMDB reads a GOSUMDB value the way the go command's dbDial does:
+// "<name>[+<key>] [<url>]", with sum.golang.org's key built in and
+// sum.golang.google.cn as its alias. An empty value is sum.golang.org.
+func parseGOSUMDB(value string) (database, error) {
+	refuse := func(why string) (database, error) {
+		return database{}, fmt.Errorf("%w %q: %s", ErrInvalidGOSUMDB, value, why)
+	}
+	gosumdb := value
+	switch gosumdb {
+	case "":
+		gosumdb = defaultServer
+	case "sum.golang.google.cn":
+		gosumdb = defaultServer + " https://sum.golang.google.cn"
+	}
+	fields := strings.Fields(gosumdb)
+	switch {
+	case len(fields) == 0:
+		return refuse("no database named")
+	case len(fields) > 2:
+		return refuse("too many fields")
+	}
+	if fields[0] == defaultServer {
+		fields[0] = defaultKey
+	}
+	verifier, err := note.NewVerifier(fields[0])
+	if err != nil {
+		return refuse(err.Error())
+	}
+	name := verifier.Name()
+	direct, err := url.Parse("https://" + name)
+	if err != nil || strings.HasSuffix(name, "/") || direct.Host == "" || direct.RawPath != "" ||
+		*direct != (url.URL{Scheme: "https", Host: direct.Host, Path: direct.Path}) {
+		return refuse("database name must be host[/path]: " + name)
+	}
+	db := database{name: name, key: fields[0]}
+	if len(fields) == 2 {
+		if _, err := url.Parse(fields[1]); err != nil {
+			return refuse("bad URL: " + err.Error())
+		}
+		db.url = fields[1]
+	}
+	return db, nil
+}
+
+// address is the base URL lookups and tiles are read from.
+func (db database) address() string {
+	if db.url != "" {
+		return db.url
+	}
+	if isLoopback(db.name) {
+		return "http://" + db.name
+	}
+	return "https://" + db.name
+}
+
+// isLoopback reports a database host on this machine, the one host plain HTTP
+// is allowed to without an explicit URL.
+func isLoopback(host string) bool {
+	return strings.HasPrefix(host, "127.0.0.1") || strings.HasPrefix(host, "localhost")
+}
+
 // New constructs a Client. cacheDir is the directory used to persist Merkle
 // tree tiles and lookup results across invocations. If empty, $GOMODCACHE or
 // $GOPATH is used; without any cache the Merkle tree is re-fetched each time.
@@ -69,45 +146,52 @@ type Client struct {
 // here rather than at the socket: construction is where the caller learns it
 // has a client that will never dial, and a Lookup that never builds a
 // sumdb.Client never builds its transport either.
-func New(cacheDir string) *Client {
+//
+// A GOSUMDB value the go command would refuse is an error wrapping
+// ErrInvalidGOSUMDB: it names no database, so no lookup could stand for it.
+func New(cacheDir string) (*Client, error) {
 	gosumdb := goenv.Value("GOSUMDB")
 	switch {
 	case gosumdb == "off":
-		return &Client{disabledReason: "GOSUMDB=off"}
+		return &Client{disabledReason: "GOSUMDB=off"}, nil
 	case goenv.NetworkForbidden():
 		// The go command reaches the checksum database through $GOPROXY, so
 		// GOPROXY=off withdraws this traffic exactly as it withdraws a module
 		// fetch. Reported as a policy answer, not a failure: retrying cannot
 		// change an operator's declaration.
-		return &Client{disabledReason: "GOPROXY=off: the environment declares no checksum-database traffic"}
+		return &Client{disabledReason: "GOPROXY=off: the environment declares no checksum-database traffic"}, nil
 	case noSumCheckDisablesAll():
-		return &Client{disabledReason: "GONOSUMCHECK=" + goenv.Value("GONOSUMCHECK")}
+		return &Client{disabledReason: "GONOSUMCHECK=" + goenv.Value("GONOSUMCHECK")}, nil
 	}
 
-	server, key := defaultServer, defaultKey
-	if gosumdb != "" && gosumdb != defaultServer {
-		parts := strings.SplitN(gosumdb, " ", 2)
-		server = parts[0]
-		if len(parts) == 2 {
-			key = parts[1]
-		}
+	db, err := parseGOSUMDB(gosumdb)
+	if err != nil {
+		return nil, err
 	}
 
 	if cacheDir == "" {
-		cacheDir = resolveCacheDir(server)
+		cacheDir = resolveCacheDir(db.name)
 	}
 
 	newOps := func() *ops {
 		return &ops{
-			server:   server,
-			key:      key,
+			server:   db.name,
+			base:     db.address(),
+			key:      db.key,
 			cacheDir: cacheDir,
 			httpCli: &http.Client{
 				Timeout: 30 * time.Second,
 			},
 		}
 	}
-	return &Client{newOps: newOps, server: server}
+	return &Client{newOps: newOps, server: db.name}, nil
+}
+
+// CheckConfig reports the error New would return for the environment as it
+// stands, so a command can refuse before it opens a store or fetches anything.
+func CheckConfig() error {
+	_, err := New("")
+	return err
 }
 
 // client returns the inner sumdb client, building one on first use or after a
@@ -277,7 +361,10 @@ func classifiableLookupError(err error, o *ops) error {
 // ops implements sumdb.ClientOps using the local filesystem for caching and
 // plain HTTPS for remote fetches.
 type ops struct {
-	server   string
+	server string
+	// base is the database's base URL; empty reads from server, over HTTPS
+	// unless server is a loopback host.
+	base     string
 	key      string
 	cacheDir string
 	httpCli  *http.Client
@@ -296,14 +383,14 @@ type ops struct {
 }
 
 func (o *ops) ReadRemote(path string) (_ []byte, retErr error) {
-	scheme := "https://"
-	if strings.HasPrefix(o.server, "127.0.0.1") || strings.HasPrefix(o.server, "localhost") {
-		scheme = "http://"
+	base := o.base
+	if base == "" {
+		base = database{name: o.server}.address()
 	}
-	url := scheme + o.server + path
-	resp, err := o.httpCli.Get(url)
+	target := strings.TrimSuffix(base, "/") + "/" + strings.TrimPrefix(path, "/")
+	resp, err := o.httpCli.Get(target)
 	if err != nil {
-		return nil, o.recordRemoteErr(fmt.Errorf("fetching %s: %w", url, err))
+		return nil, o.recordRemoteErr(fmt.Errorf("fetching %s: %w", target, err))
 	}
 	defer func() {
 		if cerr := resp.Body.Close(); cerr != nil && retErr == nil {
@@ -317,7 +404,7 @@ func (o *ops) ReadRemote(path string) (_ []byte, retErr error) {
 		// wrapped in a "sumdb HTTP %d for %s" prefix, because its own Error()
 		// already renders the status and the URL — wrapping printed both twice in
 		// the verification detail that lands on the record.
-		return nil, o.recordRemoteErr(&domain2.ProxyStatusError{StatusCode: resp.StatusCode, URL: url})
+		return nil, o.recordRemoteErr(&domain2.ProxyStatusError{StatusCode: resp.StatusCode, URL: target})
 	}
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {

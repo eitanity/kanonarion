@@ -502,7 +502,9 @@ func egressMemberFailures(t *testing.T) []string {
 			out = append(out, fmt.Sprintf("%s: %v, want %v", member, err, want))
 		}
 	}
-	if res := gosum.New(t.TempDir()).Lookup(ctx, coord); res.Available || res.LookupFailed() {
+	if client, nerr := gosum.New(t.TempDir()); nerr != nil {
+		out = append(out, fmt.Sprintf("checksum database: %v, want a disabled client", nerr))
+	} else if res := client.Lookup(ctx, coord); res.Available || res.LookupFailed() {
 		out = append(out, fmt.Sprintf("checksum database: available=%v failed=%v, want disabled", res.Available, res.LookupFailed()))
 	}
 	_, err := osvdb.New(nil, nil, nil).LatestVersion(ctx)

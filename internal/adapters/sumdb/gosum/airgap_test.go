@@ -28,7 +28,7 @@ func TestNew_ControlBuildsALiveClient(t *testing.T) {
 	clearSumEnv(t)
 	t.Setenv("GOPROXY", "https://proxy.example.com")
 
-	c := New(t.TempDir())
+	c := mustNew(t, t.TempDir())
 	if c.disabledReason != "" {
 		t.Fatalf("client disabled with reason %q; nothing declared it off", c.disabledReason)
 	}
@@ -45,7 +45,7 @@ func TestNew_GOPROXYOffDisablesTheChecksumDatabase(t *testing.T) {
 	clearSumEnv(t)
 	t.Setenv("GOPROXY", "off")
 
-	c := New(t.TempDir())
+	c := mustNew(t, t.TempDir())
 	if c.newOps != nil {
 		t.Error("an ops builder was wired under GOPROXY=off; the client must have no way to dial")
 	}
@@ -72,7 +72,7 @@ func TestNew_GOPROXYOffFromEnvFile(t *testing.T) {
 	}
 	t.Setenv("GOENV", path)
 
-	if c := New(t.TempDir()); c.disabledReason == "" {
+	if c := mustNew(t, t.TempDir()); c.disabledReason == "" {
 		t.Error("`go env -w GOPROXY=off` left the checksum-database client live")
 	}
 }
@@ -86,7 +86,7 @@ func TestNoSumCheck_BooleanIsNotAPattern(t *testing.T) {
 	t.Setenv("GOPROXY", "https://proxy.example.com")
 	t.Setenv("GONOSUMCHECK", "1")
 
-	c := New(t.TempDir())
+	c := mustNew(t, t.TempDir())
 	if c.disabledReason == "" {
 		t.Fatal("GONOSUMCHECK=1 left the checksum database on")
 	}
@@ -107,7 +107,7 @@ func TestNoSumCheck_PatternFormStillWorks(t *testing.T) {
 	t.Setenv("GOPROXY", "https://proxy.example.com")
 	t.Setenv("GONOSUMCHECK", "corp.example.com")
 
-	c := New(t.TempDir())
+	c := mustNew(t, t.TempDir())
 	if c.disabledReason != "" {
 		t.Fatalf("a pattern list disabled the whole client: %q", c.disabledReason)
 	}
@@ -126,7 +126,7 @@ func TestGOSUMDBOff_StillTakesPrecedence(t *testing.T) {
 	t.Setenv("GOSUMDB", "off")
 	t.Setenv("GOPROXY", "https://proxy.example.com")
 
-	res := New(t.TempDir()).Lookup(context.Background(), coordinatetest.MustNew("example.com/mod", "v1.0.0"))
+	res := mustNew(t, t.TempDir()).Lookup(context.Background(), coordinatetest.MustNew("example.com/mod", "v1.0.0"))
 	if res.Reason != "GOSUMDB=off" {
 		t.Errorf("reason = %q, want GOSUMDB=off", res.Reason)
 	}

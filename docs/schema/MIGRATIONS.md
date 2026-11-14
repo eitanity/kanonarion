@@ -170,6 +170,31 @@ values there, as they did when `verdict` and `reachability_state` gained theirs)
   a record that names no frame. `callgraph-show` text gains a `frame:` line and
   `--history` a `frame:` line per generation, both absent on such a record.
 
+## Fetch record: pipeline `0.6.0` → `0.7.0`
+
+**Derivation change; no record shape change, no store migration.** A `0.7.0`
+fetch derives `verification_status` differently in two cases:
+
+- `GOSUMDB` is read as the go command reads it: `<name>[+<key>]`, then an
+  optional URL, with the key of `sum.golang.org` built in and
+  `sum.golang.google.cn` as its alias. A `0.6.0` build took the first field as
+  the host and the second as the key, so a full key, or a name followed by a
+  URL, recorded `UnverifiedNoSumDB`; these now record `Verified`. A value the go
+  command refuses now stops `fetch`, `audit`, `walk`, `sbom`, `inspect` and
+  `OpenDriver` at start-up, exit `20`, with no record written, where `0.6.0`
+  recorded `UnverifiedNoSumDB`.
+- `fetch --gomod` and `fetch <module>@<version> --gomod` check every module
+  against the project's `go.sum`, as `audit` does. Where the checksum database
+  cannot answer, a matching module records `VerifiedByGoSum` where `0.6.0`
+  recorded `UnverifiedNoSumDB`, and a module whose hash disagrees fails with no
+  record. A go.sum match that the git check contradicts records
+  `UnverifiedHashMismatch` on every command, `audit` included, where `0.6.0`
+  recorded `VerifiedByGoSum`.
+
+Fetch records are append-only, so `0.6.0` rows stay as written. A fetch at
+`0.7.0` does not serve a `0.6.0` row from cache: the next fetch of a coordinate
+appends a `0.7.0` record, and reads serve it.
+
 ## Vulnerability record: pipeline `v26` → `v27`
 
 **Record content change; no store migration; no schema-version bump.** Under

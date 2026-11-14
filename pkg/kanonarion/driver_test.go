@@ -3,9 +3,11 @@ package kanonarion_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
+	"code.eitanity.com/kanonarion/internal/adapters/sumdb/gosum"
 	"code.eitanity.com/kanonarion/internal/coordinate/coordinatetest"
 	"code.eitanity.com/kanonarion/internal/driver"
 	fetchapp "code.eitanity.com/kanonarion/internal/fetch/application"
@@ -79,6 +81,24 @@ func TestOpenDriver_WiresEveryDriver(t *testing.T) {
 	}
 	if d.ValidateIngest == nil {
 		t.Error("Driver.ValidateIngest is nil; composition root left the validate-and-ingest boundary unwired")
+	}
+}
+
+// TestOpenDriver_RefusesAnInvalidGOSUMDB: a GOSUMDB the go command would
+// refuse is an error from OpenDriver, never a driver that records every module
+// unverified.
+func TestOpenDriver_RefusesAnInvalidGOSUMDB(t *testing.T) {
+	t.Setenv("GOENV", "off")
+	t.Setenv("GOPROXY", "https://proxy.golang.org")
+	t.Setenv("GONOSUMCHECK", "")
+	t.Setenv("GOSUMDB", "example.com+bad")
+	d, cleanup, err := kanonarion.OpenDriver(t.TempDir())
+	if err == nil {
+		_ = cleanup() //nolint:errcheck // the test has already failed
+		t.Fatalf("OpenDriver = %v, nil; want the GOSUMDB refusal", d)
+	}
+	if !errors.Is(err, gosum.ErrInvalidGOSUMDB) || !strings.Contains(err.Error(), `"example.com+bad"`) {
+		t.Errorf("OpenDriver error = %v; want it to name GOSUMDB and its value", err)
 	}
 }
 
