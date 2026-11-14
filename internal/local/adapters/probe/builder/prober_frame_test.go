@@ -75,6 +75,11 @@ func tinyGoFrame(t *testing.T, goBin, target, goos, goarch string, tags []string
 // A TinyGo frame lists under its GOROOT and tags, builds with tinygo at -opt=0,
 // reads the table with go tool nm outside the frame, and reports Go's spelling.
 func TestProbe_TinyGoFrameBuildsWithTinyGo(t *testing.T) {
+	// Sentinels, so the inherited frame is asserted whatever the caller (or a
+	// go test that switched toolchain) left in the environment.
+	for k, v := range map[string]string{"GOOS": "sentinel-goos", "GOARCH": "sentinel-goarch", "GOROOT": "/sentinel/goroot", "CGO_ENABLED": "sentinel-cgo"} {
+		t.Setenv(k, v)
+	}
 	goBin, logPath := frameStubs(t)
 	pico := tinyGoFrame(t, goBin, "pico", "linux", "arm", []string{"tinygo", "pico"})
 	res, err := New(goBin).WithTinyGo(pico).Probe(context.Background(), t.TempDir())
@@ -95,7 +100,8 @@ func TestProbe_TinyGoFrameBuildsWithTinyGo(t *testing.T) {
 			t.Errorf("child %d = %q, want it to begin %q", i, lines[i], w)
 		}
 	}
-	if !strings.HasSuffix(lines[1], " example.com/fw | GOOS= GOARCH= GOROOT= CGO=") {
+	if !strings.HasSuffix(lines[1], " example.com/fw | GOOS=sentinel-goos GOARCH=sentinel-goarch GOROOT=/sentinel/goroot CGO=sentinel-cgo") ||
+		strings.Contains(lines[1], pico.GOROOT()) {
 		t.Errorf("tinygo build was handed the frame's environment or another package: %q", lines[1])
 	}
 	if strings.Contains(lines[2], pico.GOROOT()) {
