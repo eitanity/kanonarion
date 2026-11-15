@@ -56,8 +56,14 @@ func projectCallGraph(rec callgraphdomain.CallGraphRecord) ports.CallGraphProjec
 		StdlibPackages:     rec.StdlibPackages,
 		DependencyPackages: rec.DependencyPackages,
 		AnalysisRoot:       rec.AnalysisRoot,
+		TinyGoTarget:       rec.Frame.TinyGoTarget,
+		TinyGoVersion:      rec.Frame.TinyGoVersion,
 	}
+	reflectInternal := map[string]bool{}
 	for _, n := range rec.Nodes {
+		if n.Package == "reflect" {
+			reflectInternal[n.ID] = true
+		}
 		proj.Nodes = append(proj.Nodes, ports.CallGraphNode{
 			ID:            n.ID,
 			Module:        n.Module,
@@ -84,17 +90,20 @@ func projectCallGraph(rec callgraphdomain.CallGraphRecord) ports.CallGraphProjec
 	// hops.
 	for _, e := range rec.Edges {
 		proj.Edges = append(proj.Edges, ports.CallGraphEdge{FromID: e.FromID, ToID: e.ToID})
-		// The reflective dispatch sites are picked out on the same pass, because
-		// this is the only place that sees both the edge's reflect attribute and
-		// its call-site position. Both conditions are required: the attribute is
-		// what the analyser measured, and the callee list is what makes it a
-		// DISPATCH rather than a plain call into package reflect.
-		if e.ReflectDispatch && domain.IsReflectDispatcher(e.ToID) {
+		// The reflective lookup sites are picked out on the same pass, because this
+		// is the only place that sees the edge's call-site position. The callee
+		// decides, except for an Unknown edge without reflect_dispatch: that is a
+		// call through a function value CHA bound to every function of its
+		// signature, not a lookup. reflect's own (Value).MethodByName calls
+		// (*rtype).MethodByName, and that call is the implementation of a lookup.
+		funcValueGuess := e.Confidence == callgraphdomain.ConfidenceUnknown && !e.ReflectDispatch
+		if domain.IsReflectiveLookup(e.ToID) && !funcValueGuess && !reflectInternal[e.FromID] {
 			proj.ReflectiveDispatch = append(proj.ReflectiveDispatch, ports.CallGraphReflectSite{
-				CallerID: e.FromID,
-				CalleeID: e.ToID,
-				File:     e.CallSite.File,
-				Line:     e.CallSite.Line,
+				CallerID:   e.FromID,
+				CalleeID:   e.ToID,
+				File:       e.CallSite.File,
+				Line:       e.CallSite.Line,
+				LookupName: e.LookupName,
 			})
 		}
 	}

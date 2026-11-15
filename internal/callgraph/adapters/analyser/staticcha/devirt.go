@@ -119,6 +119,7 @@ func (a *Analyser) devirtualizeSingleImplementer(
 						Line: siteLine,
 					},
 					Confidence: domain.ConfidenceDirect,
+					LookupName: lookupName(ci, target.ID),
 				})
 				addedEdges++
 				a.logger.DebugContext(ctx, "callgraph_devirtualized_edge",

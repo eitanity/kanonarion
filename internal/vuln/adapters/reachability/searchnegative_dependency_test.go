@@ -65,6 +65,7 @@ func dependencyGraph() ports.CallGraphProjection {
 			{ID: depLanguage + ".Parse", Module: depModule, Package: depLanguage, Symbol: "Parse", IsExportedAPI: true},
 			{ID: depLanguage + ".ParseAcceptLanguage", Module: depModule, Package: depLanguage, Symbol: "ParseAcceptLanguage", IsExportedAPI: true},
 			{ID: depInternal + ".parse", Module: depModule, Package: depInternal, Symbol: "parse"},
+			{ID: depInternal + ".lookup", Module: depModule, Package: depInternal, Symbol: "lookup"},
 			{ID: depUnlinked + ".decode", Module: depModule, Package: depUnlinked, Symbol: "decode"},
 			{ID: depLanguage + ".MatchStrings", Module: depModule, Package: depLanguage, Symbol: "MatchStrings", IsExportedAPI: true},
 			{ID: depUnlinked + ".Decoder", Module: depModule, Package: depUnlinked, Symbol: "Decoder", IsExportedAPI: true},
@@ -78,8 +79,10 @@ func dependencyGraph() ports.CallGraphProjection {
 			{FromID: depUnlinked + ".decode", ToID: depLanguage + ".MatchStrings"},
 		},
 		ReflectiveDispatch: []ports.CallGraphReflectSite{
-			{CallerID: depInternal + ".parse", CalleeID: "reflect.Value.Call"},
-			{CallerID: depUnlinked + ".decode", CalleeID: "reflect.Value.Call"},
+			// In a linked package and reached by nothing, so it is listed and
+			// holds no rung.
+			{CallerID: depInternal + ".lookup", CalleeID: "reflect.(Value).MethodByName"},
+			{CallerID: depUnlinked + ".decode", CalleeID: "reflect.(Value).MethodByName"},
 		},
 	}
 }
@@ -175,6 +178,62 @@ func TestSearchNegative_DependencyJoinConfirmsWithoutTheExport(t *testing.T) {
 	}
 	if s.PathFound || len(s.GraphsSearched) != 2 {
 		t.Errorf("search = %+v, want no path over both graphs", s)
+	}
+}
+
+// TestSearchNegative_DependencyJoinDisputesThroughAReachableLookup: a linked
+// dependency's MethodByName("Run") that the project's entry point reaches binds
+// the dependency's exported Run, which calls the advisory's symbol, so the
+// joined search finds the route the lookup hides and the hop reads reflect.
+func TestSearchNegative_DependencyJoinDisputesThroughAReachableLookup(t *testing.T) {
+	dep := dependencyGraph()
+	tagRun := depLanguage + ".(Tag).Run"
+	dep.Nodes = append(dep.Nodes, ports.CallGraphNode{ID: tagRun, Module: depModule, Package: depLanguage, Receiver: "Tag", Symbol: "Run"})
+	dep.Edges = append(dep.Edges, ports.CallGraphEdge{FromID: tagRun, ToID: depLanguage + ".ParseAcceptLanguage"})
+	dep.ReflectiveDispatch = append(dep.ReflectiveDispatch,
+		ports.CallGraphReflectSite{CallerID: depInternal + ".parse", CalleeID: "reflect.(Value).MethodByName", LookupName: "Run"})
+	loader := &byCoordinateLoader{graphs: map[string]ports.CallGraphProjection{
+		projectCoord:                 projectGraph("parse", "wasmexport", "Parse", linkedClosure),
+		depModule + "@" + depVersion: dep,
+	}}
+
+	s, got, reason := searchDependency(t, loader, advisoryPackages, advisorySymbols)
+	if got != domain.SoundnessDisputed {
+		t.Fatalf("soundness = %s (%s), want %s", got, reason, domain.SoundnessDisputed)
+	}
+	if n := s.ReachableReflectiveDispatch(); n != 1 {
+		t.Errorf("reachable sites = %d, want 1: %+v", n, s.ReflectiveDispatch)
+	}
+	last := len(s.Route) - 1
+	if last < 1 || s.Route[last-1].Symbol != "Run" || s.Route[last-1].Dispatch.Kind != domain.DispatchReflect {
+		t.Errorf("route = %+v, want a reflect hop into Tag.Run before ParseAcceptLanguage", s.Route)
+	}
+}
+
+// TestSearchNegative_DependencyJoinAppliesTheConsumersTinyGo: the same lookup
+// joined under a consumer's TinyGo 0.44 frame binds no method, whatever the
+// dependency's own graph records, so no route is found through Tag.Run.
+func TestSearchNegative_DependencyJoinAppliesTheConsumersTinyGo(t *testing.T) {
+	dep := dependencyGraph()
+	tagRun := depLanguage + ".(Tag).Run"
+	dep.Nodes = append(dep.Nodes, ports.CallGraphNode{ID: tagRun, Module: depModule, Package: depLanguage, Receiver: "Tag", Symbol: "Run"})
+	dep.Edges = append(dep.Edges, ports.CallGraphEdge{FromID: tagRun, ToID: depLanguage + ".ParseAcceptLanguage"})
+	dep.ReflectiveDispatch = append(dep.ReflectiveDispatch,
+		ports.CallGraphReflectSite{CallerID: depInternal + ".parse", CalleeID: "reflect.(Value).MethodByName", LookupName: "Run"})
+	dep.TinyGoTarget, dep.TinyGoVersion = "wasip1", "0.100.0"
+	project := projectGraph("parse", "wasmexport", "Parse", linkedClosure)
+	project.TinyGoTarget, project.TinyGoVersion = "wasip1", "0.44.0"
+	loader := &byCoordinateLoader{graphs: map[string]ports.CallGraphProjection{
+		projectCoord:                 project,
+		depModule + "@" + depVersion: dep,
+	}}
+
+	s, got, reason := searchDependency(t, loader, advisoryPackages, advisorySymbols)
+	if s.PathFound || got == domain.SoundnessDisputed {
+		t.Fatalf("soundness = %s, path found %v (%s), want no route through the lookup", got, s.PathFound, reason)
+	}
+	if site := siteFor(t, s, depInternal+".parse"); !site.ReachableFromEntryPoint || !site.ReturnsNoMethod || site.MethodsBound != 0 {
+		t.Errorf("site = %+v, want reached, returning no method, nothing bound", site)
 	}
 }
 

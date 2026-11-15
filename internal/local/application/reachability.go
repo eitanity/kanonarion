@@ -84,10 +84,18 @@ func (uc *LocalReachabilityUseCase) Execute(ctx context.Context, root string) (d
 	// names no coordinate; it is recorded as uncovered rather than dropped,
 	// because "the store said nothing about it" and "nothing asked the store
 	// about it" are not the same claim.
+	//
+	// A replace is looked up under the coordinate the walk resolved and
+	// scanned, the replacement; origin keeps the module it stands in for, whose
+	// path the linked symbols are named under.
 	coords := make([]coordinate.ModuleCoordinate, 0, len(buildMods))
-	var uncovered []domain.UncoveredModule
+	origin := make(map[coordinate.ModuleCoordinate]domain.BuildModule, len(buildMods))
+	var (
+		uncovered []domain.UncoveredModule
+		replaced  []domain.ReplacedModule
+	)
 	for _, m := range buildMods {
-		coord, cerr := coordinate.NewModuleCoordinate(m.Path, m.Version)
+		coord, cerr := buildCoordinate(m)
 		if cerr != nil {
 			uncovered = append(uncovered, domain.UncoveredModule{
 				Path: m.Path, Version: m.Version, Reason: domain.UncoveredNoCoordinate,
@@ -95,6 +103,10 @@ func (uc *LocalReachabilityUseCase) Execute(ctx context.Context, root string) (d
 			continue
 		}
 		coords = append(coords, coord)
+		origin[coord] = m
+		if r := replaces(m); r != "" {
+			replaced = append(replaced, domain.ReplacedModule{Path: coord.Path(), Version: coord.Version(), Replaces: r})
+		}
 	}
 
 	// The tree's own module path is the frame the seed is anchored to. It comes
@@ -114,6 +126,7 @@ func (uc *LocalReachabilityUseCase) Execute(ctx context.Context, root string) (d
 		Covered:      len(set.Scanned),
 		WithFindings: len(set.Findings),
 		Uncovered:    uncovered,
+		Replaced:     replaced,
 	}
 
 	findings := set.Findings
@@ -167,11 +180,16 @@ func (uc *LocalReachabilityUseCase) Execute(ctx context.Context, root string) (d
 	var modResults []domain.ModuleProbeResult
 	for coord, cveFindings := range findings {
 		modResult := domain.ModuleProbeResult{
-			Path:    coord.Path(),
-			Version: coord.Version(),
+			Path:     coord.Path(),
+			Version:  coord.Version(),
+			Replaces: replaces(origin[coord]),
+		}
+		symbolPath := coord.Path()
+		if m, ok := origin[coord]; ok {
+			symbolPath = m.Path
 		}
 		for _, f := range cveFindings {
-			finding := probeOneFinding(f, coord.Path(), probeKind, binarySymbols, binaries, omitted)
+			finding := probeOneFinding(f, symbolPath, probeKind, binarySymbols, binaries, omitted)
 			modResult.Findings = append(modResult.Findings, finding)
 		}
 		modResults = append(modResults, modResult)
@@ -191,6 +209,23 @@ func (uc *LocalReachabilityUseCase) Execute(ctx context.Context, root string) (d
 		SeedSetAside:    set.SetAside,
 		Notice:          notice,
 	}, nil
+}
+
+// buildCoordinate is the coordinate a build module's record is stored under:
+// the one a replace makes the walk record, when one applies.
+func buildCoordinate(m domain.BuildModule) (coordinate.ModuleCoordinate, error) {
+	if m.ReplacePath != "" {
+		return coordinate.NewModuleCoordinate(m.ReplacePath, m.ReplaceVersion)
+	}
+	return coordinate.NewModuleCoordinate(m.Path, m.Version)
+}
+
+// replaces names the module@version a replacement stands in for, or "".
+func replaces(m domain.BuildModule) string {
+	if m.ReplacePath == "" {
+		return ""
+	}
+	return m.Path + "@" + m.Version
 }
 
 // appendUnservedCoordinates records each queried coordinate the store held no
@@ -315,31 +350,30 @@ func probeOneFinding(f ports.VulnFinding, modPath, probeKind string, binarySymbo
 		result.Verdict = domain.SymbolProbeAbsent
 		// A negative this probe measured itself, so it states the rung its own
 		// instrument earns rather than the stored scan's.
-		result.Soundness = domain.ProbeSoundnessUnconfirmed
-		result.SoundnessReason = absentReason(probeKind, binaries, omitted)
+		result.Soundness, result.SoundnessReason = absentSoundness(probeKind, binaries, omitted)
 	}
 	return result
 }
 
-// absentReason names what the symbol-table absence was read from, and says so
-// when what was read does not cover the whole product.
-//
-// The three cases are different claims. A binary probe that read every main
-// declares an absence from the artefacts the project ships; one that lost a main
-// to a build failure declares an absence from the ones that built; a library
-// workspace declares an absence from a harness that ships nowhere. Collapsing
-// them into one sentence would let the weakest read as the strongest. A library
-// absence also states how many exported declarations the harness left out.
-func absentReason(probeKind string, binaries []ports.ProbedBinary, omitted int) string {
+// absentSoundness states the rung a symbol-table absence earns and what it was
+// read from. Only an absence from every main, each built by go build, is
+// confirmed; a partial probe, a library harness and a TinyGo build keep their
+// own unconfirmed reasons so the weakest cannot read as the strongest.
+func absentSoundness(probeKind string, binaries []ports.ProbedBinary, omitted int) (soundness, reason string) {
 	if probeKind == domain.ProbeKindLibrary {
-		return domain.LibraryAbsentReason(omitted)
+		return domain.ProbeSoundnessUnconfirmed, domain.LibraryAbsentReason(omitted)
 	}
+	allGo := len(binaries) > 0
 	for _, b := range binaries {
 		if b.BuildError != "" {
-			return domain.ProbeAbsentPartialReason
+			return domain.ProbeSoundnessUnconfirmed, domain.ProbeAbsentPartialReason
 		}
+		allGo = allGo && b.Builder == domain.ProbeBuilderGo
 	}
-	return domain.ProbeAbsentReason
+	if probeKind == domain.ProbeKindBinary && allGo {
+		return domain.ProbeSoundnessConfirmed, domain.ProbeAbsentConfirmedReason
+	}
+	return domain.ProbeSoundnessUnconfirmed, domain.ProbeAbsentReason
 }
 
 // seededReason states that a verdict was carried from a stored scan rather than
@@ -389,13 +423,16 @@ func findInBinary(affSym, modPath string, binarySymbols map[string]struct{}) str
 
 	best := ""
 	for sym := range binarySymbols {
+		// A generic instantiation's type arguments can hold paths and dots of
+		// their own, so they go before the package boundary is looked for.
+		name := stripTypeArgs(sym)
 		var unqualified string
 		switch {
-		case strings.HasPrefix(sym, rootPrefix):
-			unqualified = sym[len(rootPrefix):]
-		case strings.HasPrefix(sym, subPrefix):
+		case strings.HasPrefix(name, rootPrefix):
+			unqualified = name[len(rootPrefix):]
+		case strings.HasPrefix(name, subPrefix):
 			// e.g. "github.com/foo/bar/sub.(*Type).Method"
-			rest := sym[len(subPrefix):]
+			rest := name[len(subPrefix):]
 			// Find the first '.' after the last '/' to locate the package boundary.
 			lastSlash := strings.LastIndex(rest, "/")
 			var afterLastSlash string
@@ -413,13 +450,48 @@ func findInBinary(affSym, modPath string, binarySymbols map[string]struct{}) str
 			continue
 		}
 
-		if normalizeReceiver(unqualified) == normalizeReceiver(affSym) {
+		if symbolMatches(normalizeReceiver(unqualified), normalizeReceiver(affSym)) {
 			if best == "" || sym < best {
 				best = sym
 			}
 		}
 	}
 	return best
+}
+
+// symbolMatches compares a normalised nm name with an advisory symbol. An
+// advisory's "init" names every initialiser of the package, and the compiler
+// links a package's func init() blocks as init.0, init.1 and so on.
+func symbolMatches(unqualified, affSym string) bool {
+	if unqualified == affSym {
+		return true
+	}
+	if affSym != "init" {
+		return false
+	}
+	n, ok := strings.CutPrefix(unqualified, "init.")
+	return ok && n != "" && strings.Trim(n, "0123456789") == ""
+}
+
+// stripTypeArgs drops every bracketed type-argument list, nested ones with it,
+// so "pkg.(*Box[go.shape.string]).Get" reads "pkg.(*Box).Get".
+func stripTypeArgs(sym string) string {
+	if !strings.Contains(sym, "[") {
+		return sym
+	}
+	var b strings.Builder
+	depth := 0
+	for _, r := range sym {
+		switch {
+		case r == '[':
+			depth++
+		case r == ']' && depth > 0:
+			depth--
+		case depth == 0:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 // normalizeReceiver rewrites a method symbol's pointer-receiver spelling to the

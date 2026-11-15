@@ -45,8 +45,8 @@ type fetchFlags struct {
 	// refuseTestScopeOnRecordingCommand.
 	excludeTests bool
 	noProgress   bool
-	// scopeGoSum is the go.sum beside a scope fetch's go.mod, the anchor a
-	// private module is verified against. Empty for a positional fetch.
+	// scopeGoSum is the go.sum beside --gomod's go.mod, the anchor every module
+	// it holds is verified against. Empty for a positional fetch.
 	scopeGoSum string
 }
 
@@ -72,6 +72,13 @@ func newFetchCmd(stdout, stderr io.Writer) *cobra.Command {
   kanonarion fetch --gomod ./go.mod
   kanonarion fetch --gomod ./go.mod --tool`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// A GOSUMDB the go command would refuse is refused before any store
+			// opens; --list-versions never asks the checksum database.
+			if !f.listVersions {
+				if err := gosum.CheckConfig(); err != nil {
+					return err
+				}
+			}
 			// The fetch stage's allowed_vcs_hosts governs which forges this
 			// command may cross-verify against, so resolve the policy once here
 			// rather than per module in the scope loop.
@@ -272,13 +279,13 @@ func fetchOne(ctx context.Context, arg string, f fetchFlags, stdout, stderr io.W
 }
 
 // fetchesOneAgainstProject reports `fetch <module> --gomod <path>`: one module,
-// verified against that project's go.sum when it is private.
+// verified against that project's go.sum.
 func fetchesOneAgainstProject(args []string, f fetchFlags) bool {
 	return len(args) == 1 && f.gomod != "" && !f.tool && !f.project && !f.listVersions
 }
 
 // runFetchAgainstProject fetches one module with the go.sum beside --gomod as
-// the anchor a private module is verified against.
+// the anchor it is verified against.
 func runFetchAgainstProject(ctx context.Context, arg string, f fetchFlags, stdout, stderr io.Writer) error {
 	if err := refuseInapplicableFlags("fetch <module>@<version> --gomod", testScopeNoScopeFlag(f.excludeTests)); err != nil {
 		return err
@@ -309,19 +316,26 @@ func parseFetchArg(arg string, f fetchFlags) (string, string, error) {
 }
 
 // executeFetchOne fetches coord through the proxy, or through the module
-// cache against the scope's go.sum when it is a private module.
+// cache against the scope's go.sum when it is a private module. The scope's
+// go.sum also anchors every module it holds, as it does for audit.
 func executeFetchOne(ctx context.Context, st *storage.Storage, proxyAdapter *proxyadapter.Proxy, coord coordinate.ModuleCoordinate,
 	f fetchFlags, logger *slog.Logger) (application.FetchResult, error) {
 	// Retry transient checksum-database failures before they can downgrade the
 	// module's verification status, matching the walk path's wiring.
-	sumdbClient := sumdbretry.New(gosum.New(activeConfig.Storage.SumDBCacheDir(storeRoot)), logger)
-	uc, err := privateFetchUseCase(application.NewFetchModuleUseCase(
+	client, err := gosum.New(activeConfig.Storage.SumDBCacheDir(storeRoot))
+	if err != nil {
+		return application.FetchResult{}, fmt.Errorf("creating checksum-database client: %w", err)
+	}
+	uc, err := projectGoSumAnchor(application.NewFetchModuleUseCase(
 		withPrivateRoute(proxyAdapter, "", f.scopeGoSum, logger), gitexec.New(), st.Blobs, st.Facts,
-		sumdbClient, clock.System{}, clock.Monotonic{}, "", logger,
+		sumdbretry.New(client, logger), clock.System{}, clock.Monotonic{}, "", logger,
 	).WithSigner(storageSigner(st), st.Attestations).
 		WithAudit(st.Audit).
 		WithAllowVerificationDowngrade(allowVerificationDowngrade), f.scopeGoSum, logger)
 	if err != nil {
+		return application.FetchResult{}, err
+	}
+	if uc, err = privateFetchUseCase(uc, f.scopeGoSum, logger); err != nil {
 		return application.FetchResult{}, err
 	}
 	result, err := uc.Execute(ctx, application.FetchRequest{

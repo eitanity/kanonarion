@@ -196,6 +196,7 @@ func (CallGraphRecordHasher) Unmarshal(data []byte) (CallGraphRecord, error) {
 			Confidence:      EdgeConfidence(ce.Confidence),
 			ReflectDispatch: ce.ReflectDispatch,
 			Kind:            EdgeKind(ce.Kind),
+			LookupName:      ce.LookupName,
 		}
 	}
 	return CallGraphRecord{
@@ -442,8 +443,10 @@ type canonicalEdge struct {
 	// a count of reflective dispatches — most of what it marks bounds perfectly —
 	// and the tag is load-bearing: it is inside the content hash of every sealed
 	// record, so renaming it darkens all of them.
-	ReflectDispatch bool   `json:"reflect_dispatch"`
-	ToID            string `json:"to_id"`
+	ReflectDispatch bool `json:"reflect_dispatch"`
+	// LookupName is omitted where empty, which every edge sealed before it was.
+	LookupName string `json:"lookup_name,omitempty"`
+	ToID       string `json:"to_id"`
 }
 
 type canonicalRecord struct {
@@ -992,6 +995,7 @@ func canonicalEdgeOf(e CallEdge) canonicalEdge {
 		FromID:          e.FromID,
 		Kind:            string(e.Kind),
 		ReflectDispatch: e.ReflectDispatch,
+		LookupName:      e.LookupName,
 		ToID:            e.ToID,
 	}
 }

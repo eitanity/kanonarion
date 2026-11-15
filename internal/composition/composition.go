@@ -475,9 +475,12 @@ func NewDriverFetch(st *storage.Storage, storeRoot string, cfg configdomain.Conf
 	if signer == nil {
 		signer = noopsigner.New()
 	}
+	sumdb, err := fetchsumdb.New(cfg.Storage.SumDBCacheDir(storeRoot))
+	if err != nil {
+		return nil, fmt.Errorf("creating checksum-database client: %w", err)
+	}
 	fetchUC := fetchapp.NewFetchModuleUseCase(
-		proxy, fetchvcs.New(), st.Blobs, st.Facts,
-		fetchsumdb.New(cfg.Storage.SumDBCacheDir(storeRoot)),
+		proxy, fetchvcs.New(), st.Blobs, st.Facts, sumdb,
 		clk, stopwatch, "", logger,
 	).WithSigner(signer, st.Attestations).
 		// The write side emits a refused demotion (or a permitted downgrade) into

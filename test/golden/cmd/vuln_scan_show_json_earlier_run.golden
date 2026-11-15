@@ -17,14 +17,14 @@ exit 0
     "content_hash": "sha256:066c65bdf0a2404975109e3b09f7e137c84552c775d1898bdf840cddcb389a60"
   },
   "per_module_results": {
-    "example.com/mod@v1.2.0": "sha256:a49b8e32a75966c3002a995f236d03bb1c72b65f7fed6b180d0d8a581e1f72d6"
+    "example.com/mod@v1.2.0": "sha256:c91cc4a1d8a1abbebdacd931e48c536ebf6f6bfbb811a456594fc0d74664ba81"
   },
   "started_at": "2026-01-15T09:00:00Z",
   "completed_at": "2026-01-15T09:00:01Z",
   "overall_status": "Affected",
-  "pipeline_version": "v26",
+  "pipeline_version": "v27",
   "operator": "fixture",
-  "content_hash": "sha256:a1ddf9a667ffd8c2fd0616425fa7d3d0aa0a8b00945ff31d0c63d53606724f10",
+  "content_hash": "sha256:6e6cacfc8efa29a4fc14dd58d8d4b822959498a9a4fc14a520f71bcbc8607c5c",
   "affected_modules": [
     {
       "coordinate": "example.com/mod@v1.2.0",
@@ -111,7 +111,7 @@ exit 0
     }
   ],
   "superseded": false,
-  "reads_pipeline_version": "v26",
+  "reads_pipeline_version": "v27",
   "native_coverage": {
     "unsearched": [],
     "unidentified": [],

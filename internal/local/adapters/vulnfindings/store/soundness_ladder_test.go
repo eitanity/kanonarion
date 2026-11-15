@@ -26,6 +26,7 @@ func TestProbeRungsSpellTheLadder(t *testing.T) {
 	}{
 		{"not stated", localdomain.ProbeSoundnessNotStated, vulndomain.SoundnessNotStated},
 		{"unconfirmed", localdomain.ProbeSoundnessUnconfirmed, vulndomain.SoundnessUnconfirmed},
+		{"confirmed", localdomain.ProbeSoundnessConfirmed, vulndomain.SoundnessConfirmed},
 	} {
 		if tc.local != string(tc.want) {
 			t.Errorf("%s: the local probe spells it %q, the ladder spells it %q", tc.name, tc.local, tc.want)
@@ -33,21 +34,15 @@ func TestProbeRungsSpellTheLadder(t *testing.T) {
 	}
 }
 
-// TestProbeAbsenceIsNotConfirmed pins the judgement behind the rung a
-// symbol-table absence earns, not just its spelling.
-//
-// Confirmed means a search ran over a call graph built with function bodies and
-// found no path. The probe builds no call graph at all: it reads the linker's
-// output and observes that a name is not in it, which is the same class of
-// evidence as a binary-mode analyser's symbol table — and NegativeSoundness
-// classifies that unconfirmed. Promoting the probe to confirmed would make the
-// word mean two different searches.
-func TestProbeAbsenceIsNotConfirmed(t *testing.T) {
-	if localdomain.ProbeSoundnessUnconfirmed == string(vulndomain.SoundnessConfirmed) {
-		t.Fatal("a symbol-table absence reports itself as a search that ran over a built call graph")
-	}
+// TestProbeAbsenceRungsMeetTheGate pins the judgement behind the two rungs a
+// symbol-table absence earns, not just their spelling: only the linker case
+// passes the confirmed-negative gate.
+func TestProbeAbsenceRungsMeetTheGate(t *testing.T) {
 	if vulndomain.ReachabilitySoundness(localdomain.ProbeSoundnessUnconfirmed).IsConfirmed() {
-		t.Error("a symbol-table absence passes the confirmed-negative gate")
+		t.Error("a partial, library or TinyGo absence passes the confirmed-negative gate")
+	}
+	if !vulndomain.ReachabilitySoundness(localdomain.ProbeSoundnessConfirmed).IsConfirmed() {
+		t.Error("an absence from every go build main fails the confirmed-negative gate")
 	}
 }
 

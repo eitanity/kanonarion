@@ -74,10 +74,16 @@ func testTinyGo(t *testing.T) goenv.TinyGo {
 
 // A declared TinyGo frame reaches the child last: its platform, GOARM, GOROOT
 // and cgo in the environment and its tags as -tags, and the record a failed load
-// writes names that frame.
+// writes names that frame. The loader runs the merged root's own go, pinned.
 func TestAnalyseDir_DeclaredFrameReachesTheChild(t *testing.T) {
 	dir, fakeGo, envOut, argsOut := frameProbeTree(t)
 	tg := testTinyGo(t)
+	if err := os.Mkdir(filepath.Join(tg.GOROOT(), "bin"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(fakeGo, tg.GoBinary()); err != nil {
+		t.Fatal(err)
+	}
 	pair, err := goenv.NewTarget("linux", "arm")
 	if err != nil {
 		t.Fatalf("NewTarget: %v", err)
@@ -86,14 +92,14 @@ func TestAnalyseDir_DeclaredFrameReachesTheChild(t *testing.T) {
 	if err != nil {
 		t.Fatalf("coordinate: %v", err)
 	}
-	a := New("0.0.0-test", fakeGo, slog.New(slog.NewTextHandler(io.Discard, nil))).WithTarget(pair).WithTinyGo(tg)
+	a := New("0.0.0-test", filepath.Join(t.TempDir(), "not-the-frames-go"), slog.New(slog.NewTextHandler(io.Discard, nil))).WithTarget(pair).WithTinyGo(tg)
 	rec, err := a.AnalyseDir(context.Background(), dir, coord)
 	if err != nil {
 		t.Fatalf("AnalyseDir: %v", err)
 	}
 	child := childValues(t, envOut)
 	for k, want := range map[string]string{
-		"GOOS": "linux", "GOARCH": "arm", "GOARM": "6", "GOROOT": tg.GOROOT(), "CGO_ENABLED": "1",
+		"GOOS": "linux", "GOARCH": "arm", "GOARM": "6", "GOROOT": tg.GOROOT(), "CGO_ENABLED": "1", "GOTOOLCHAIN": "local",
 	} {
 		if child[k] != want {
 			t.Errorf("the child was given %s=%q, want %q", k, child[k], want)

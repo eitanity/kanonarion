@@ -170,6 +170,116 @@ values there, as they did when `verdict` and `reachability_state` gained theirs)
   a record that names no frame. `callgraph-show` text gains a `frame:` line and
   `--history` a `frame:` line per generation, both absent on such a record.
 
+## Fetch record: pipeline `0.6.0` → `0.7.0`
+
+**Derivation change; no record shape change, no store migration.** A `0.7.0`
+fetch derives `verification_status` differently in two cases:
+
+- `GOSUMDB` is read as the go command reads it: `<name>[+<key>]`, then an
+  optional URL, with the key of `sum.golang.org` built in and
+  `sum.golang.google.cn` as its alias. A `0.6.0` build took the first field as
+  the host and the second as the key, so a full key, or a name followed by a
+  URL, recorded `UnverifiedNoSumDB`; these now record `Verified`. A value the go
+  command refuses now stops `fetch`, `audit`, `walk`, `sbom`, `inspect` and
+  `OpenDriver` at start-up, exit `20`, with no record written, where `0.6.0`
+  recorded `UnverifiedNoSumDB`.
+- `fetch --gomod` and `fetch <module>@<version> --gomod` check every module
+  against the project's `go.sum`, as `audit` does. Where the checksum database
+  cannot answer, a matching module records `VerifiedByGoSum` where `0.6.0`
+  recorded `UnverifiedNoSumDB`, and a module whose hash disagrees fails with no
+  record. A go.sum match that the git check contradicts records
+  `UnverifiedHashMismatch` on every command, `audit` included, where `0.6.0`
+  recorded `VerifiedByGoSum`.
+
+Fetch records are append-only, so `0.6.0` rows stay as written. A fetch at
+`0.7.0` does not serve a `0.6.0` row from cache: the next fetch of a coordinate
+appends a `0.7.0` record, and reads serve it.
+
+## Vulnerability record: pipeline `v26` → `v27`
+
+**Record content change; no store migration; no schema-version bump.** Under
+`--tinygo`, every `go` child of a scan, and govulncheck's own loader, runs the
+`go` of TinyGo's merged `GOROOT` with `GOTOOLCHAIN=local`. A project whose `go`
+line names a newer Go than the installed one was scanned by that newer Go
+against its own `GOROOT`, so a closure TinyGo builds with C read as one without:
+its findings read `fidelity: source` where they now read `module`. Unchanged
+otherwise, and unchanged for every scan without `--tinygo`.
+
+Records are keyed by `(module, version, pipeline_version, snapshot, frame)`:
+`v26` rows stay, are not served for a `v27` question, and remain readable in the
+ledger. Cost is one re-scan per coordinate.
+
+## Walk record: pipeline `1.11.0` → `1.12.0`, no migration
+
+**Record content change; no DDL and no store migration.** Under `--tinygo`, the
+walk lists the closure with the `go` of TinyGo's merged `GOROOT`, merged from the
+Go the project's `go` line resolves to on this host. A project whose `go` line
+names a newer Go than the installed one recorded every standard package as Go's
+and none as TinyGo's; it now records the split TinyGo builds. Unchanged for
+every walk without `--tinygo`. Rows at `1.11.0` stay and are re-resolved rather
+than read.
+
+## Call graph record: pipeline `0.14.0` → `0.15.0` - template text in a package var or an embedded file
+
+**Record content change; no store migration; no schema-version bump.** A
+template `Execute` or `ExecuteTemplate` edge's `lookup_name` now also reads the
+text `Parse` is given as an unexported package-level var whose only store
+outside test code is a constant, or an unexported `//go:embed` `string` or
+`[]byte` var naming one file. A
+`0.14.0` record left such an edge's `lookup_name` empty. Under `--tinygo`, a
+tree whose `go` line names a newer Go than the installed one is loaded with the
+`go` of TinyGo's merged `GOROOT`, so its graph holds TinyGo's `reflect` and
+`runtime` rather than Go's. A package whose SSA construction panics is now kept
+without its bodies and the rest of the program rebuilt, where before the build
+went on and could wait forever on the panicked package. Unchanged otherwise.
+
+Records are keyed `(module, version, pipeline_version)`: `0.14.0` rows stay and
+become unreachable. Cost is one re-extraction per coordinate on its next
+`callgraph` or `local` run.
+
+## Call graph record: pipeline `0.13.0` → `0.14.0`, and callgraph migration 18 - the name a reflective lookup passes
+
+**Record shape change; store migration 18; no schema-version bump.** An edge
+records inside the seal, as `lookup_name`, the names a reflective lookup there
+may bind: on `reflect.(Value).MethodByName` and `reflect.(*rtype).MethodByName`
+a constant name argument; on `text/template` and `html/template` `Execute` and
+`ExecuteTemplate` the sorted, comma-joined field and method names in every
+template text the caller's module parses, `-` where they name none. It is
+empty where the names are not known: a computed name, or a module that calls
+`Parse` with non-constant text, `ParseFiles`, `ParseGlob`, `ParseFS`, `Delims`
+or `AddParseTree`, or parses no template. The field is omitted when empty, so a
+record without one marshals to the bytes it always did.
+Migration 18 adds its column copy:
+
+```sql
+ALTER TABLE callgraph_edges ADD COLUMN lookup_name TEXT NOT NULL DEFAULT ''
+```
+
+No back-fill, and no row is changed: every existing row is at `0.13.0` or
+earlier, which is never served at `0.14.0`. Store `v93` -> `v94`.
+`callgraph-show --json` edges gain `lookup_name` where set.
+
+The read-time `reachability` search binds each lookup its entry points reach to
+the exported methods of its names. A negative past bound lookups only reads
+`confirmed` or `disputed`, or keeps the recorded rung where a bound method is in
+a module whose graph is not joined; one past a lookup with no known names still
+reads `unconfirmed`. Each `reflective_dispatch.sites` entry gains `bound`,
+`methods_bound` and, where set, `lookup_name`, and a route hop over an added edge
+carries `dispatch.kind` `reflect`. Additive.
+
+The same bump marks as test code (`is_test`) a wrapper SSA builds for a method a
+test type promotes from an embedded field, and a generic instance with a type
+argument declared in test code. A `0.13.0` record held them as production code,
+where a dependency join kept them as calls into a module whose graph is not held.
+A record also holds a node for every function of the module built with its
+body, including one no edge names: a `0.13.0` record omitted those, so another
+module's call to one read as a call into a graph not held. `node_count` grows;
+`edge_count` does not.
+
+Records are keyed `(module, version, pipeline_version)`: `0.13.0` rows stay and
+become unreachable. Cost is one re-extraction per coordinate on its next
+`callgraph` or `local` run.
+
 ## SBOM: pipeline `0.10.0` → `0.11.0`
 
 **Document bytes change; no store migration.** The bump makes stored `0.10.0`

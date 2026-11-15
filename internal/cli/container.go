@@ -862,7 +862,12 @@ func selectFetchAdapters(sumdbDir, goproxy, goBinary string, localBlobs fetchpor
 		// a policy answer (GOSUMDB=off, GOPRIVATE, no hash line) returns on the first
 		// attempt. In --from-modcache mode the go.sum adapter above reads a local
 		// file with no network to flake, so it is left undecorated.
-		sumdb = sumdbretry.New(fetchsumdb.New(sumdbDir), logger)
+		client, serr := fetchsumdb.New(sumdbDir)
+		if serr != nil {
+			_ = closeStore() //nolint:errcheck // the refusal is the error returned
+			return nil, nil, nil, fmt.Errorf("creating checksum-database client: %w", serr)
+		}
+		sumdb = sumdbretry.New(client, logger)
 		dp, perr := fetchproxy.New(goproxy, false)
 		switch {
 		case fetchproxy.IsRefusal(perr):
@@ -942,15 +947,26 @@ func privateFetchUseCase(fetchUC *fetchapp.FetchModuleUseCase, goSum string, log
 // withProjectGoSumAnchor layers the walk root's go.sum on the network path as
 // an extra offline integrity anchor, when there is one.
 func withProjectGoSumAnchor(fetchUC *fetchapp.FetchModuleUseCase, closeStore func() error, logger *slog.Logger) (*fetchapp.FetchModuleUseCase, error) {
-	if !modcacheMode && projectGoSumPath != "" {
-		gsClient, gerr := gosumfile.New(projectGoSumPath, logger)
-		if gerr != nil {
-			_ = closeStore() //nolint:errcheck // the refusal is the error returned
-			return nil, fmt.Errorf("loading project go.sum for verification: %w", gerr)
-		}
-		fetchUC = fetchUC.WithProjectGoSum(gsClient)
+	uc, err := projectGoSumAnchor(fetchUC, projectGoSumPath, logger)
+	if err != nil {
+		_ = closeStore() //nolint:errcheck // the refusal is the error returned
+		return nil, err
 	}
-	return fetchUC, nil
+	return uc, nil
+}
+
+// projectGoSumAnchor layers goSum on fetchUC's network path. An empty goSum
+// leaves it unchanged, as does --from-modcache, where go.sum is already the
+// sole anchor.
+func projectGoSumAnchor(fetchUC *fetchapp.FetchModuleUseCase, goSum string, logger *slog.Logger) (*fetchapp.FetchModuleUseCase, error) {
+	if modcacheMode || goSum == "" {
+		return fetchUC, nil
+	}
+	gsClient, err := gosumfile.New(goSum, logger)
+	if err != nil {
+		return nil, fmt.Errorf("loading project go.sum for verification: %w", err)
+	}
+	return fetchUC.WithProjectGoSum(gsClient), nil
 }
 
 // withAnalysisModuleCache gives the analyser the module cache its isolated

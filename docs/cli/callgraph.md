@@ -1574,13 +1574,10 @@ inventing a confidence rank for it. Every edge states it in `--json`, `true` or
 reader back where they started.
 
 **`reflect_dispatch` means the callee is in package `reflect`, and nothing
-narrower.** It is not a count of calls the analysis could not follow. An edge to
-`reflect.TypeOf` carries it and has exactly one callee. The calls that really are
-unbounded are the five `reflect.Value` methods that pick their target at run time
-— `Call`, `CallSlice`, `Method`, `MethodByName`, `FieldByName` — so filter on
-`to_id` as well as on the attribute. On one 74,797-edge graph the attribute is set
-on 162 edges and 2 of them are of that kind, so reading the attribute alone
-overstates them by about eighty times.
+narrower.** An edge to `reflect.TypeOf` carries it and has exactly one callee.
+Select the method lookups `reachability` binds on `to_id`, leaving out an
+`Unknown` edge without it: that is a call through a function value. Its
+`lookup_name` is a constant `MethodByName` name or a template's names.
 
 ## Edge kind
 

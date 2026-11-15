@@ -590,6 +590,11 @@ ALTER TABLE callgraph_records ADD COLUMN tinygo_target TEXT NOT NULL DEFAULT '';
 ALTER TABLE callgraph_records ADD COLUMN tinygo_version TEXT NOT NULL DEFAULT '';
 CREATE INDEX IF NOT EXISTS callgraph_records_frame_idx
     ON callgraph_records (module_path, module_version, pipeline_version, goos, goarch, goarm, tinygo_target)`},
+		// Migration v18: the constant name a reflect MethodByName call passes, the
+		// column copy of CallEdge.LookupName. NO BACK-FILL: every existing row is
+		// at a pipeline before the field existed and is never served at 0.14.0.
+		{Module: "callgraph", Version: 18, SQL: `
+ALTER TABLE callgraph_edges ADD COLUMN lookup_name TEXT NOT NULL DEFAULT ''`},
 	}
 }
 
@@ -1003,8 +1008,8 @@ INSERT OR IGNORE INTO callgraph_edges (
     record_content_hash,
     from_module, from_version, pipeline_version,
     from_id, to_id, confidence,
-    call_site_file, call_site_line, reflect_dispatch, is_test, kind
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    call_site_file, call_site_line, reflect_dispatch, is_test, kind, lookup_name
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 		stmtEdge, err := tx.PrepareContext(ctx, qEdge)
 		if err != nil {
@@ -1031,7 +1036,7 @@ INSERT OR IGNORE INTO callgraph_edges (
 				e.FromID, e.ToID, string(e.Confidence),
 				e.CallSite.File, e.CallSite.Line, e.ReflectDispatch,
 				testNode[e.FromID] || testNode[e.ToID],
-				string(e.Kind),
+				string(e.Kind), e.LookupName,
 			); err != nil {
 				return fmt.Errorf("inserting callgraph edge %s→%s: %w", e.FromID, e.ToID, err)
 			}
@@ -2118,7 +2123,7 @@ func storedBytesHashToSeal(raw []byte, edges []domain2.CallEdge, storedHash stri
 // every other generation's — and the hash verification over the reconstructed
 // record would then fail on a record nothing had tampered with.
 func (s *Store) fetchEdges(ctx context.Context, recordContentHash string, expected int, pool *identifierPool) ([]domain2.CallEdge, error) {
-	const q = `SELECT from_id, to_id, confidence, call_site_file, call_site_line, reflect_dispatch, kind
+	const q = `SELECT from_id, to_id, confidence, call_site_file, call_site_line, reflect_dispatch, kind, lookup_name
 	    FROM callgraph_edges
 	    WHERE record_content_hash = ?
 	    ORDER BY from_id, to_id, call_site_file, call_site_line`
@@ -2136,23 +2141,24 @@ func (s *Store) fetchEdges(ctx context.Context, recordContentHash string, expect
 	// addresses, so a fresh set each iteration is an allocation per edge for
 	// values that are overwritten immediately.
 	var (
-		fromID, toID, file, conf, kind sql.RawBytes
-		line                           int
-		reflectDispatch                bool
+		fromID, toID, file, conf, kind, name sql.RawBytes
+		line                                 int
+		reflectDispatch                      bool
 	)
 	for rows.Next() {
 		// RawBytes rather than string: the driver's own buffer is handed over
 		// without a copy, and the copy that IS kept is the interned one. Every
 		// value must be interned before the next Next, which is the only point at
 		// which the bytes are still valid.
-		if serr := rows.Scan(&fromID, &toID, &conf, &file, &line, &reflectDispatch, &kind); serr != nil {
+		if serr := rows.Scan(&fromID, &toID, &conf, &file, &line, &reflectDispatch, &kind, &name); serr != nil {
 			return nil, fmt.Errorf("scanning callgraph edge: %w", serr)
 		}
 		e := domain2.CallEdge{
-			FromID:   pool.intern(fromID),
-			ToID:     pool.intern(toID),
-			CallSite: domain2.SourcePosition{File: pool.intern(file), Line: line},
-			Kind:     domain2.EdgeKind(pool.intern(kind)),
+			FromID:     pool.intern(fromID),
+			ToID:       pool.intern(toID),
+			CallSite:   domain2.SourcePosition{File: pool.intern(file), Line: line},
+			Kind:       domain2.EdgeKind(pool.intern(kind)),
+			LookupName: pool.intern(name),
 		}
 		// Normalise any legacy vocabulary lingering in the table; a stored
 		// Reflection string also implies the reflect origin.

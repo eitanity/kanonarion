@@ -153,9 +153,9 @@ The rungs, most to least sound:
 
 | `soundness` | What was searched |
 |---|---|
-| `confirmed` | A call-graph search ran over a graph built with function bodies and found no path **from any entry point the analysis can name** — the module's public API, its package initialisers, a command's `main`, a function with an export directive, an `http.Handler`. The only rung a clean negative may rest on. |
+| `confirmed` | A call-graph search ran over a graph built with function bodies and found no path **from any entry point the analysis can name** — the module's public API, its package initialisers, a command's `main`, a function with an export directive, an `http.Handler`. Or, from `reachability --local`, the symbols are in none of the symbol tables of the mains the build declares, each built by `go build`. The only rung a clean negative may rest on. |
 | `inferred` | No search ran for this finding. An analysis loaded the whole build from source and never reported a route; the negative reads that silence. |
-| `unconfirmed` | An analysis ran that could not have found a route at all — a symbol table inspected in binary mode, a module-level scan under a TinyGo frame (see [Scanning under a TinyGo frame](vuln.md#scanning-under-a-tinygo-frame)), a call graph below `BUILT_WITH_BODIES`, or an answer that does not say what produced it. |
+| `unconfirmed` | An analysis ran that could not have found a route at all — a symbol table inspected in binary mode, a module-level scan under a TinyGo frame (see [Scanning under a TinyGo frame](vuln.md#scanning-under-a-tinygo-frame)), a call graph below `BUILT_WITH_BODIES`, a clean search whose entry points reach a reflective method lookup whose methods are not known, or an answer that does not say what produced it. |
 | `unsearchable` | The advisory names no symbols for this module path, so there was never a target to search for. Unlike the rungs above, no re-scan at any fidelity changes this. |
 | `disputed` | The recorded negative is contradicted: a search from one of those entry points found a path to the symbol. Both answers stand; neither is discarded. Treat the finding as open. |
 
@@ -222,64 +222,55 @@ nothing you can enter reaches the vulnerable symbol but some function the module
 ships does, the rung is `confirmed` against the entry points, **and the reason
 says so and names the route**. Read both before acting on it.
 
-A graph that names no entry point at all confirms nothing. The search would start
-nowhere, so of course it finds nothing, and `entry_point_roots: 0` in the JSON is
-what says that happened.
+A graph that names no entry point confirms nothing: the search starts nowhere.
+`entry_point_roots: 0` in the JSON says so.
 
-### What the search could not follow
+### Reflective method lookups
 
-A negative says no route was found. It cannot say no route exists, and one of the
-ways a route hides is a call whose target is chosen while the program runs. So the
-search names those calls.
+A **reflective dispatch site** is a reflective method lookup, or a call to a
+standard-library function that makes one: `Method`, `MethodByName` or `Methods` on
+a `reflect.Value` or `reflect.Type`; `Execute` or `ExecuteTemplate` on a
+`text/template` or `html/template` `Template`; `Register` or `RegisterName` in
+`net/rpc`.
 
-A **reflective dispatch site** is a call to one of the five `reflect.Value` methods
-that pick what runs at run time: `Call`, `CallSlice`, `Method`, `MethodByName`,
-`FieldByName`. The analysis cannot say where such a call goes, so a route could be
-hiding behind it.
+It is **not** a call into package `reflect`. `Value.Call` and `FieldByName` are not sites either:
+a function reaches `Call` as a value, and taking that value is a reference the
+search follows.
 
-It is **not** a call into package `reflect`. `reflect.TypeOf` has exactly one
-callee and conceals nothing, and nearly every call into `reflect` is of that sort:
-on one 74,797-edge graph, 162 edges are calls into `reflect` and 2 of them are
-dispatch sites. Counting the first number would qualify every negative with a
-figure roughly eighty times too large.
-
-Two counts are reported and neither is the other's summary:
-
-- `site_count` — how many such calls are in the graph that was searched.
-- `reachable_site_count` — how many of those sit in code that something the
-  analysis can name as an entry point actually reaches.
-
-**The second is the one that decides whether a negative is worth doubting.** A
-reflective call in code nothing enters cannot be on a route into the module, so it
-qualifies nothing. Test helpers are the usual case:
+A site an entry point reaches gets an edge to each exported, non-test method of
+the names it is known to use: a `MethodByName` call's constant name, or for `Execute` and
+`ExecuteTemplate` the field and method names in every template text its module
+parses, when each is a constant or an unexported package var set to one once
+outside tests or by `//go:embed`. Others bind nothing: a computed name,
+`Method`, `Methods`, `net/rpc`, and a module that calls `Parse` with other
+text, `ParseFiles`, `ParseGlob`, `ParseFS` or `Delims`, or parses none, and
+hold a clean negative at `unconfirmed`, named in the reason. Under a TinyGo
+0.44 or older frame a lookup returns no method, so a site binds nothing,
+holds no rung and `no_method` says why. An unreached site adds nothing.
+Each site in `sites` carries `reachable_from_entry_point`, `bound`,
+`methods_bound` and `lookup_name`, the names:
 
 ```
-GO-2026-6303 affects golang.org/x/crypto@v0.54.0 but is NOT reachable [...]
-  soundness: inferred — [...]
-  reflective dispatch: 2 call sites the search could not follow, none of them reachable from an entry point the analysis can name — none can be on a route into this module, so they do not qualify this answer
-    golang.org/x/crypto/internal/testenv.CommandContext -> reflect.(Value).FieldByName at internal/testenv/exec.go:80 — not reachable from any entry point the analysis can name
-    golang.org/x/crypto/internal/testenv.CommandContext -> reflect.(Value).FieldByName at internal/testenv/exec.go:99 — not reachable from any entry point the analysis can name
+GO-0000-0000 affects example.com/mod@v1.0.0 but is NOT reachable [...]
+  soundness: disputed — [...] On that route, example.com/app main -> example.com/app (D).Run is reflect, at main.go:13, an edge the search added for the reflective method lookup [...]
+  reflective dispatch: 1 call site that looks a method up by reflection, 1 of them is reachable from an entry point the analysis can name
+    example.com/app.main -> reflect.(Value).MethodByName at main.go:13 — reachable from an entry point, bound to the 1 exported method named Run
 ```
 
-Finding none is the common answer, and it is stated rather than left out. A search
-that ran over a graph and found no such call has measured something; an absent
-number has not:
+The added hop reads `reflect` in `--json` too. A bound method in a module whose
+graph is not joined is an unjoined call. Finding no site is stated:
 
 ```
-  reflective dispatch: none — the graph searched holds no call to a reflect method that picks its target at run time, so no reflective call site could be hiding a route this search failed to follow
+  reflective dispatch: none — the graph searched holds no reflective method lookup and no call to a standard-library function that makes one
 ```
 
-A search that never ran prints nothing here at all, because it measured nothing.
+A search that never ran prints nothing here.
 `not_searched` above says why.
 
-Two calls from one function to one `reflect` method on two lines are two sites, not
-one, so each carries its own `call_site` and a reader can go and look. The raw
-attribute each site is filtered from is on every `callgraph-show --json` edge as
-`reflect_dispatch` — see [callgraph](callgraph.md), which explains why reading it
-unfiltered gives a number roughly eighty times too large.
-
-This states what a search could not follow. It does not change what the search
-concluded: no verdict and no soundness rung moves because of it.
+Two calls from one function to one `reflect` method on two lines are two sites, each
+with its own `call_site`. The callee picks the site, except an `Unknown` edge
+without `reflect_dispatch`: that is a call through a function value, not a lookup
+(see [callgraph](callgraph.md)).
 
 ### A search that could not be made says so
 
@@ -321,7 +312,7 @@ the coordinate, or the graph names none of the advisory's symbols — which is n
 | `routes` | Every route the search found, from either rooting, each naming its own root. |
 | `graphs_searched` | The stored call graphs the traversal ran over, each named with its coordinate, fidelity and size. One entry for an ordinary module; two or three for a negative measured in your build, which is a join — see below. The middle entry, where present, counts the further dependency graphs joined and names the first three. |
 | `not_joined` | Why the join could not settle a negative measured in your build: your build has no graph (the command that analyses it is named), or your entry points reach calls the join cannot follow (the calls are named, with why each was not joined and the `callgraph` command where one would join it). Absent where the join ran and followed every call. |
-| `reflective_dispatch` | What the search could not follow: `site_count`, `reachable_site_count`, and a `sites` list. Always present, zero included. See below. |
+| `reflective_dispatch` | The reflective method lookups the search went past: `site_count`, `reachable_site_count`, and a `sites` list. Always present, zero included. See below. |
 
 The same fact is on `callgraph-show` as `artifact_kind`, in text on the fidelity
 line and in `--json`, so you can see which rooting a graph will get before you ask
@@ -872,7 +863,7 @@ examined eleven and cleared one.
 | `reason` | Means |
 |---|---|
 | `no stored vulnerability record for this coordinate; it has never been vuln-scanned` | Nothing is known about it either way. This is **not** "no known vulnerabilities" — a record with no findings is an answer and counts as covered. |
-| `the local build resolves this module without a version (a directory replacement), so it names no coordinate to look up` | Nothing asked the store about it. |
+| `the local build resolves this module without a version, so it names no coordinate to look up` | Nothing asked the store about it. A replace is read as the walk records it (the replacement, or `<path>@local` for a directory); see `coverage.replaced_modules`. |
 | `the store holds a vulnerability record for this coordinate, but only from another build's frame; this build has not been vuln-scanned` | The module has been scanned — for a different project. Nothing measured this build, so nothing seeded the probe. Scan this build to cover it. |
 | `the store holds vulnerability records for this coordinate only at superseded pipeline versions; it has been vuln-scanned and must be scanned again` | The module has been scanned for this build, under scan logic this build supersedes. Re-scan it to cover it. |
 | `the stored scan record for this coordinate says it was not analysed (the scan failed or the module was unscannable), so it is no answer about this build` | A scan ran and did not analyse the module. A record like that found nothing because nothing was looked at, so it is not counted as covered. Read the record's reason with `kanonarion vuln-show <module>@<version> --gomod ./go.mod`. |
@@ -1117,16 +1108,13 @@ they do not carry the same rung.
 
 | `reachability_state` | `state_source` | `soundness` |
 |---|---|---|
-| `absent` | `symbol-table` | `unconfirmed` - the affected symbols are not in the symbol table of the binaries this build links, so the linker did not keep them. Real evidence, and not a search: no call graph was built, so nothing could have found a route whether or not one exists. |
+| `absent` | `symbol-table` | `confirmed` when every main the build declares was built by `go build`: none of their symbol tables, each built with inlining off, holds an affected symbol, so the linker kept no route to them, reflection included. Otherwise `unconfirmed`. |
 | `unreachable` | `govulncheck` | whatever the stored scan's own analyser and fidelity earn, usually `inferred`. This answer was not measured here; it was carried from the store, and it states the rung of the search it actually came from. |
 | `present`, `reachable`, `unknown` | - | `not stated`. There is no absence to qualify. |
 
-An `absent` answer never reads `confirmed`, whatever the probe built.
-`confirmed` means a call-graph search ran over a graph built with function bodies;
-this probe reads a linker's output. Where the probe could not read every main
-package, or where the workspace declares no main and a synthetic harness was
-compiled instead, `soundness_reason` says so - an absence from tables that do not
-cover the product is a weaker claim than one from tables that do.
+An `absent` answer reads `unconfirmed` when a main package did not build, when
+the workspace declares no main and a synthetic harness was compiled instead, or
+under `--tinygo`. `soundness_reason` names which.
 
 `notice` is set when the store has no findings for the analysed dependency
 modules - typically because they have not been scanned. An empty `modules` array

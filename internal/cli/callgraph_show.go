@@ -546,15 +546,16 @@ type callEdgeJSON struct {
 	// It means THE CALLEE IS IN PACKAGE reflect, and nothing narrower. It is not
 	// a count of reflective dispatches: an edge to reflect.TypeOf carries it and
 	// has exactly one callee, and summing this field overstates the calls an
-	// analysis cannot bound by about two orders of magnitude. The calls that
-	// really are unbounded are the five reflect.Value methods that choose their
-	// target at run time — Call, CallSlice, Method, MethodByName, FieldByName —
-	// so a reader after those must filter on to_id as well.
+	// analysis cannot bound by about two orders of magnitude. The reflective
+	// method lookups a negative search binds are selected on to_id: the *rtype
+	// lookups do not carry this attribute.
 	//
 	// There is no third state. Migration v6 purged every row written before the
 	// column existed, so a false here is measured-and-not-reflect and never
 	// predates-the-attribute.
 	ReflectDispatch bool `json:"reflect_dispatch"`
+	// LookupName is the constant name a reflect MethodByName call passes here.
+	LookupName string `json:"lookup_name,omitempty"`
 }
 
 // edgeKindJSON renders an edge kind for the curated shape, naming the zero
@@ -929,6 +930,7 @@ func toCallGraphJSON(r domain.CallGraphRecord) callGraphRecordJSON {
 			Confidence:      string(e.Confidence),
 			Kind:            edgeKindJSON(e.Kind),
 			ReflectDispatch: e.ReflectDispatch,
+			LookupName:      e.LookupName,
 		}
 	}
 	testNodes := 0
