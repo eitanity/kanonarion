@@ -24,7 +24,7 @@ exit 0
       "verification": {
         "status": "divergent",
         "retracted": false,
-        "error": "divergent fetch records for example.com/mod@v1.2.0 at pipeline 0.6.0: module_hash disagrees ([h1:3IvVk0RhFj+2ByrMSiZ8R9Zi8RQYOGgRkIQ2mO6rqo4= h1:e3OmvJfFGN8zHyBHMYyERM362zguHcEOgGGgZ+9xR6A=]; records [sha256:790cd5bdf6c1f938dd4e0d9a888ba7beb83b8099dd00e07ceb3cb9c16088f57b sha256:7da72f9ae624937ba5983b17c639466df880bb3aba57d351bb7182c5868b31db]) — two measurements describe different artefacts; recover with --force, which appends an authoritative measurement and erases nothing"
+        "error": "divergent fetch records for example.com/mod@v1.2.0 at pipeline 0.7.0: module_hash disagrees ([h1:3IvVk0RhFj+2ByrMSiZ8R9Zi8RQYOGgRkIQ2mO6rqo4= h1:e3OmvJfFGN8zHyBHMYyERM362zguHcEOgGGgZ+9xR6A=]; records [sha256:1452a78fba8c66e0c53446bcd14a83d26b4e525a3f9f6041589452f77b18b017 sha256:f0c15e8e1f70407b29e8763abc4603438f55410482ccfcd155d0279f512c1e26]) — two measurements describe different artefacts; recover with --force, which appends an authoritative measurement and erases nothing"
       },
       "provenance": {
         "fork_heuristic": {
@@ -161,7 +161,7 @@ exit 0
         "first_validated_at": "2026-01-15T09:00:00Z",
         "last_validated_at": "2026-02-20T09:00:00Z",
         "snapshot_version": "v2026-02-14T00-00-00",
-        "pipeline_version": "v26",
+        "pipeline_version": "v27",
         "snapshot_retrieved_at": "2026-02-14T00:00:00Z",
         "snapshot_age_days": 6
       },

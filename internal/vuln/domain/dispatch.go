@@ -51,7 +51,8 @@ const (
 	//
 	// The edge attribute behind it, reflect_dispatch, is broader: it marks any
 	// call into package reflect, and most of those bound perfectly. It is not a
-	// count of this kind.
+	// count of this kind. A negative search also uses it for a hop over an edge
+	// it added past a reflective method lookup; see LookupHopDispatch.
 	DispatchReflect DispatchKind = "reflect"
 
 	// DispatchFramework is an edge bound by a framework model or thunk rather
@@ -259,15 +260,9 @@ func DispatchKindOfEdge(calleeID, confidence string, reflectDispatch, reference 
 // reflect.Value methods that pick their target at run time, from a name string
 // or from the value itself, so a static analysis cannot bound the callee.
 //
-// reflect.Type's Method, MethodByName and FieldByName are deliberately absent:
-// they return a descriptor rather than something to call, and the graph spells
-// them with the *rtype receiver.
-//
-// It is exported because two readers need the same answer: the hop annotator
-// above, and the read-time negative search that reports which sites in a graph
-// it could not follow. A second list would drift, and the first version of this
-// question counted every call into package reflect and overstated the
-// population by two orders of magnitude.
+// It decides the hop annotation, which is sealed on routes, so the list stays
+// as it was recorded. It is not the lookup sites a negative search binds: that
+// is IsReflectiveLookup, which includes reflect.Type's lookups and omits Call.
 func IsReflectDispatcher(calleeID string) bool {
 	switch calleeID {
 	case "reflect.(Value).Call",
@@ -275,6 +270,39 @@ func IsReflectDispatcher(calleeID string) bool {
 		"reflect.(Value).Method",
 		"reflect.(Value).MethodByName",
 		"reflect.(Value).FieldByName":
+		return true
+	default:
+		return false
+	}
+}
+
+// IsReflectiveLookup reports whether a call-graph node id names a reflective
+// method lookup, or a standard-library function that makes one for its caller.
+//
+// A method fetched by a lookup has no call edge, so a negative search adds one
+// to each method of a name the site is known to use. Go has no lookup of a function by
+// name: a function reaches reflect.Value.Call only as a value, and taking that
+// value records a Reference edge the search already follows. TinyGo's
+// reflect.Type is *rawType, so its lookups are listed under that receiver too.
+func IsReflectiveLookup(calleeID string) bool {
+	switch calleeID {
+	case "reflect.(Value).Method",
+		"reflect.(Value).MethodByName",
+		"reflect.(Value).Methods",
+		"reflect.(*rtype).Method",
+		"reflect.(*rtype).MethodByName",
+		"reflect.(*rtype).Methods",
+		"reflect.(*rawType).Method",
+		"reflect.(*rawType).MethodByName",
+		"reflect.(*rawType).Methods",
+		"text/template.(*Template).Execute",
+		"text/template.(*Template).ExecuteTemplate",
+		"html/template.(*Template).Execute",
+		"html/template.(*Template).ExecuteTemplate",
+		"net/rpc.Register",
+		"net/rpc.RegisterName",
+		"net/rpc.(*Server).Register",
+		"net/rpc.(*Server).RegisterName":
 		return true
 	default:
 		return false
@@ -364,4 +392,16 @@ func (t DispatchTally) String() string {
 		b.WriteString(")")
 	}
 	return b.String()
+}
+
+// LookupHopDispatch is the annotation on a hop a negative search reached over
+// an edge it added past a reflective method lookup. It names the site, so the
+// hop says which call made the lookup rather than reading not-annotated.
+func LookupHopDispatch(site ReflectiveDispatchSite) HopDispatch {
+	return HopDispatch{
+		Kind:     DispatchReflect,
+		CallSite: site.CallSite,
+		Reason: "an edge the search added for the reflective method lookup " + site.Caller + " -> " + site.Callee +
+			", " + site.Binding(),
+	}
 }

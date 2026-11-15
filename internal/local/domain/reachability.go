@@ -23,9 +23,13 @@ import (
 type BuildModule struct {
 	// Path is the module path.
 	Path string
-	// Version is the version the build selected. Empty when the build resolves
-	// the module through a directory replacement, which names no coordinate.
+	// Version is the version the build selected for Path, empty if it names none.
 	Version string
+	// ReplacePath and ReplaceVersion name the coordinate a replace directive
+	// makes the walk record, empty when none applies: the replacement's, or Path
+	// at coordinate.LocalVersion for a directory. Symbols keep Path's name.
+	ReplacePath    string
+	ReplaceVersion string
 	// Direct reports whether a package of the main module imports a package of
 	// this module in its non-test files.
 	Direct bool
@@ -40,9 +44,10 @@ const (
 	// "no known vulnerabilities" — that is a record with no findings, which is
 	// an answer and is counted as covered.
 	UncoveredNoStoredRecord = "no stored vulnerability record for this coordinate; it has never been vuln-scanned"
-	// UncoveredNoCoordinate means the build resolves the module without a
-	// version — a directory replacement — so there is no coordinate to look up.
-	UncoveredNoCoordinate = "the local build resolves this module without a version (a directory replacement), so it names no coordinate to look up"
+	// UncoveredNoCoordinate means the build resolves the module with no version
+	// and no replace, so there is no coordinate to look up. A directory replace
+	// is read under the module's path at coordinate.LocalVersion instead.
+	UncoveredNoCoordinate = "the local build resolves this module without a version, so it names no coordinate to look up"
 	// UncoveredOtherFrameOnly means the store holds a record for the coordinate,
 	// but every one of them was measured in another build's frame, so none of
 	// them says anything about this tree.
@@ -86,6 +91,14 @@ type UncoveredModule struct {
 	Path    string
 	Version string
 	Reason  string
+}
+
+// ReplacedModule is one replace in the build: the coordinate the
+// probe reads the record under, and the module@version it replaces.
+type ReplacedModule struct {
+	Path     string
+	Version  string
+	Replaces string
 }
 
 // UncoveredModuleLess is the canonical ordering for UncoveredModule slices.
@@ -202,6 +215,8 @@ type ProbeCoverage struct {
 	// HarnessOmitted names every exported declaration of a library workspace
 	// the probe harness left out. Empty for a binary probe.
 	HarnessOmitted []HarnessOmission
+	// Replaced names every replace in the build, sorted by Replaces.
+	Replaced []ReplacedModule
 }
 
 // SymbolProbeVerdict is the result of checking whether a CVE-affected symbol
@@ -261,22 +276,25 @@ const (
 	// qualify. A symbol found in the binary is its own evidence, and a verdict
 	// that determined nothing has no absence to state a rung for.
 	ProbeSoundnessNotStated = ""
-	// ProbeSoundnessUnconfirmed is what a symbol-table absence earns.
-	//
-	// It is deliberately NOT "confirmed". Confirmed means a search ran over a call
-	// graph built with function bodies and found no path; this probe built no call
-	// graph at all. It read the linker's output and observed that a name is not in
-	// it, which is the same class of evidence as a binary-mode analyser's symbol
-	// table — and that is classified unconfirmed for exactly this reason. Absence
-	// from the table is real evidence and it is not a search.
+	// ProbeSoundnessConfirmed is what an absence from every main the build
+	// declares earns, each built by go build with inlining off: the linker keeps
+	// every function any route reaches, reflection included.
+	ProbeSoundnessConfirmed = "confirmed"
+	// ProbeSoundnessUnconfirmed is what the other absences earn: a partial probe
+	// may lack the main that links the symbol, a library harness ships nowhere,
+	// and TinyGo's linker is not the one whose retention rule the rung rests on.
 	ProbeSoundnessUnconfirmed = "unconfirmed"
 )
 
-// The reasons behind ProbeSoundnessUnconfirmed. A bare rung is a label; the
-// reason names what was actually looked at, in the instrument's own terms.
+// The reasons behind a probe absence's rung. A bare rung is a label; the reason
+// names what was actually looked at, in the instrument's own terms.
 const (
+	// ProbeAbsentConfirmedReason is the reason for an absence from every main
+	// package the build declares, each built by go build.
+	ProbeAbsentConfirmedReason = "the affected symbols are in none of the symbol tables of the mains this build declares, " +
+		"each built with inlining off, so the linker kept no route to them, reflection included"
 	// ProbeAbsentReason is the reason for a symbol-table absence over a probe that
-	// read every main package the build declares.
+	// read every main package the build declares, built by tinygo.
 	ProbeAbsentReason = "the affected symbols are not in the symbol table of the binaries this build links, " +
 		"so the linker did not keep them; no call graph was built, so this is an absence from the artefact " +
 		"and not a search that ran over call edges and came back empty"
@@ -363,6 +381,9 @@ type ModuleProbeResult struct {
 	Path string
 	// Version is the module version.
 	Version string
+	// Replaces names the module@version this coordinate replaces in the build,
+	// empty when it replaces none.
+	Replaces string
 	// Findings is the per-CVE symbol probe results.
 	Findings []SymbolProbeFinding
 }

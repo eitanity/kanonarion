@@ -5,6 +5,8 @@ import (
 
 	"code.eitanity.com/kanonarion/internal/coordinate/coordinatetest"
 
+	callgraphdomain "code.eitanity.com/kanonarion/internal/callgraph/domain"
+
 	"code.eitanity.com/kanonarion/internal/vuln/adapters/reachability"
 	"code.eitanity.com/kanonarion/internal/vuln/domain"
 	"code.eitanity.com/kanonarion/internal/vuln/ports"
@@ -28,11 +30,11 @@ func reflectSiteGraph() ports.CallGraphProjection {
 	proj.ReflectiveDispatch = []ports.CallGraphReflectSite{
 		// Deliberately out of order, so the sort is asserted rather than inherited
 		// from however the store happened to return the edges.
-		{CallerID: "bind", CalleeID: "reflect.(Value).FieldByName", File: "bind.go", Line: 31},
-		{CallerID: "orphan", CalleeID: "reflect.(Value).MethodByName", File: "orphan.go", Line: 4},
-		{CallerID: "bind", CalleeID: "reflect.(Value).FieldByName", File: "bind.go", Line: 10},
-		{CallerID: "bind", CalleeID: "reflect.(Value).Call"},
-		{CallerID: "bind", CalleeID: "reflect.(Value).CallSlice", File: "generated.go"},
+		{CallerID: "bind", CalleeID: "reflect.(Value).MethodByName", File: "bind.go", Line: 31},
+		{CallerID: "orphan", CalleeID: "reflect.(*rtype).Method", File: "orphan.go", Line: 4},
+		{CallerID: "bind", CalleeID: "reflect.(Value).MethodByName", File: "bind.go", Line: 10},
+		{CallerID: "bind", CalleeID: "reflect.(Value).Method"},
+		{CallerID: "bind", CalleeID: "reflect.(*rtype).MethodByName", File: "generated.go"},
 	}
 	return proj
 }
@@ -59,11 +61,11 @@ func TestSearchNegative_ReflectiveSitesAreNamedWithTheirPositionAndReach(t *test
 	}
 	got := search.ReflectiveDispatch
 	want := []domain.ReflectiveDispatchSite{
-		{Caller: "bind", Callee: "reflect.(Value).Call", CallSite: "", ReachableFromEntryPoint: true},
-		{Caller: "bind", Callee: "reflect.(Value).CallSlice", CallSite: "generated.go", ReachableFromEntryPoint: true},
-		{Caller: "bind", Callee: "reflect.(Value).FieldByName", CallSite: "bind.go:10", ReachableFromEntryPoint: true},
-		{Caller: "bind", Callee: "reflect.(Value).FieldByName", CallSite: "bind.go:31", ReachableFromEntryPoint: true},
-		{Caller: "orphan", Callee: "reflect.(Value).MethodByName", CallSite: "orphan.go:4", ReachableFromEntryPoint: false},
+		{Caller: "bind", Callee: "reflect.(*rtype).MethodByName", CallSite: "generated.go", ReachableFromEntryPoint: true},
+		{Caller: "bind", Callee: "reflect.(Value).Method", CallSite: "", ReachableFromEntryPoint: true},
+		{Caller: "bind", Callee: "reflect.(Value).MethodByName", CallSite: "bind.go:10", ReachableFromEntryPoint: true},
+		{Caller: "bind", Callee: "reflect.(Value).MethodByName", CallSite: "bind.go:31", ReachableFromEntryPoint: true},
+		{Caller: "orphan", Callee: "reflect.(*rtype).Method", CallSite: "orphan.go:4", ReachableFromEntryPoint: false},
 	}
 	if len(got) != len(want) {
 		t.Fatalf("the search names %d reflective dispatch sites, want %d: %+v", len(got), len(want), got)
@@ -127,5 +129,41 @@ func TestSearchNegative_ReflectiveSitesCostOneGraphWalkPerGraph(t *testing.T) {
 		if f.NegativeSearch == nil || len(f.NegativeSearch.ReflectiveDispatch) != 5 {
 			t.Errorf("finding %d does not carry the graph's 5 reflective dispatch sites: %+v", i, f.NegativeSearch)
 		}
+	}
+}
+
+// TestSearchNegative_AFunctionValueCallNamingALookupStillConfirms runs the real
+// loader. The entry point reaches a call through a function value that CHA
+// bound to net/rpc.Register; no lookup is made, so the clean search confirms.
+func TestSearchNegative_AFunctionValueCallNamingALookupStillConfirms(t *testing.T) {
+	t.Parallel()
+
+	rec := callgraphdomain.CallGraphRecord{
+		Completeness: callgraphdomain.CompletenessBuiltWithBodies,
+		ArtifactKind: callgraphdomain.ArtifactLibrary,
+		Nodes: []callgraphdomain.CallNode{
+			{ID: "entry", Module: searchedModule, Package: searchedModule, Symbol: "Serve", IsExportedAPI: true},
+			{ID: "handler", Module: searchedModule, Package: searchedModule, Symbol: "handler"},
+			{ID: "vuln", Module: searchedModule, Package: searchedModule, Symbol: "vulnerable"},
+		},
+		Edges: []callgraphdomain.CallEdge{
+			{FromID: "entry", ToID: "handler", Confidence: callgraphdomain.ConfidenceDirect},
+			{FromID: "handler", ToID: "net/rpc.Register", CallSite: callgraphdomain.SourcePosition{File: "h.go", Line: 3},
+				Confidence: callgraphdomain.ConfidenceUnknown},
+		},
+	}
+	loader := reachability.NewCallGraphStoreLoader(&fakeStore{record: rec, found: true}, "p1")
+	vrec := searchedRecord(domain.TargetRootedAt(coordinatetest.MustNew(searchedModule, "v1.0.0")), []string{"vulnerable"})
+	reachability.NewNegativeSearcher(loader).Search(t.Context(), &vrec)
+
+	search := vrec.Findings[0].NegativeSearch
+	if search == nil || search.NotSearched != "" {
+		t.Fatalf("the search did not run: %+v", search)
+	}
+	if len(search.ReflectiveDispatch) != 0 {
+		t.Errorf("sites = %+v, want none", search.ReflectiveDispatch)
+	}
+	if got, reason := domain.NegativeSoundness(vrec.Findings[0]); got != domain.SoundnessConfirmed {
+		t.Errorf("soundness = %s (%s), want %s", got, reason, domain.SoundnessConfirmed)
 	}
 }

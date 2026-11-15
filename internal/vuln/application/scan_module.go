@@ -389,7 +389,10 @@ import (
 // so under --reachability its findings can carry a call-graph answer, and the
 // isolated scan's go.mod synthesis and package pick skip what "./..." skips.
 // Both change what a re-derived record contains; reads key on the version.
-const PipelineVersion = "v26"
+//
+// v27 runs every go child under a TinyGo frame as the merged GOROOT's own go, so
+// a tree whose go line names a newer Go is scanned against TinyGo's packages.
+const PipelineVersion = "v27"
 
 // ScanModuleUseCase orchestrates a single module's vulnerability scan.
 type ScanModuleUseCase struct {

@@ -104,3 +104,32 @@ func TestCallGraphShowJSON_ReflectAttributeIsAlwaysPresent(t *testing.T) {
 		}
 	}
 }
+
+// TestCallGraphShowJSON_EdgeStatesItsLookupName: a MethodByName edge carries the
+// constant name its call passes, and every other edge omits the key.
+func TestCallGraphShowJSON_EdgeStatesItsLookupName(t *testing.T) {
+	t.Parallel()
+
+	rec := reflectAxisRecord()
+	rec.Edges[2].LookupName = "Run"
+	raw, err := json.Marshal(toCallGraphJSON(rec))
+	if err != nil {
+		t.Fatalf("marshalling: %v", err)
+	}
+	var doc struct {
+		Edges []map[string]any `json:"edges"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("decoding: %v", err)
+	}
+	for _, e := range doc.Edges {
+		name, present := e["lookup_name"]
+		if e["to_id"] == "reflect.(Value).MethodByName" {
+			if name != "Run" {
+				t.Errorf("the lookup edge reports lookup_name %v, want Run", name)
+			}
+		} else if present {
+			t.Errorf("the edge to %v carries lookup_name %v", e["to_id"], name)
+		}
+	}
+}

@@ -14,7 +14,7 @@ security fixes; every earlier or pre-release version is unsupported. Pin a
 | `v0.16.x` | `code.eitanity.com/kanonarion` | ✅ |
 | `v0.15.x` and older | `github.com/eitanity/kanonarion` | ❌ |
 
-Release binaries are built with the Go version in `go.mod` (go1.27.3), so the Go
+Release binaries are built with the Go version in `go.mod` (go1.27.4), so the Go
 toolchain advisories that apply to a binary, and the newest Go source it can
 analyse, follow that version.
 

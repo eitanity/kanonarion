@@ -958,11 +958,10 @@ type CallGraphProjection struct {
 	// kind the analysis could not establish takes the library roots, and the
 	// answer states that it did.
 	ArtifactKind string
-	// ReflectiveDispatch is every edge in this graph the analyser recorded as a
-	// call into package reflect AND whose callee picks its target at run time.
-	// Both conditions are applied here, once, against the vuln domain's own list
-	// — see domain.IsReflectDispatcher — so no consumer has to re-derive them and
-	// get the population wrong.
+	// ReflectiveDispatch is every edge in this graph whose callee is a reflective
+	// method lookup, from a caller outside package reflect. It is selected once,
+	// against the vuln domain's own list — see domain.IsReflectiveLookup — so no
+	// consumer has to re-derive it and get the population wrong.
 	//
 	// It is a small derived slice rather than a flag on every edge because the
 	// edge list is the hot part of this projection: a real graph holds hundreds of
@@ -999,6 +998,10 @@ type CallGraphProjection struct {
 	// name the directory a re-analysis must run in, rather than telling the
 	// reader a tree is unnamed when the record names it.
 	AnalysisRoot string
+	// TinyGoTarget and TinyGoVersion are the graph's TinyGo frame, empty for a
+	// graph with none. TinyGo's reflect decides what a method lookup returns.
+	TinyGoTarget  string
+	TinyGoVersion string
 }
 
 // CallGraphNode is the subset of a call graph node the analyser needs.
@@ -1046,6 +1049,9 @@ type CallGraphReflectSite struct {
 	// the site. Both are zero when the edge carried no position.
 	File string
 	Line int
+	// LookupName is the edge's recorded name set, as the call graph spells it;
+	// empty where none is known.
+	LookupName string
 }
 
 // CallSiteKey names one directed call site: the caller node and the callee node,

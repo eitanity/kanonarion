@@ -52,7 +52,7 @@ kanonarion uses these four words everywhere.
 
 ### 0. Before you start
 
-- **Go 1.27.3 or newer.** kanonarion never downloads a Go toolchain. It analyses
+- **Go 1.27.4 or newer.** kanonarion never downloads a Go toolchain. It analyses
   with the one you already have. If a project needs a newer Go than that, it
   uses a newer Go that is already unpacked on this machine — in `~/sdk`, or one
   the go command downloaded earlier into the module cache. If there is none, it
@@ -102,7 +102,7 @@ github.com/spf13/cobra@v1.8.1
   Vulnerabilities: Clean
   Walk basis:      01KZWK6GHN7CK9Y54YTHMTNRKJ (frame target-rooted:github.com/spf13/cobra@v1.8.1)
   Run context:     this record was measured in a walk outside the 10 most recent walks this report loaded, so there is no run context to show
-  Snapshot:        2026-08-28T14:47:45Z (pipeline v26)
+  Snapshot:        2026-08-28T14:47:45Z (pipeline v27)
 
 Context size: ~6062 tokens (24248 bytes) of JSON for this module  (use --full for complete docs, --json for machine-readable)
 ```
@@ -354,7 +354,7 @@ github.com/spf13/cobra@v1.8.1 — Clean
   Walk:            01KZWK6GHN7CK9Y54YTHMTNRKJ
   Analysis frame:  target-rooted:github.com/spf13/cobra@v1.8.1
   Toolchain:       go1.26.5
-  First validated: 2026-08-27T01:09:38Z  (against this snapshot at pipeline v26, not first awareness)
+  First validated: 2026-08-27T01:09:38Z  (against this snapshot at pipeline v27, not first awareness)
                    first observation: kanonarion store ledger --event-type vuln_finding_observed --module github.com/spf13/cobra@v1.8.1
   Last validated:  2026-08-27T01:09:38Z
   Snapshot:        vuln.go.dev@2026-08-21T20:38:00Z

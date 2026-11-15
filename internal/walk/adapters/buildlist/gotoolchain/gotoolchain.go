@@ -65,7 +65,11 @@ func (r *Resolver) WithTinyGo(f goenv.TinyGo) *Resolver {
 	return &out
 }
 
+// goBin is the go every child runs: under a TinyGo frame the merged root's own.
 func (r *Resolver) goBin() string {
+	if r.tinygo.Declared() {
+		return r.tinygo.GoBinary()
+	}
 	if r.goBinary == "" {
 		return "go"
 	}

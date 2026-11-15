@@ -101,8 +101,10 @@ type reachabilityFinding struct {
 }
 
 type reachabilityModule struct {
-	Path     string                `json:"path"`
-	Version  string                `json:"version"`
+	Path    string `json:"path"`
+	Version string `json:"version"`
+	// Replaces names the module@version this coordinate replaces in the build.
+	Replaces string                `json:"replaces,omitempty"`
 	Findings []reachabilityFinding `json:"findings"`
 }
 
@@ -112,6 +114,22 @@ type reachabilityUncovered struct {
 	Path    string `json:"path"`
 	Version string `json:"version,omitempty"`
 	Reason  string `json:"reason"`
+}
+
+// reachabilityReplaced is one replace in the local build: the
+// coordinate the probe read, and the module@version it replaces.
+type reachabilityReplaced struct {
+	Path     string `json:"path"`
+	Version  string `json:"version"`
+	Replaces string `json:"replaces"`
+}
+
+// replacesNote renders what a coordinate replaces in the build, or "".
+func replacesNote(replaces string) string {
+	if replaces == "" {
+		return ""
+	}
+	return " (replaces " + replaces + ")"
 }
 
 // reachabilityProbedBinary is one main package of the local build and whether
@@ -171,6 +189,8 @@ type reachabilityCoverage struct {
 	// the harness left out. An absence says nothing about a route only through
 	// one of them. Absent when nothing was left out.
 	HarnessOmitted []reachabilityHarnessOmission `json:"harness_omitted,omitempty"`
+	// Replaced names every replace in the build. Absent when none.
+	Replaced []reachabilityReplaced `json:"replaced_modules,omitempty"`
 }
 
 type reachabilityOutput struct {
@@ -761,7 +781,7 @@ type negativeSearchOutput struct {
 	// calls into modules the join does not hold (naming the calls).
 	NotJoined string                    `json:"not_joined,omitempty"`
 	Routes    []reachabilityRouteOutput `json:"routes,omitempty"`
-	// ReflectiveDispatch is what the search could NOT follow. Where a search ran,
+	// ReflectiveDispatch is the lookup sites the search bound. Where a search ran,
 	// its zero counts are evidence — the graph was looked at and holds no such
 	// site — which an absent key cannot say, so it is emitted rather than omitted.
 	//
@@ -776,17 +796,13 @@ type negativeSearchOutput struct {
 // search ran over, in the curated JSON shape.
 //
 // The two counts are both here and neither is the other's summary. SiteCount is
-// how many calls the analysis could not bound; ReachableSiteCount is how many of
-// those sit in code anything the analysis can name as an entry point reaches. A
-// site nothing reaches hides no route into the module, so a consumer that weighs
-// a negative on the first number alone will weaken it for no reason. On the
-// store this was built against, every site found is of exactly that kind.
+// how many lookup sites the graph holds; ReachableSiteCount is how many of those
+// sit in code anything the analysis can name as an entry point reaches. Only a
+// reachable site adds edges to the search.
 //
-// A "reflective dispatch site" is a call to one of the five reflect.Value
-// methods that choose their target at run time: Call, CallSlice, Method,
-// MethodByName, FieldByName. It is NOT a call into package reflect — almost all
-// of those name one callee and bound perfectly, and counting them here would
-// overstate this by about two orders of magnitude.
+// A "reflective dispatch site" is a reflective method lookup, or a call to a
+// standard-library function that makes one. It is NOT a call into package
+// reflect: almost all of those name one callee and bound perfectly.
 type reflectiveDispatchOutput struct {
 	SiteCount          int `json:"site_count"`
 	ReachableSiteCount int `json:"reachable_site_count"`
@@ -804,6 +820,16 @@ type reflectiveDispatchSiteOutput struct {
 	// field that says whether the site qualifies anything, and it was derived for
 	// every site listed.
 	ReachableFromEntryPoint bool `json:"reachable_from_entry_point"`
+	// Bound says the site's name set is known, LookupName is that set, and
+	// MethodsBound how many methods the search bound the site to.
+	Bound        bool   `json:"bound"`
+	LookupName   string `json:"lookup_name,omitempty"`
+	MethodsBound int    `json:"methods_bound"`
+	// NoMethod says why the site bound nothing whatever its names: the frame's
+	// TinyGo reflect returns no method. Empty under Go's rule.
+	NoMethod string `json:"no_method,omitempty"`
+	// binding is the domain's rendering of the above, for the text surface.
+	binding string
 }
 
 // negativeSearchToOutput renders the search, or nil when none ran.
@@ -852,9 +878,22 @@ func reflectiveDispatchToOutput(s *vuldomain.NegativeSearch) reflectiveDispatchO
 			Callee:                  site.Callee,
 			CallSite:                site.CallSite,
 			ReachableFromEntryPoint: site.ReachableFromEntryPoint,
+			Bound:                   site.Bound,
+			LookupName:              site.LookupName,
+			MethodsBound:            site.MethodsBound,
+			NoMethod:                noMethod(site),
+			binding:                 site.Binding(),
 		})
 	}
 	return out
+}
+
+// noMethod is a reached TinyGo site's binding, and "" for every other site.
+func noMethod(site vuldomain.ReflectiveDispatchSite) string {
+	if !site.ReachableFromEntryPoint || !site.ReturnsNoMethod {
+		return ""
+	}
+	return site.Binding()
 }
 
 // reachabilityRouteOutput is one route in the curated JSON shape. Versioned
@@ -1154,6 +1193,11 @@ func findingReachabilityAnswer(coord coordinate.ModuleCoordinate, rec vuldomain.
 	// Empty on the positive: NegativeSoundness states a rung only where there is
 	// an absence to qualify, and a route answers its own soundness question.
 	soundness, soundnessReason := vuldomain.NegativeSoundness(f)
+	// A TinyGo frame's artefact is not linked by go build, so the probe's
+	// confirmed absence is not on offer there.
+	if !declaredTinyGo.Declared() && vuldomain.LocalProbeSettles(f) {
+		soundnessReason += vuldomain.LocalProbeClause
+	}
 	remedy, search := "", negativeSearchToOutput(f.NegativeSearch, classify)
 	if moduleLevel {
 		// A read-time search over the host's graphs names remedies that search
@@ -1348,12 +1392,13 @@ func printSoundness(stdout io.Writer, res vulnReachabilityQuery) {
 	_, _ = fmt.Fprintf(stdout, "  soundness: %s — %s\n", res.Soundness, res.SoundnessReason)
 }
 
-// printReflectiveDispatch prints what the read-time search could not follow.
+// printReflectiveDispatch prints the lookup sites the read-time search bound.
 //
 // It prints under a negative because that is the verdict it qualifies — or, far
-// more often, declines to qualify. A reflective dispatch site is a call to one
-// of the five reflect.Value methods that pick their target at run time, so the
-// analysis cannot say where it goes and a route could hide behind it.
+// more often, declines to qualify. A reflective dispatch site is a reflective
+// method lookup, or a call to a standard-library function that makes one. The
+// search went past each reachable one whose name set is known, and an unknown
+// one holds the rung at unconfirmed.
 //
 // Three things are said, in this order, because each is useless without the one
 // before it. How many sites there are. How many of those anything the analysis
@@ -1372,19 +1417,18 @@ func printReflectiveDispatch(stdout io.Writer, search *negativeSearchOutput) {
 	d := search.ReflectiveDispatch
 	if d.SiteCount == 0 {
 		_, _ = fmt.Fprintln(stdout,
-			"  reflective dispatch: none — the graph searched holds no call to a reflect method that picks its target at run time,"+
-				" so no reflective call site could be hiding a route this search failed to follow")
+			"  reflective dispatch: none — the graph searched holds no reflective method lookup and no call to a standard-library function that makes one")
 		return
 	}
-	_, _ = fmt.Fprintf(stdout, "  reflective dispatch: %d %s the search could not follow, %s\n",
-		d.SiteCount, pluralise(d.SiteCount, "call site", "call sites"), reachableSitesPhrase(d.ReachableSiteCount))
+	_, _ = fmt.Fprintf(stdout, "  reflective dispatch: %d %s a method up by reflection, %s\n",
+		d.SiteCount, pluralise(d.SiteCount, "call site that looks", "call sites that look"), reachableSitesPhrase(d.ReachableSiteCount))
 	for _, site := range d.Sites {
 		where := ""
 		if site.CallSite != "" {
 			where = " at " + site.CallSite
 		}
 		_, _ = fmt.Fprintf(stdout, "    %s -> %s%s — %s\n",
-			site.Caller, site.Callee, where, reachableSiteNote(site.ReachableFromEntryPoint))
+			site.Caller, site.Callee, where, reachableSiteNote(site))
 	}
 }
 
@@ -1392,18 +1436,19 @@ func printReflectiveDispatch(stdout io.Writer, search *negativeSearchOutput) {
 // means for the negative printed above it.
 func reachableSitesPhrase(reachable int) string {
 	if reachable == 0 {
-		return "none of them reachable from an entry point the analysis can name — none can be on a route into this module, so they do not qualify this answer"
+		return "none of them reachable from an entry point the analysis can name — none can be on a route into this module, so the search added nothing for them"
 	}
 	return strconv.Itoa(reachable) + " of them " + pluralise(reachable, "is", "are") +
-		" reachable from an entry point the analysis can name, so a route could hide there"
+		" reachable from an entry point the analysis can name"
 }
 
-// reachableSiteNote says which of the two a single site is.
-func reachableSiteNote(reachable bool) string {
-	if reachable {
-		return "reachable from an entry point"
+// reachableSiteNote says which of the two a single site is, and what a
+// reachable one was bound to.
+func reachableSiteNote(site reflectiveDispatchSiteOutput) string {
+	if !site.ReachableFromEntryPoint {
+		return "not reachable from any entry point the analysis can name"
 	}
-	return "not reachable from any entry point the analysis can name"
+	return "reachable from an entry point, " + site.binding
 }
 
 // frameLine renders one hop, omitting the parts the analyser could not supply.
@@ -1576,7 +1621,7 @@ func printLocalReachability(stdout io.Writer, r reachabilityOutput) error {
 	}
 	w.printf("\nfindings:\n")
 	for _, m := range r.Modules {
-		w.printf("  %s@%s\n", m.Path, m.Version)
+		w.printf("  %s@%s%s\n", m.Path, m.Version, replacesNote(m.Replaces))
 		for _, f := range m.Findings {
 			printLocalFinding(w, f)
 		}
@@ -1648,6 +1693,9 @@ func printLocalCoverage(w *errWriter, c reachabilityCoverage) {
 			continue
 		}
 		w.printf("  binary probed:     %s\n", b.ImportPath)
+	}
+	for _, r := range c.Replaced {
+		w.printf("  replacement:       %s@%s replaces %s\n", r.Path, r.Version, r.Replaces)
 	}
 	if len(c.UncoveredModules) > 0 {
 		w.printf("  uncovered (%d) — this answer does not speak about them:\n", len(c.UncoveredModules))
@@ -1836,6 +1884,7 @@ func reachabilityResultToOutput(r localdomain.LocalReachabilityResult) reachabil
 		mods = append(mods, reachabilityModule{
 			Path:     m.Path,
 			Version:  m.Version,
+			Replaces: m.Replaces,
 			Findings: findings,
 		})
 	}
@@ -1883,6 +1932,9 @@ func coverageToOutput(c localdomain.ProbeCoverage) reachabilityCoverage {
 	}
 	for _, o := range c.HarnessOmitted {
 		out.HarnessOmitted = append(out.HarnessOmitted, reachabilityHarnessOmission{Symbol: o.Symbol, Reason: o.Reason})
+	}
+	for _, r := range c.Replaced {
+		out.Replaced = append(out.Replaced, reachabilityReplaced{Path: r.Path, Version: r.Version, Replaces: r.Replaces})
 	}
 	return out
 }

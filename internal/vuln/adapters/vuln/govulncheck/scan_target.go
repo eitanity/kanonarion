@@ -63,7 +63,7 @@ func (s *Scanner) ScanTargetModule(ctx context.Context, req ports.TargetScanRequ
 	// The environment above pins the toolchain so no scan child can download one,
 	// which also refuses a toolchain already unpacked on this host. One decision
 	// covers every child of this scan; see runGovulncheck.
-	toolchains := goenv.NewToolchains()
+	toolchains := goenv.NewToolchainsFor(s.tinygo)
 	defer func() {
 		if cerr := toolchains.Close(); cerr != nil {
 			s.logger.Warn("vuln-scan: failed to remove the staged toolchain directory", "error", cerr)
@@ -71,7 +71,7 @@ func (s *Scanner) ScanTargetModule(ctx context.Context, req ports.TargetScanRequ
 	}()
 
 	// Stamped on every result this scan returns, faults included; see ScanProject.
-	toolchainVersion := toolchainGoVersion(ctx, tmpDir, env)
+	toolchainVersion := toolchainGoVersion(ctx, toolchains.GoBinary(), tmpDir, env)
 	defer func() { res.Toolchain = gotoolchain.Version(toolchainVersion) }()
 
 	scanDir, fault, err := s.prepareScanDir(ctx, tmpDir, coord, req.ModuleSource, env, req.BuildList)

@@ -33,8 +33,12 @@ func signedSumDB(t *testing.T, record string) *gosum.Client {
 	for _, k := range []string{"GOPROXY", "GOPRIVATE", "GONOSUMCHECK", "GONOSUMDB"} {
 		t.Setenv(k, "")
 	}
-	t.Setenv("GOSUMDB", ts.Listener.Addr().String()+" "+vkey)
-	return gosum.New(t.TempDir())
+	t.Setenv("GOSUMDB", vkey+" "+ts.URL)
+	c, err := gosum.New(t.TempDir())
+	if err != nil {
+		t.Fatalf("gosum.New: %v", err)
+	}
+	return c
 }
 
 // sumDBRecord is the database's record for testCoord: its zip line and its

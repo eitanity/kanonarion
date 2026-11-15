@@ -102,6 +102,15 @@ func (f TinyGo) SourceRoot() string { return f.sourceRoot }
 // LLVMTriple is the triple tinygo info reports for the target.
 func (f TinyGo) LLVMTriple() string { return f.llvmTriple }
 
+// GoBinary is the merged root's own go command, the one every go child under
+// this frame runs; empty when no frame was declared.
+func (f TinyGo) GoBinary() string {
+	if !f.Declared() {
+		return ""
+	}
+	return filepath.Join(f.goroot, "bin", "go")
+}
+
 // Apply returns env as a child resolving under this frame must see it, written
 // last so it wins over the inherited values and over Target.Apply. cgo is on
 // because TinyGo compiles C, so build constraints select the cgo files. An
@@ -115,7 +124,22 @@ func (f TinyGo) Apply(env []string) []string {
 	if f.goarm != "" {
 		out = append(out, "GOARM="+f.goarm)
 	}
-	return append(out, "GOROOT="+f.goroot, "CGO_ENABLED=1")
+	return f.ApplyGo(append(out, "GOROOT="+f.goroot, "CGO_ENABLED=1"))
+}
+
+// ApplyGo pins env to the merged root's go: GOTOOLCHAIN=local and its bin first
+// on PATH, so a grandchild running go from PATH runs it too. Any other go reads
+// another GOROOT. An undeclared frame leaves env as it is.
+func (f TinyGo) ApplyGo(env []string) []string {
+	out := env[:len(env):len(env)]
+	if !f.Declared() {
+		return out
+	}
+	path := filepath.Dir(f.GoBinary())
+	if prev, _ := lastValue(env, "PATH"); prev != "" {
+		path += string(os.PathListSeparator) + prev
+	}
+	return append(out, "GOTOOLCHAIN=local", "PATH="+path)
 }
 
 // ListArgs is the tag set as a go list or govulncheck argument, nil when there

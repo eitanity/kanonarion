@@ -3,9 +3,12 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"code.eitanity.com/kanonarion/internal/adapters/goenv"
 	coordinatetest "code.eitanity.com/kanonarion/internal/coordinate/coordinatetest"
 	localdomain "code.eitanity.com/kanonarion/internal/local/domain"
 	vuldomain "code.eitanity.com/kanonarion/internal/vuln/domain"
@@ -304,6 +307,14 @@ func localProbeResult() localdomain.LocalReachabilityResult {
 					SoundnessReason: "govulncheck analysed this build from source",
 				},
 				{
+					CVEID:           "GO-2025-0004",
+					Summary:         "absent from every go build main",
+					Verdict:         localdomain.SymbolProbeAbsent,
+					VerdictSource:   localdomain.VerdictSourceSymbolTable,
+					Soundness:       localdomain.ProbeSoundnessConfirmed,
+					SoundnessReason: localdomain.ProbeAbsentConfirmedReason,
+				},
+				{
 					CVEID:          "GO-2025-0003",
 					Summary:        "present",
 					Verdict:        localdomain.SymbolProbePresent,
@@ -340,6 +351,7 @@ func TestLocalProbeJSONCarriesTheRung(t *testing.T) {
 		"GO-2025-0001": "unconfirmed",
 		"GO-2025-0002": "inferred",
 		"GO-2025-0003": "not stated",
+		"GO-2025-0004": "confirmed",
 	} {
 		if got[id] != want {
 			t.Errorf("%s: soundness = %v, want %q", id, got[id], want)
@@ -369,6 +381,9 @@ func TestLocalProbeRendersTextWithoutJSONFlag(t *testing.T) {
 	}
 	if !strings.Contains(out, "unreachable — inferred") {
 		t.Errorf("the carried negative's verdict line does not carry its rung:\n%s", out)
+	}
+	if !strings.Contains(out, "absent — confirmed") || !strings.Contains(out, localdomain.ProbeAbsentConfirmedReason) {
+		t.Errorf("the linker absence does not carry its rung and basis:\n%s", out)
 	}
 	// The positive states no rung: a route is its own evidence, and a "not
 	// stated" line beside one would be noise.
@@ -407,5 +422,91 @@ func TestContextFindingsCarryTheRung(t *testing.T) {
 	printFullCVE(w, byID["GO-2025-0001"])
 	if !strings.Contains(buf.String(), "Soundness: inferred") {
 		t.Errorf("context text published a negative with no rung:\n%s", buf.String())
+	}
+}
+
+// TestContextLocalReachabilityCarriesTheConfirmedRung pins the third consumer of
+// the probe's rung, context --local --reachability, and the replacement line
+// every probe surface prints for a versioned replace.
+func TestContextLocalReachabilityCarriesTheConfirmedRung(t *testing.T) {
+	r := localProbeResult()
+	r.Modules[0].Path, r.Modules[0].Replaces = "github.com/fork/crypto", "golang.org/x/crypto@v0.31.0"
+	r.Coverage.Replaced = []localdomain.ReplacedModule{{Path: "github.com/fork/crypto", Version: "v0.31.0", Replaces: "golang.org/x/crypto@v0.31.0"}}
+	out := reachabilityResultToOutput(r)
+
+	var buf bytes.Buffer
+	printLocalReachabilityText(&errWriter{w: &buf}, &out)
+	for _, want := range []string{"GO-2025-0004  absent — confirmed", "github.com/fork/crypto@v0.31.0 (replaces golang.org/x/crypto@v0.31.0)"} {
+		if !strings.Contains(buf.String(), want) {
+			t.Errorf("context text lacks %q:\n%s", want, buf.String())
+		}
+	}
+	buf.Reset()
+	if err := renderLocalReachability(&buf, out, false); err != nil {
+		t.Fatalf("rendering local probe as text: %v", err)
+	}
+	if !strings.Contains(buf.String(), "replacement:       github.com/fork/crypto@v0.31.0 replaces golang.org/x/crypto@v0.31.0") {
+		t.Errorf("probe text does not name the replacement:\n%s", buf.String())
+	}
+	raw, err := json.Marshal(out)
+	if err != nil {
+		t.Fatalf("marshalling local probe: %v", err)
+	}
+	for _, want := range []string{`"replaces":"golang.org/x/crypto@v0.31.0"`, `"replaced_modules":[{"path":"github.com/fork/crypto"`} {
+		if !strings.Contains(string(raw), want) {
+			t.Errorf("probe JSON lacks %s: %s", want, raw)
+		}
+	}
+}
+
+// TestStoredAnswerPointsAtTheProbe pins the clause a stored negative gains where
+// a local probe settles it, and its absence everywhere else.
+func TestStoredAnswerPointsAtTheProbe(t *testing.T) {
+	unbound := &vuldomain.NegativeSearch{EntryPointRoots: 1, Fidelity: "BUILT_WITH_BODIES",
+		ReflectiveDispatch: []vuldomain.ReflectiveDispatchSite{{Caller: "m.f", Callee: "text/template.(*Template).Execute", ReachableFromEntryPoint: true}}}
+	disputed := &vuldomain.NegativeSearch{EntryPointRoots: 1, Fidelity: "BUILT_WITH_BODIES", PathFound: true, InRecordedFrame: true,
+		Route: vuldomain.ReachabilityRoute{{ModulePath: "m", Package: "m", Symbol: "main"}, {ModulePath: "x", Package: "x", Symbol: "Vulnerable"}}}
+	inferred := &vuldomain.NegativeSearch{NotSearched: "no graph"}
+	local := vuldomain.Rooting("target-rooted:example.com/app@local")
+	reason := func(t *testing.T, search *vuldomain.NegativeSearch, rooting vuldomain.Rooting) string {
+		t.Helper()
+		rec := rungRecord()
+		f := &rec.Findings[0]
+		f.Reachable.DerivedBy.Rooting, f.NegativeSearch = rooting, search
+		res, err := vulnReachabilityVerdict(rec.Coordinate, rec, true, f.ID, unclassifiedRoutes, nil)
+		if err != nil {
+			t.Fatalf("vulnReachabilityVerdict: %v", err)
+		}
+		return res.SoundnessReason
+	}
+	for _, tt := range []struct {
+		name    string
+		search  *vuldomain.NegativeSearch
+		rooting vuldomain.Rooting
+		want    bool
+	}{
+		{"local-rooted reflective unconfirmed", unbound, local, true},
+		{"local-rooted disputed", disputed, local, true},
+		{"isolated frame", unbound, vuldomain.RootingIsolated, false},
+		{"inferred", inferred, local, false},
+	} {
+		if got := strings.HasSuffix(reason(t, tt.search, tt.rooting), vuldomain.LocalProbeClause); got != tt.want {
+			t.Errorf("%s: clause present = %v, want %v", tt.name, got, tt.want)
+		}
+	}
+
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "src"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	frame, err := goenv.NewTinyGo("pico", "0.42.0", "go1.27.2", "linux", "arm", "6", root, root, "thumbv6m-unknown-unknown-eabi", nil)
+	if err != nil {
+		t.Fatalf("NewTinyGo: %v", err)
+	}
+	prev := declaredTinyGo
+	t.Cleanup(func() { declaredTinyGo = prev })
+	declaredTinyGo = frame
+	if strings.HasSuffix(reason(t, unbound, local), vuldomain.LocalProbeClause) {
+		t.Error("a TinyGo frame's stored answer points at a probe whose absence is not confirmed there")
 	}
 }

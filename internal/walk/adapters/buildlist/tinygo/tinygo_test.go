@@ -10,14 +10,21 @@ import (
 	"testing"
 	"time"
 
+	"code.eitanity.com/kanonarion/internal/adapters/goenv"
 	"code.eitanity.com/kanonarion/internal/walk/adapters/buildlist/tinygo"
 	"code.eitanity.com/kanonarion/internal/walk/adapters/buildlist/tinygotest"
 )
 
+// toolchain is a Go toolchain a frame is merged from; the fake reads only its name.
+func toolchain(t *testing.T) goenv.OnDiskToolchain {
+	t.Helper()
+	return goenv.OnDiskToolchain{Name: "go1.27.9", Root: t.TempDir()}
+}
+
 func TestProbe_ReadsTheFourOutputs(t *testing.T) {
 	fake := tinygotest.Install(t, map[string]tinygotest.Target{"pico": tinygotest.Pico()})
 
-	f, err := tinygo.Probe(context.Background(), fake.Bin, "pico")
+	f, err := tinygo.Probe(context.Background(), fake.Bin, "pico", toolchain(t))
 	if err != nil {
 		t.Fatalf("Probe: %v", err)
 	}
@@ -45,16 +52,17 @@ func TestProbe_ReadsTheFourOutputs(t *testing.T) {
 func TestProbe_IsMemoisedPerBinaryAndTarget(t *testing.T) {
 	fake := tinygotest.Install(t, map[string]tinygotest.Target{"pico": tinygotest.Pico(), "other": tinygotest.Pico()})
 	ctx := context.Background()
+	tc := toolchain(t)
 
 	for range 3 {
-		if _, err := tinygo.Probe(ctx, fake.Bin, "pico"); err != nil {
+		if _, err := tinygo.Probe(ctx, fake.Bin, "pico", tc); err != nil {
 			t.Fatalf("Probe: %v", err)
 		}
 	}
 	if n := len(fake.Calls(t)); n != 4 {
 		t.Errorf("three probes of one target ran %d tinygo commands, want the 4 of the first", n)
 	}
-	if _, err := tinygo.Probe(ctx, fake.Bin, "other"); err != nil {
+	if _, err := tinygo.Probe(ctx, fake.Bin, "other", tc); err != nil {
 		t.Fatalf("Probe: %v", err)
 	}
 	if n := len(fake.Calls(t)); n != 8 {
@@ -65,7 +73,7 @@ func TestProbe_IsMemoisedPerBinaryAndTarget(t *testing.T) {
 func TestProbe_NoTinyGoOnPath(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 
-	_, err := tinygo.Probe(context.Background(), "", "pico")
+	_, err := tinygo.Probe(context.Background(), "", "pico", toolchain(t))
 
 	if err == nil || err.Error() != "a TinyGo build target needs the tinygo command on PATH" {
 		t.Fatalf("Probe = %v", err)
@@ -78,7 +86,7 @@ func TestProbe_NoTinyGoOnPath(t *testing.T) {
 func TestProbe_UnknownTarget(t *testing.T) {
 	fake := tinygotest.Install(t, nil)
 
-	_, err := tinygo.Probe(context.Background(), fake.Bin, "nosuchboard")
+	_, err := tinygo.Probe(context.Background(), fake.Bin, "nosuchboard", toolchain(t))
 
 	want := "tinygo does not know the target \"nosuchboard\": run `tinygo targets` for the names it offers"
 	if err == nil || err.Error() != want {
@@ -127,7 +135,7 @@ if [ "$1" = info ]; then echo '{"goarch":"arm"}'; exit 0; fi
 echo '{"Dir":"/opt/src/runtime"}'`, []string{"described the target \"pico\" incompletely", "GOOS"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := tinygo.Probe(context.Background(), script(t, tc.body), "pico")
+			_, err := tinygo.Probe(context.Background(), script(t, tc.body), "pico", toolchain(t))
 			if err == nil {
 				t.Fatal("a failed probe was accepted")
 			}
@@ -148,7 +156,7 @@ func TestProbe_AnInfoThatCouldNotStartIsNotAnUnknownTarget(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err := tinygo.Probe(context.Background(), bin, "pico")
+	_, err := tinygo.Probe(context.Background(), bin, "pico", toolchain(t))
 
 	if err == nil || !strings.Contains(err.Error(), "tinygo info") {
 		t.Fatalf("Probe = %v", err)
@@ -163,7 +171,7 @@ func TestProbe_ACancelledInfoIsNotAnUnknownTarget(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
 
-	_, err := tinygo.Probe(ctx, bin, "pico")
+	_, err := tinygo.Probe(ctx, bin, "pico", toolchain(t))
 
 	if err == nil {
 		t.Fatal("a cancelled probe succeeded")
@@ -179,11 +187,107 @@ func TestProbe_AVersionLineWithoutAPlatformLeavesTheHostUnnamed(t *testing.T) {
 	fake := tinygotest.Install(t, map[string]tinygotest.Target{"pico": tinygotest.Pico()})
 	bin := script(t, `if [ "$1" = version ]; then echo "tinygo version 0.42.0 (using go version go1.27.2 and LLVM version 22.1.4)"; exit 0; fi
 exec "`+fake.Bin+`" "$@"`)
-	f, err := tinygo.Probe(context.Background(), bin, "pico")
+	f, err := tinygo.Probe(context.Background(), bin, "pico", toolchain(t))
 	if err != nil {
 		t.Fatalf("Probe: %v", err)
 	}
 	if f.Version() != "0.42.0" || f.GoVersion() != "go1.27.2" || f.HostGOOS() != "" || f.HostGOARCH() != "" {
 		t.Errorf("version %s %s host %q/%q", f.Version(), f.GoVersion(), f.HostGOOS(), f.HostGOARCH())
+	}
+}
+
+// Every tinygo child runs with GOTOOLCHAIN naming the toolchain and its bin
+// first on PATH, in a directory of its own, so neither the caller's shell nor
+// its working directory picks the Go TinyGo merges from.
+func TestProbe_RunsEveryChildUnderTheToolchain(t *testing.T) {
+	fake := tinygotest.Install(t, map[string]tinygotest.Target{"pico": tinygotest.Pico()})
+	tc := toolchain(t)
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wd, err = filepath.EvalSymlinks(wd); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := tinygo.Probe(context.Background(), fake.Bin, "pico", tc); err != nil {
+		t.Fatalf("Probe: %v", err)
+	}
+
+	envs := fake.Envs(t)
+	if len(envs) != 4 {
+		t.Fatalf("the probe ran %d tinygo children, want 4: %v", len(envs), envs)
+	}
+	for _, e := range envs {
+		f := strings.Fields(e)
+		if len(f) != 3 || f[0] != tc.Name || f[1] != filepath.Join(tc.Root, "bin") || f[2] == wd {
+			t.Errorf("a tinygo child saw %q, want GOTOOLCHAIN=%s, %s first on PATH and a directory other than %s",
+				e, tc.Name, filepath.Join(tc.Root, "bin"), wd)
+		}
+	}
+}
+
+// One target merged from two toolchains is two frames, each memoised: TinyGo
+// merges a different GOROOT from each.
+func TestProbe_TwoToolchainsGiveTwoMemoisedFrames(t *testing.T) {
+	fake := tinygotest.Install(t, map[string]tinygotest.Target{"pico": tinygotest.Pico()})
+	// list names the runtime under the root its PATH leads with, as tinygo's own
+	// merge follows the go it finds.
+	bin := script(t, `if [ "$1" = list ]; then r=$(dirname "${PATH%%:*}"); echo "{\"Dir\":\"$r/src/runtime\"}"; exit 0; fi
+exec "`+fake.Bin+`" "$@"`)
+	a, b := toolchain(t), goenv.OnDiskToolchain{Name: "go1.27.8", Root: t.TempDir()}
+	for _, tc := range []goenv.OnDiskToolchain{a, b} {
+		if err := os.MkdirAll(filepath.Join(tc.Root, "src", "runtime"), 0o750); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ctx := context.Background()
+
+	fa, err := tinygo.Probe(ctx, bin, "pico", a)
+	if err != nil {
+		t.Fatalf("Probe: %v", err)
+	}
+	fb, err := tinygo.Probe(ctx, bin, "pico", b)
+	if err != nil {
+		t.Fatalf("Probe: %v", err)
+	}
+	again, err := tinygo.Probe(ctx, bin, "pico", a)
+	if err != nil {
+		t.Fatalf("Probe: %v", err)
+	}
+
+	if fa.GOROOT() != a.Root || fb.GOROOT() != b.Root {
+		t.Errorf("GOROOTs = %s and %s, want each toolchain's own: %s and %s", fa.GOROOT(), fb.GOROOT(), a.Root, b.Root)
+	}
+	if again.GOROOT() != a.Root {
+		t.Errorf("the first toolchain's frame came back as %s", again.GOROOT())
+	}
+	if n := len(fake.Calls(t)); n != 6 {
+		t.Errorf("two toolchains ran %d commands through the fake, want 6: each frame's own, the second probe of the first memoised", n)
+	}
+}
+
+func TestProbe_RefusesAnUnnamedToolchain(t *testing.T) {
+	fake := tinygotest.Install(t, map[string]tinygotest.Target{"pico": tinygotest.Pico()})
+
+	_, err := tinygo.Probe(context.Background(), fake.Bin, "pico", goenv.OnDiskToolchain{})
+
+	if err == nil || !strings.Contains(err.Error(), "resolved for a Go toolchain") {
+		t.Fatalf("Probe = %v", err)
+	}
+	if n := len(fake.Calls(t)); n != 0 {
+		t.Errorf("an unnamed toolchain ran %d tinygo commands", n)
+	}
+}
+
+func TestProbe_ReportsADirectoryItCannotCreate(t *testing.T) {
+	fake := tinygotest.Install(t, map[string]tinygotest.Target{"pico": tinygotest.Pico()})
+	tc := toolchain(t)
+	t.Setenv("TMPDIR", filepath.Join(t.TempDir(), "absent"))
+
+	_, err := tinygo.Probe(context.Background(), fake.Bin, "pico", tc)
+
+	if err == nil || !strings.Contains(err.Error(), "a directory to ask tinygo in") {
+		t.Fatalf("Probe = %v", err)
 	}
 }

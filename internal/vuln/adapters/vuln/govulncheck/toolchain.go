@@ -45,7 +45,7 @@ func runGoChild(ctx context.Context, tc *goenv.Toolchains, base []string, dir st
 // the caller gets back and the text the escalation decision reads.
 func goChildLoop(ctx context.Context, tc *goenv.Toolchains, base []string, dir string, args []string, run func(*exec.Cmd) ([]byte, string, error)) ([]byte, error) {
 	for {
-		cmd := childproc.CommandContext(ctx, "go", args...) // #nosec G204 -- args are literals and paths this package derived
+		cmd := childproc.CommandContext(ctx, tc.GoBinary(), args...) // #nosec G204 -- "go" or the TinyGo frame's go; args are literals and paths this package derived
 		cmd.Dir = dir
 		// A build the cancellation kills cannot remove its work directory, so it
 		// gets a temp root removed once it has exited.
@@ -142,7 +142,7 @@ func ranToolchain(ctx context.Context, tc *goenv.Toolchains, base []string, dir,
 	if tc.Selected() == "" {
 		return previous
 	}
-	if v := toolchainGoVersion(ctx, dir, tc.Apply(base)); v != "" {
+	if v := toolchainGoVersion(ctx, tc.GoBinary(), dir, tc.Apply(base)); v != "" {
 		return v
 	}
 	return previous

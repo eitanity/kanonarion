@@ -474,7 +474,7 @@ func (a *Analyser) analyseDir(
 	mode analysisMode,
 	goModCache string,
 ) (domain.CallGraphRecord, error) {
-	toolchains := goenv.NewToolchains()
+	toolchains := goenv.NewToolchainsFor(a.tinygo)
 	defer func() {
 		if cerr := toolchains.Close(); cerr != nil {
 			a.logger.WarnContext(ctx, "callgraph_toolchain_cleanup_failed", slog.String("error", cerr.Error()))
@@ -780,7 +780,7 @@ func (a *Analyser) analyseDirOnce(
 	// cache is given no position at all, because a content-addressed entry names
 	// nothing a reader can open and moves whenever it is rebuilt. See sourceRoots.
 	a.step(coord, fmt.Sprintf("walking the call graph (%d caller nodes)", len(recordedCallers)))
-	nodes, edges, overallStatus := a.walkGraph(ctx, cg, recordedCallers, mem, fset, roots)
+	nodes, edges, overallStatus := a.walkGraph(ctx, cg, recordedCallers, mem, fset, roots, build.Embeds)
 
 	// Attach body-level capability facts. These are properties of a
 	// function's own body — unsafe.Pointer conversions, assembly/linkname

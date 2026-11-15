@@ -40,7 +40,8 @@ const moduleStream = `{"osv": {"id": "GO-2022-1059", "summary": "Denial of servi
 `
 
 // tinygoHost is a PATH holding a stub go and a stub govulncheck, each logging
-// its invocation to one file so a test can read every child a scan spawned.
+// its invocation to one file so a test can read every child a scan spawned. The
+// frame's merged root holds the same go, and each go logs the path it ran as.
 type tinygoHost struct {
 	log   string
 	frame goenv.TinyGo
@@ -54,8 +55,10 @@ func newTinyGoHost(t *testing.T, listOut string, listExit int, stream string) ti
 		t.Skip("the go and govulncheck stubs are POSIX shell scripts")
 	}
 	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, "src"), 0o750); err != nil {
-		t.Fatal(err)
+	for _, d := range []string{"src", "bin"} {
+		if err := os.MkdirAll(filepath.Join(root, d), 0o750); err != nil {
+			t.Fatal(err)
+		}
 	}
 	frame, err := goenv.NewTinyGo("pico", "0.42.0", "go1.27.2", "linux", "arm", "6", root, root, "thumbv6m-unknown-unknown-eabi", []string{"tinygo", "pico"})
 	if err != nil {
@@ -72,6 +75,7 @@ func newTinyGoHost(t *testing.T, listOut string, listExit int, stream string) ti
 	stubs := t.TempDir()
 	writeExecutable(t, filepath.Join(stubs, "go"), "#!/bin/sh\n"+
 		"echo \"go $*\" >> "+log+"\n"+
+		"echo \"  env bin=$0\" >> "+log+"\n"+
 		"env | grep -E '^(GOROOT|GOARM|GOOS|GOARCH|CGO_ENABLED)=' | sed 's/^/  env /' >> "+log+"\n"+
 		"case \"$1\" in\n"+
 		"env) echo go1.27.2 ;;\n"+
@@ -79,8 +83,12 @@ func newTinyGoHost(t *testing.T, listOut string, listExit int, stream string) ti
 		"esac\nexit 0\n")
 	writeExecutable(t, filepath.Join(stubs, "govulncheck"), "#!/bin/sh\n"+
 		"echo \"govulncheck $*\" >> "+log+"\n"+
+		"echo \"  env pathgo=$(command -v go)\" >> "+log+"\n"+
 		"env | grep -E '^(GOROOT|GOARM|CGO_ENABLED)=' | sed 's/^/  env /' >> "+log+"\n"+
 		"cat "+filepath.Join(data, "stream.json")+"\nexit 0\n")
+	if err := os.Symlink(filepath.Join(stubs, "go"), filepath.Join(root, "bin", "go")); err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv("PATH", stubs+string(os.PathListSeparator)+os.Getenv("PATH"))
 	return tinygoHost{log: log, frame: frame}
 }
@@ -209,6 +217,37 @@ func TestTinyGoScan_ModeIsDecidedByTheClosuresCgoFiles(t *testing.T) {
 			run(t, capturingScanner(t, &bytes.Buffer{}, slog.LevelInfo).WithTinyGo(h.frame))
 			if line := h.govulncheckLine(t); !strings.HasSuffix(line, " -tags=tinygo,pico ./...") || strings.Contains(line, "-scan") {
 				t.Errorf("govulncheck ran %q, want source mode with the tags", line)
+			}
+		})
+	}
+}
+
+// Under a frame every go child of every entry point runs the merged root's own
+// go, and govulncheck finds it first on PATH for its own loads.
+func TestTinyGoScan_EveryGoChildRunsTheFramesGo(t *testing.T) {
+	for name, run := range tinygoEntryPoints() {
+		t.Run(name, func(t *testing.T) {
+			h := newTinyGoHost(t, listWithoutCgo, 0, "")
+			run(t, capturingScanner(t, &bytes.Buffer{}, slog.LevelInfo).WithTinyGo(h.frame))
+			want := h.frame.GoBinary()
+			var gos, ran int
+			for _, line := range strings.Split(h.raw(t), "\n") {
+				switch {
+				case strings.HasPrefix(line, "go "):
+					gos++
+				case strings.HasPrefix(line, "  env bin="):
+					ran++
+					if line != "  env bin="+want {
+						t.Errorf("a go child ran as %s, want %s", strings.TrimPrefix(line, "  env bin="), want)
+					}
+				case strings.HasPrefix(line, "  env pathgo="):
+					if line != "  env pathgo="+want {
+						t.Errorf("govulncheck finds %s first on PATH, want %s", strings.TrimPrefix(line, "  env pathgo="), want)
+					}
+				}
+			}
+			if gos == 0 || ran != gos {
+				t.Errorf("%d go children, %d naming the binary they ran as:\n%s", gos, ran, h.raw(t))
 			}
 		})
 	}

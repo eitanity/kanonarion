@@ -14,9 +14,9 @@ import (
 // analyser's silence recorded somewhere else. Each states the rung its own
 // instrument earns; neither borrows the other's.
 
-// TestMeasuredAbsenceStatesItsOwnRung pins the rung a symbol-table absence
-// earns. It is deliberately not "confirmed": no call graph was built, so this is
-// an absence from the artefact and not a search that ran over call edges.
+// TestMeasuredAbsenceStatesItsOwnRung pins the rung an absence from every main
+// earns when go build linked each of them: the linker keeps whatever a route
+// reaches, so the absence is confirmed on the probe's own basis.
 func TestMeasuredAbsenceStatesItsOwnRung(t *testing.T) {
 	f := ports.VulnFinding{
 		ID:              "GO-2025-0001",
@@ -27,39 +27,55 @@ func TestMeasuredAbsenceStatesItsOwnRung(t *testing.T) {
 		ReachableSoundness:       "inferred",
 		ReachableSoundnessReason: "govulncheck said nothing",
 	}
-	got := probeOneFinding(f, "golang.org/x/crypto", domain.ProbeKindBinary, map[string]struct{}{}, nil, 0)
+	bins := []ports.ProbedBinary{
+		{ImportPath: "example.com/app/cmd/a", Builder: domain.ProbeBuilderGo},
+		{ImportPath: "example.com/app/cmd/b", Builder: domain.ProbeBuilderGo},
+	}
+	got := probeOneFinding(f, "golang.org/x/crypto", domain.ProbeKindBinary, map[string]struct{}{}, bins, 0)
 
 	if got.Verdict != domain.SymbolProbeAbsent {
 		t.Fatalf("verdict = %q, want the measured negative under test", got.Verdict)
 	}
-	if got.Soundness != domain.ProbeSoundnessUnconfirmed {
-		t.Errorf("soundness = %q, want %q", got.Soundness, domain.ProbeSoundnessUnconfirmed)
+	if got.Soundness != domain.ProbeSoundnessConfirmed {
+		t.Errorf("soundness = %q, want %q", got.Soundness, domain.ProbeSoundnessConfirmed)
 	}
-	if got.SoundnessReason != domain.ProbeAbsentReason {
-		t.Errorf("reason = %q, want the symbol-table basis", got.SoundnessReason)
+	if got.SoundnessReason != domain.ProbeAbsentConfirmedReason {
+		t.Errorf("reason = %q, want the linker basis", got.SoundnessReason)
 	}
 	if strings.Contains(got.SoundnessReason, "govulncheck") {
 		t.Error("a measured absence republished the stored scan's basis")
 	}
 }
 
-// TestMeasuredAbsenceNamesIncompleteCoverage pins the two weaker forms of the
-// same absence. A main that failed to build may still link the symbol, and a
-// library workspace's harness ships nowhere — collapsing either into the plain
-// reason would let the weakest evidence read as the strongest.
+// TestMeasuredAbsenceNamesIncompleteCoverage pins the absences that stay
+// unconfirmed. A main that failed to build may still link the symbol, a library
+// workspace's harness ships nowhere, and a TinyGo artefact is not linked by go
+// build; each keeps its own reason so the weakest cannot read as the strongest.
 func TestMeasuredAbsenceNamesIncompleteCoverage(t *testing.T) {
 	f := ports.VulnFinding{ID: "GO-2025-0001", AffectedSymbols: []string{"Handshake"}}
+	unconfirmed := func(t *testing.T, got domain.SymbolProbeFinding, reason string) {
+		t.Helper()
+		if got.Soundness != domain.ProbeSoundnessUnconfirmed {
+			t.Errorf("soundness = %q, want %q", got.Soundness, domain.ProbeSoundnessUnconfirmed)
+		}
+		if got.SoundnessReason != reason {
+			t.Errorf("reason = %q, want %q", got.SoundnessReason, reason)
+		}
+	}
 
 	partial := probeOneFinding(f, "golang.org/x/crypto", domain.ProbeKindBinary, map[string]struct{}{},
-		[]ports.ProbedBinary{{ImportPath: "example.com/app/cmd/a"}, {ImportPath: "example.com/app/cmd/b", BuildError: "boom"}}, 0)
-	if partial.SoundnessReason != domain.ProbeAbsentPartialReason {
-		t.Errorf("a probe that lost a main reported %q, want the partial-coverage reason", partial.SoundnessReason)
-	}
+		[]ports.ProbedBinary{
+			{ImportPath: "example.com/app/cmd/a", Builder: domain.ProbeBuilderGo},
+			{ImportPath: "example.com/app/cmd/b", Builder: domain.ProbeBuilderGo, BuildError: "boom"},
+		}, 0)
+	unconfirmed(t, partial, domain.ProbeAbsentPartialReason)
 
 	library := probeOneFinding(f, "golang.org/x/crypto", domain.ProbeKindLibrary, map[string]struct{}{}, nil, 0)
-	if library.SoundnessReason != domain.ProbeAbsentLibraryReason {
-		t.Errorf("a library probe reported %q, want the harness reason", library.SoundnessReason)
-	}
+	unconfirmed(t, library, domain.ProbeAbsentLibraryReason)
+
+	tinygo := probeOneFinding(f, "golang.org/x/crypto", domain.ProbeKindBinary, map[string]struct{}{},
+		[]ports.ProbedBinary{{ImportPath: "example.com/app", Builder: domain.ProbeBuilderTinyGo}}, 0)
+	unconfirmed(t, tinygo, domain.ProbeAbsentReason)
 
 	// A harness that left exported declarations out says so on every absence:
 	// a route only through them is not in the binary.
@@ -68,11 +84,10 @@ func TestMeasuredAbsenceNamesIncompleteCoverage(t *testing.T) {
 		!strings.Contains(omitting.SoundnessReason, "3 exported declaration(s)") {
 		t.Errorf("a library probe with 3 omissions reported %q, want the harness reason naming them", omitting.SoundnessReason)
 	}
-	// A binary probe has no harness, so a count never reaches its reason.
+	// A binary probe naming no main has no artefact to rest a confirmed rung
+	// on, and a harness count never reaches its reason.
 	binary := probeOneFinding(f, "golang.org/x/crypto", domain.ProbeKindBinary, map[string]struct{}{}, nil, 3)
-	if binary.SoundnessReason != domain.ProbeAbsentReason {
-		t.Errorf("a binary probe reported %q, want the plain reason", binary.SoundnessReason)
-	}
+	unconfirmed(t, binary, domain.ProbeAbsentReason)
 }
 
 // TestCarriedNegativeCarriesTheStoredRung pins the seeded negative. This verdict

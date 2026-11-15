@@ -215,8 +215,8 @@ func TestSupports_ReportsAProbeItCouldNotRun(t *testing.T) {
 }
 
 // TestResolve_UnderATinyGoFrame holds the split the frame makes: every child
-// sees TinyGo's environment, the list children alone get its tags, and the
-// build list records the frame it was resolved under.
+// runs the merged root's own go and sees TinyGo's environment, the list children
+// alone get its tags, and the build list records the frame it was resolved under.
 func TestResolve_UnderATinyGoFrame(t *testing.T) {
 	frame, root := tinyGoFrame(t)
 	pair, err := goenv.NewTarget("linux", "arm")
@@ -224,8 +224,14 @@ func TestResolve_UnderATinyGoFrame(t *testing.T) {
 		t.Fatal(err)
 	}
 	bin, log := loggingFakeGo(t)
+	if err = os.MkdirAll(filepath.Join(root, "bin"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.Symlink(bin, filepath.Join(root, "bin", "go")); err != nil {
+		t.Fatal(err)
+	}
 
-	bl, err := gotoolchain.New(bin, nil).WithTarget(pair).WithTinyGo(frame).Resolve(context.Background(), filepath.Dir(bin))
+	bl, err := gotoolchain.New(filepath.Join(t.TempDir(), "not-the-frames-go"), nil).WithTarget(pair).WithTinyGo(frame).Resolve(context.Background(), filepath.Dir(bin))
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}

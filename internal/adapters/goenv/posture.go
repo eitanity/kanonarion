@@ -192,13 +192,13 @@ var postures = map[string]Posture{
 	// A TinyGo frame layered onto whichever posture was chosen, stated against
 	// the undeclared environment as its base like declared-target. The tag set
 	// travels as a -tags argument, never through GOFLAGS, so GOFLAGS stays the
-	// posture's own.
+	// posture's own. GOTOOLCHAIN is local: the merged root's own go runs.
 	"declared-tinygo-target": {
 		Require: map[string]string{
 			"GOOS": PostureTinyGo.GOOS(), "GOARCH": PostureTinyGo.GOARCH(), "GOARM": PostureTinyGo.GOARM(),
-			"GOROOT": PostureTinyGo.GOROOT(), "CGO_ENABLED": "1",
+			"GOROOT": PostureTinyGo.GOROOT(), "CGO_ENABLED": "1", "GOTOOLCHAIN": "local",
 		},
-		Forbid: []string{"GOWORK", "GOFLAGS", "GOPROXY", "GOSUMDB", "GOTOOLCHAIN", "GOMODCACHE", "GOGC", "GOPACKAGESDRIVER"},
+		Forbid: []string{"GOWORK", "GOFLAGS", "GOPROXY", "GOSUMDB", "GOMODCACHE", "GOGC", "GOPACKAGESDRIVER"},
 	},
 }
 
@@ -214,7 +214,9 @@ var EnvBuilders = map[string]string{
 	"internal/callgraph/adapters/analyser/staticcha stdlibAnalysisEnv": "toolchain-stdlib",
 	"internal/composition/cgchild toolchainAt": "not an analysis child: a probe asking one named go command which GOROOT and " +
 		"version it is, pinned to GOTOOLCHAIN=local so it answers about itself rather than switching",
-	"internal/adapters/proxy/modcache download":   "not an analysis child: populates a module cache",
+	"internal/adapters/proxy/modcache download": "not an analysis child: populates a module cache",
+	"internal/walk/adapters/buildlist/tinygo pinnedEnv": "not an analysis child: a probe asking which toolchain a tree's go " +
+		"line resolves to, pinned to GOTOOLCHAIN=local and GOPROXY=off so it neither switches nor downloads",
 	"internal/staleness/adapters/golist childEnv": "not an analysis child: an update probe that must reach a proxy",
 }
 

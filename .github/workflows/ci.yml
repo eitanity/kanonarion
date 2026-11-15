@@ -33,7 +33,7 @@ jobs:
         # then triggers an in-CI GOTOOLCHAIN download to satisfy the directive —
         # needless and fragile under the hardened egress allowlist. Bump this in
         # lockstep with go.mod.
-        go: ["1.27.3"]
+        go: ["1.27.4"]
     steps:
       - name: Harden the runner
         uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2
