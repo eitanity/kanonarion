@@ -6,7 +6,7 @@ require (
 	github.com/CycloneDX/cyclonedx-go v0.12.0
 	github.com/google/licensecheck v0.3.1
 	github.com/google/uuid v1.6.0
-	github.com/klauspost/compress v1.20.0
+	github.com/klauspost/compress v1.20.4
 	github.com/oklog/ulid/v2 v2.1.2
 	github.com/rogpeppe/go-internal v1.16.0
 	github.com/spf13/cobra v1.10.2
