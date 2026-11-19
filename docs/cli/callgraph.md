@@ -100,11 +100,6 @@ and 16 interface declarations, resolves 1.1M edges and peaks at 11.6 GiB;
 **29.3M** edges and peaks at **21.8 GB**. `k8s.io/client-go@v0.36.3` declares 977
 interfaces — more than either — and peaks at 1.7 GiB.
 
-Generated code is where the large edge counts come from, because generated types
-implement a shared interface in bulk and every call through it resolves to all of
-them. `github.com/felixge/httpsnoop@v1.1.0` is the clearest case: a library of a
-few hundred lines, declaring four interfaces, that resolves 3.2M edges.
-
 Three practical consequences. A whole-walk run bounds this for you:
 [`extract`](extract.md#how-large-one-analysis-may-get) gives each analysis a
 memory ceiling derived from the host, so a module that will not fit records
@@ -164,11 +159,6 @@ missing field (a record made under `--tinygo` has two more kinds of call, see
 1 caller of pkg.(*H).confirmEmail:
   pkg.(*H).MountRoutes  [Direct]  [reference — the symbol's value is taken here, not called]  (example.com/app@local)
 ```
-
-This is the answer to the most common shape of "nothing calls this handler". A
-method registered with a router has no call edge, and before references were
-recorded `callers` reported that as `RESOLVED-ABSENT` — a measured absence for a
-function an HTTP request drives on every hit.
 
 What is recorded as a reference: a method value (`h.Method`), a method
 expression (`T.Method`), a plain function passed or stored as a value, and a
@@ -273,23 +263,34 @@ answer: UNRESOLVED — callers of pkg.TestThing cannot be confirmed absent:
 A method on a test fake is not an entry point — it is reached by dispatch or not
 at all — so its absence is still a measurement.
 
-## Answers that came from another module's code
+## Calls a dependency makes
 
-**Why this matters:** without this line you can read another module's answer as
-though it were this module's, and act on it. The rows look identical. Worse, what
-you are reading is a *partial* copy of that module, so "no callers" can mean
-"nothing calls it" or "the part that was copied here has no callers" — and those
-are opposite conclusions.
+A dependency's body is not in your module's graph, so when `errors.Is` calls your
+`Unwrap`, or `io.Copy` calls your `Read`, there is no edge. It can only do that
+through a value your code handed it: converted to an interface, or passed
+as a type argument to one of its generics, directly or through a generic of yours. The record notes that hand-off on each
+exported method of the type, and `callers` says what it cannot see:
+
+```
+answer: UNRESOLVED — callers of pkg.(*E).Unwrap cannot be confirmed absent: dependency-dispatch-unmeasured at pkg.(*E).Unwrap (*E converted to error at pkg.wrap (e.go:12); ...)
+answer: RESOLVED-PRESENT — 1 caller of pkg.(*B).Read; calls a dependency makes through an interface are not listed — dependency-dispatch-unmeasured at pkg.(*B).Read (a dependency can call it through io.Reader; ...)
+```
+
+The detail names the interfaces declared outside your module that the method
+satisfies, or the conversion when none is. `--transitive` names every method in
+the closure that carries it, and `--transitive --json` lists them in
+`dependency_dispatch`. Single-hop `--json` states it on stderr. Unexported
+methods never carry it.
+
+## Answers that came from another module's code
 
 Go module paths nest, but a nested path is a separate module. `example.com/mod`
 and `example.com/mod/loader` look like a package and its subdirectory. They are
 two modules, published separately, versioned separately.
 
 A call graph for `example.com/mod` can therefore hold `example.com/mod/loader`'s
-code, compiled with real function bodies. That is deliberate — those bodies are
-how calls passing through that code get resolved, and dropping them would make
-the graph worse — but they belong to a module this record is not about, at a
-version this record's coordinate does not name.
+code, compiled with real function bodies. They belong to a module this record is
+not about, at a version this record's coordinate does not name.
 
 So when part of an answer comes from that code, the answer says so:
 
@@ -300,8 +301,7 @@ bodies inside example.com/mod@v1.15.1 — so that module's own record, not this 
 the measurement of it
 ```
 
-Both counts appear because "21 of 72" and "72 of 72" call for different next
-steps. **Query the named module directly when the count matters** — its own
+**Query the named module directly when the count matters** — its own
 record is the whole measurement of it; what is here is only what the parent's
 build happened to reach.
 
@@ -663,11 +663,6 @@ whether "nothing calls this" is believable. Without this line that label quietly
 means two different things inside one record, depending which node a query landed
 on — and you have no way to tell which you got.
 
-The code is here on purpose. Which packages a record BUILDS is chosen by path
-prefix, deliberately wider than membership: a nested module built with bodies has
-its interface dispatch resolved rather than lost, and the graph is better for it.
-What the record could not previously say is that it had done so.
-
 Treat the line as a redirection. The nodes those modules contribute are a partial
 copy — the parent built whatever its own build reached, not the module — so an
 answer drawn from them is not the answer that module's own record gives. The
@@ -1004,8 +999,6 @@ appends nothing, so `consulted` on a stored generation always means it held
 nothing matching and the measurement is genuinely new. `bypassed` means
 `--force`.
 
-Without it two generations of one identical analysis are indistinguishable, and
-a deliberate re-measurement reads exactly like a reuse gate that failed to fire.
 Generations written before the line existed print none — absence there says the
 record predates the field, never that no gate was consulted.
 
@@ -1520,6 +1513,7 @@ constructing them by hand.
 | `position_file`, `position_line` | Where the symbol is declared. Absent when the record states no position — see below |
 | `export_directive` | The function hands itself to a caller outside Go. `kind` is `wasmexport` (`//go:wasmexport`), `export` (`//export`, and TinyGo's `//go:export`) or `interrupt` (TinyGo's `//go:interrupt`); `name` is the exported name, absent for an interrupt. Read from the doc comment of a package-level function in the analysed packages, and under `--tinygo` in TinyGo's own packages too; a method records none, and neither does an `//export` or `//go:export` on a declaration without a body, which imports a C symbol rather than exporting one. Absent when the function carries no directive |
 | `interrupt_handler` | Under `--tinygo` only: the function is installed as a hardware interrupt handler by `runtime/interrupt.New`. `kind` is `interrupt.New`; `site_file` and `site_line` are the registration call, the first in file and line order when there are several. Absent when nothing installs the function |
+| `dependency_dispatch` | A dependency can call the method through a value your code handed it; see [Calls a dependency makes](#calls-a-dependency-makes). `escape` is the first hand-off (`kind` `interface-conversion` or `type-argument`, `type`, `via`, `function`, `site_file`, `site_line`), `interfaces` the interfaces declared outside the module that the method satisfies, and `production` the same over production code, absent when every hand-off is in a test. Absent when nothing hands the type over |
 
 The three body-level facts are ones a callee-identity map cannot witness. They
 are used by [`capability`](capability.md) analysis and by the answer layer,
@@ -1648,11 +1642,8 @@ Records live in `<store-root>/mirror.db` (SQLite):
   indices:
   - `callgraph_edges_to_idx ON (to_id, pipeline_version)` — used by `callers`
   - `callgraph_edges_from_idx ON (from_id, pipeline_version)` — used by `callees`
-
-Edges are keyed on the parent rather than the coordinate because a coordinate
-names every generation at once. `callers` and `callees` resolve the served
-generation first and answer from its edges alone, so a superseded generation's
-edges stay in the table and answer nothing.
+- `callgraph_dependency_dispatch` — one row per method carrying the dependency
+  dispatch fact, keyed on the parent record's content hash, read by `callers`.
 
 ### After a pipeline-version bump
 

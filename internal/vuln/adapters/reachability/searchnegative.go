@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -116,6 +117,9 @@ type cachedProjection struct {
 	// root set an absence is certified against, and it is empty when the graph
 	// offers none — in which case nothing is certified.
 	entryRoots []string
+	// dispatchRoots are the methods a dependency can call through a value the
+	// module hands it, searched from only where entryRoots reach nothing.
+	dispatchRoots []string
 	// reflectSites is every reflective dispatch site in the graph, each already
 	// told whether the entry-point roots reach it. It is computed once per graph
 	// beside the root sets, for the same reason they are: the reachable set costs
@@ -307,12 +311,32 @@ func (c *cachedProjection) search(rec *domain.VulnerabilityRecord, f domain.Vuln
 	if path := bfsPath(c.projection, c.entryRoots, targets); path != nil {
 		result.PathFound = true
 		result.Route = annotateLookupHops(routeFrom(c.projection, path), path, c.lookupEdges)
+	} else if len(c.dispatchRoots) > 0 {
+		// A dependency's call into the module has no edge, so a clean search is
+		// certified only once the methods it could call are searched from too. A
+		// route found that way is its own claim, never the entry points' path.
+		roots := append(slices.Clone(c.entryRoots), c.dispatchRoots...)
+		if path := bfsPath(c.projection, roots, targets); path != nil {
+			result.DispatchPathFound = true
+			result.DispatchRoute = annotateLookupHops(routeFrom(c.projection, path), path, c.lookupEdges)
+			result.DispatchDetail = c.dispatchDetail(path[0])
+		}
 	}
 	if path := bfsPath(c.projection, c.shippedRoots, targets); path != nil {
 		result.ShippedCodePathFound = true
 		result.ShippedCodeRoute = annotateLookupHops(routeFrom(c.projection, path), path, c.lookupEdges)
 	}
 	return result
+}
+
+// dispatchDetail is the dependency dispatch detail of node id, "" for none.
+func (c *cachedProjection) dispatchDetail(id string) string {
+	for _, n := range c.projection.Nodes {
+		if n.ID == id {
+			return n.DependencyDispatch
+		}
+	}
+	return ""
 }
 
 // reflectSitePosition renders a site's position the way a hop renders its call
@@ -438,6 +462,7 @@ func ownGraph(coord coordinate.ModuleCoordinate, proj ports.CallGraphProjection)
 	entry := &cachedProjection{missing: coord, subject: coord, projection: proj, loaded: true}
 	entry.shippedRoots = collectEntryPoints(proj)
 	entry.entryRoots = collectNamedEntryPoints(proj)
+	entry.dispatchRoots = collectDispatchEntryPoints(proj)
 	entry.projection, entry.reflectSites, entry.lookupEdges = searchPastLookups(proj, entry.entryRoots)
 	entry.searched = []string{graphLabel(coord, proj)}
 	return entry
@@ -610,6 +635,7 @@ func (s *NegativeSearcher) joinedGraphFor(
 	// Selected over the consumer's graph, never the joined one: see above.
 	entry.shippedRoots = collectEntryPoints(consumer)
 	entry.entryRoots = collectNamedEntryPoints(consumer)
+	entry.dispatchRoots = collectDispatchEntryPoints(consumer)
 	entry.projection, entry.reflectSites, entry.lookupEdges = searchPastLookups(entry.projection, entry.entryRoots)
 	entry.projection.Completeness = frame.reachedCompleteness(entry.projection, entry.entryRoots, consumer, own)
 	entry.searched = append([]string{graphLabel(frameCoord, consumer)}, frame.label(subject)...)

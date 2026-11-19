@@ -17,6 +17,7 @@ package rootclass
 import (
 	"context"
 	"fmt"
+	"maps"
 
 	"code.eitanity.com/kanonarion/internal/coordinate"
 
@@ -109,6 +110,10 @@ type graph struct {
 	// entryReason names why a node is an entry point, for the nodes that are
 	// one. A miss is not an entry point; the map is only over the witnesses.
 	entryReason map[string]string
+	// dispatchReason names the owned methods a dependency can call through a
+	// value the module hands it. It is the weaker witness, read only where
+	// entryReason finds nothing, so no distance that was found changes.
+	dispatchReason map[string]string
 }
 
 // parentEdge is one edge into a node, carrying what the upward search needs to
@@ -187,6 +192,12 @@ func externalInvocation(g *graph, node callgraphdomain.CallNode) string {
 	}
 	if g.externalCallers[node.ID] > 0 {
 		return "called from outside the analysed module — a dependency invokes it"
+	}
+	// Only where no in-module caller is recorded: there the graph's silence is
+	// the claim, and a dependency calling through the value it was handed is the
+	// one caller it could not record.
+	if g.callers[node.ID] == 0 {
+		return g.dispatchReason[node.ID]
 	}
 	return ""
 }
@@ -267,12 +278,16 @@ func (c *Classifier) read(ctx context.Context, coord coordinate.ModuleCoordinate
 		externalCallers: make(map[string]int),
 		parents:         make(map[string][]parentEdge, len(rec.Nodes)),
 		entryReason:     make(map[string]string),
+		dispatchReason:  make(map[string]string),
 	}
 	external := make(map[string]bool, len(rec.Nodes))
 	for _, n := range rec.Nodes {
 		external[n.ID] = n.IsExternal
 		if reason := callgraphdomain.ExternalEntryPointReason(n.Symbol, n.Receiver, n.ExportDirective, n.InterruptHandler); reason != "" && !n.IsExternal {
 			g.entryReason[n.ID] = reason
+		} else if !n.IsExternal && n.DependencyDispatch.InProduction() {
+			// Production hand-offs only: the classification is about production code.
+			g.dispatchReason[n.ID] = callgraphdomain.DependencyDispatchEntryReason(n.DependencyDispatch.Production().Describe())
 		}
 		if n.IsExternal {
 			// A route frame in the analysed module can only match a node the module
@@ -342,8 +357,20 @@ const ancestrySearchBound = 0
 // report Direct and launder a registration into an all-calls chain; see
 // domain.EntryPointAncestry.
 func (g *graph) entryPointAncestry(nodeID string) vuldomain.EntryPointAncestry {
+	out := g.ancestryAgainst(nodeID, g.entryReason)
+	if out.Found || len(g.dispatchReason) == 0 {
+		return out
+	}
+	both := make(map[string]string, len(g.entryReason)+len(g.dispatchReason))
+	maps.Copy(both, g.dispatchReason)
+	maps.Copy(both, g.entryReason)
+	return g.ancestryAgainst(nodeID, both)
+}
+
+// ancestryAgainst is the upward search against one set of entry points.
+func (g *graph) ancestryAgainst(nodeID string, entryReason map[string]string) vuldomain.EntryPointAncestry {
 	out := vuldomain.EntryPointAncestry{Computed: true, SearchBound: ancestrySearchBound}
-	if reason, ok := g.entryReason[nodeID]; ok {
+	if reason, ok := entryReason[nodeID]; ok {
 		out.Found = true
 		out.EntryPointID = nodeID
 		out.EntryPointReason = reason
@@ -362,7 +389,7 @@ func (g *graph) entryPointAncestry(nodeID string) vuldomain.EntryPointAncestry {
 		var bestID string
 		var best pathState
 		for id, st := range next {
-			if _, ok := g.entryReason[id]; !ok {
+			if _, ok := entryReason[id]; !ok {
 				continue
 			}
 			if bestID == "" || betterEntryPoint(id, st, bestID, best) {
@@ -373,7 +400,7 @@ func (g *graph) entryPointAncestry(nodeID string) vuldomain.EntryPointAncestry {
 			out.Found = true
 			out.Hops = hops
 			out.EntryPointID = bestID
-			out.EntryPointReason = g.entryReason[bestID]
+			out.EntryPointReason = entryReason[bestID]
 			out.Weakest = string(best.weakest)
 			out.ViaReference = best.reference
 			return out

@@ -254,6 +254,13 @@ type CopyrightStatus = licensedomain.CopyrightStatus
 // Values may be added within a major version (§4).
 type CoverageStatus = vulndomain.CoverageStatus
 
+// DependencyDispatch records how a dependency can call an exported method of a
+// module type through a value the module handed it.
+//
+// Stability: supporting type of the CallGraphStore port; unstable pre-v1.
+// Fields may be added within a major version (§4).
+type DependencyDispatch = callgraphdomain.DependencyDispatch
+
 // Directive is one detected `replace`/`exclude` with its provenance,
 // classification and policy verdict.
 //
@@ -273,6 +280,13 @@ type DirectiveKind = directivedomain.Kind
 // Stability: supporting type of the ConfigStore port; unstable pre-v1. Fields
 // may be added within a major version (§4).
 type DirectivePolicy = configdomain.DirectivePolicy
+
+// DispatchEscape is one place a module type's value was handed outside the
+// module.
+//
+// Stability: supporting type of the CallGraphStore port; unstable pre-v1.
+// Fields may be added within a major version (§4).
+type DispatchEscape = callgraphdomain.DispatchEscape
 
 // DispatchKind names how control reached one hop of a route.
 //
@@ -321,6 +335,12 @@ type EffectiveLicenseSet = licensedomain.EffectiveLicenseSet
 // Stability: supporting type of the LicenseStore port; unstable pre-v1.
 // Fields may be added within a major version (§4).
 type EmbeddedComponent = licensedomain.EmbeddedComponent
+
+// EscapeKind names how a module type's value was handed outside the module.
+//
+// Stability: supporting type of the CallGraphStore port; unstable pre-v1.
+// Values may be added within a major version (§4).
+type EscapeKind = callgraphdomain.EscapeKind
 
 // ExampleEntry records a single Example* function found in a _test.go file.
 //

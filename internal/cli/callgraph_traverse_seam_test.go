@@ -90,12 +90,12 @@ func TestRunCalleesTransitive_ReportsFailedWrites(t *testing.T) {
 func TestPrintTransitiveResult_ReportsFailedWrites(t *testing.T) {
 	edges := []cgports.CallEdgeRef{{ModulePath: "example.com/m", ModuleVersion: "v1.0.0", FromID: "a", ToID: "b"}}
 	assertEveryWriteGuardFires(t, func(w *stallingWriter) error {
-		return printTransitiveResult("callers", "b", 3, cgapp.TraversalResult{Nodes: []string{"a"}, Edges: edges}, false, w, cgports.EdgeQueryOptions{})
+		return printTransitiveResult("callers", "b", 3, cgapp.TraversalResult{Nodes: []string{"a"}, Edges: edges}, false, w, cgports.EdgeQueryOptions{}, nil)
 	})
 	assertEveryWriteGuardFires(t, func(w *stallingWriter) error {
-		return printTransitiveResult("callers", "b", 0, cgapp.TraversalResult{}, false, w, cgports.EdgeQueryOptions{})
+		return printTransitiveResult("callers", "b", 0, cgapp.TraversalResult{}, false, w, cgports.EdgeQueryOptions{}, nil)
 	})
-	if err := printTransitiveResult("callers", "b", 0, cgapp.TraversalResult{}, true, &stallingWriter{}, cgports.EdgeQueryOptions{}); err == nil {
+	if err := printTransitiveResult("callers", "b", 0, cgapp.TraversalResult{}, true, &stallingWriter{}, cgports.EdgeQueryOptions{}, nil); err == nil {
 		t.Error("a failed JSON write was swallowed")
 	}
 }
@@ -104,7 +104,7 @@ func TestPrintTransitiveResult_ReportsFailedWrites(t *testing.T) {
 // serialise as [], because null reads as "not measured" to a consumer.
 func TestPrintTransitiveResult_JSONNeverEncodesNull(t *testing.T) {
 	var buf bytes.Buffer
-	if err := printTransitiveResult("callers", "b", 0, cgapp.TraversalResult{}, true, &buf, cgports.EdgeQueryOptions{}); err != nil {
+	if err := printTransitiveResult("callers", "b", 0, cgapp.TraversalResult{}, true, &buf, cgports.EdgeQueryOptions{}, nil); err != nil {
 		t.Fatalf("printTransitiveResult: %v", err)
 	}
 	if strings.Contains(buf.String(), "null") {

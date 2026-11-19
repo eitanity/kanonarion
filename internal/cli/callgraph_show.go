@@ -511,6 +511,39 @@ type callNodeJSON struct {
 	ExportDirective *callNodeExportJSON `json:"export_directive,omitempty"`
 	// InterruptHandler is absent when nothing installs the function as one.
 	InterruptHandler *callNodeHandlerJSON `json:"interrupt_handler,omitempty"`
+	// DependencyDispatch is absent when the method's type is handed to no
+	// dependency.
+	DependencyDispatch *callNodeDispatchJSON `json:"dependency_dispatch,omitempty"`
+}
+
+type callNodeDispatchJSON struct {
+	callNodeHandOffJSON
+	// Production is absent when every hand-off is in a test.
+	Production *callNodeHandOffJSON `json:"production,omitempty"`
+}
+
+type callNodeHandOffJSON struct {
+	Escape     callNodeEscapeJSON `json:"escape"`
+	Interfaces []string           `json:"interfaces,omitempty"`
+}
+
+type callNodeEscapeJSON struct {
+	Kind     string `json:"kind"`
+	Type     string `json:"type"`
+	Via      string `json:"via"`
+	Function string `json:"function"`
+	SiteFile string `json:"site_file"`
+	SiteLine int    `json:"site_line"`
+}
+
+func toHandOffJSON(d domain.DependencyDispatch) callNodeHandOffJSON {
+	e := d.Escape
+	return callNodeHandOffJSON{
+		Escape: callNodeEscapeJSON{
+			Kind: string(e.Kind), Type: e.Type, Via: e.Via, Function: e.Function, SiteFile: e.Site.File, SiteLine: e.Site.Line,
+		},
+		Interfaces: d.SortedInterfaces(),
+	}
 }
 
 type callNodeHandlerJSON struct {
@@ -917,6 +950,13 @@ func toCallGraphJSON(r domain.CallGraphRecord) callGraphRecordJSON {
 		if !n.InterruptHandler.IsZero() {
 			nodes[i].InterruptHandler = &callNodeHandlerJSON{
 				Kind: string(n.InterruptHandler.Kind), SiteFile: n.InterruptHandler.Site.File, SiteLine: n.InterruptHandler.Site.Line,
+			}
+		}
+		if d := n.DependencyDispatch; !d.IsZero() {
+			nodes[i].DependencyDispatch = &callNodeDispatchJSON{callNodeHandOffJSON: toHandOffJSON(d)}
+			if d.InProduction() {
+				prod := toHandOffJSON(d.Production())
+				nodes[i].DependencyDispatch.Production = &prod
 			}
 		}
 	}

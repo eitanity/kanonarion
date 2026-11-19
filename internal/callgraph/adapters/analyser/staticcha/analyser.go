@@ -813,6 +813,10 @@ func (a *Analyser) analyseDirOnce(
 	// directive too.
 	attachExportDirectives(nodes, build.ExportDirectives)
 
+	// Stamped once every node exists, for the same reason: a dependency calls a
+	// module method through a value it was handed, in a body this graph lacks.
+	a.attachDependencyDispatch(ctx, prog, ordered, mem, fset, roots, nodes)
+
 	// Record the type-level relation: which of the module's concrete types
 	// satisfy which of its interfaces. An interface method has no callers — calls
 	// go to implementations — so the edge collections cannot answer "what must

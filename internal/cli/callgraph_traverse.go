@@ -149,11 +149,12 @@ func runCallers(ctx context.Context, symbolID string, jsonOut bool, uc QueryCall
 	if err := printEdgeRefs("callers", symbolID, refs, jsonOut, stdout); err != nil {
 		return err
 	}
+	dispatch, derr := callersDispatch(ctx, uc, symbolID, sc, len(refs) > 0, jsonOut)
+	if derr != nil {
+		return derr
+	}
 	if len(refs) > 0 && !jsonOut {
-		if err := writeEdgeScopeLine(stdout, "callers", opts); err != nil {
-			return err
-		}
-		return writeForeignEdgeAnswer(ctx, newForeignModuleIndex(uc, sc), stdout, "callers", symbolID, refs, true)
+		return writePresentCallers(ctx, uc, stdout, symbolID, sc, opts, refs, dispatch)
 	}
 	if len(refs) == 0 && !jsonOut {
 		v, verr := negativeCallAnswer(ctx, symbolID, true, uc, sc, opts, pr.failedPkg, pr.detail)
@@ -302,7 +303,7 @@ func runCallees(ctx context.Context, symbolID string, jsonOut bool, uc QueryCall
 		if err := writeEdgeScopeLine(stdout, "callees", opts); err != nil {
 			return err
 		}
-		return writeForeignEdgeAnswer(ctx, newForeignModuleIndex(uc, sc), stdout, "callees", symbolID, refs, false)
+		return writeForeignEdgeAnswer(ctx, newForeignModuleIndex(uc, sc), stdout, "callees", symbolID, refs, false, "")
 	}
 	if len(refs) == 0 && !jsonOut {
 		v, verr := negativeCallAnswer(ctx, symbolID, false, uc, sc, opts, pr.failedPkg, pr.detail)
@@ -435,6 +436,47 @@ type transitiveResult struct {
 	// NotSearched names the coordinates the walk could not read: graphs only
 	// at a superseded pipeline, or, under a build scope, none at all.
 	NotSearched []notSearchedJSON `json:"not_searched,omitempty"`
+	// DependencyDispatch names the symbols in a callers closure a dependency can
+	// call through an interface, whose callers there the closure cannot hold.
+	// Always present, empty on a callees walk.
+	DependencyDispatch []dispatchJSON `json:"dependency_dispatch"`
+}
+
+// callersDispatch reads the queried method's dependency dispatch for the
+// surfaces that read the row copy, and holds it for stderr under --json. An
+// empty text answer reads it off the decoded record instead, as its verdict does.
+func callersDispatch(ctx context.Context, uc QueryCallGraphUseCase, symbolID string, sc buildScope, present, jsonOut bool) ([]domain.SoundnessSink, error) {
+	if !jsonOut && !present {
+		return nil, nil
+	}
+	dispatch, err := dependencyDispatchSinks(ctx, uc, []string{symbolID}, sc)
+	if err != nil {
+		return nil, err
+	}
+	if jsonOut {
+		storeDispatchNotice.report("callers", symbolID, dispatch)
+	}
+	return dispatch, nil
+}
+
+// writePresentCallers writes the lines under a non-empty callers list: the
+// narrowing, then the answer line when it qualifies the list.
+func writePresentCallers(ctx context.Context, uc QueryCallGraphUseCase, stdout io.Writer, symbolID string, sc buildScope,
+	opts ports.EdgeQueryOptions, refs []ports.CallEdgeRef, dispatch []domain.SoundnessSink) error {
+	if err := writeEdgeScopeLine(stdout, "callers", opts); err != nil {
+		return err
+	}
+	return writeForeignEdgeAnswer(ctx, newForeignModuleIndex(uc, sc), stdout, "callers", symbolID, refs, true, dispatchClause(dispatch))
+}
+
+// writePresentTransitiveCallers writes the lines under a non-empty transitive
+// callers list: the narrowing, then the answer line when it qualifies the list.
+func writePresentTransitiveCallers(ctx context.Context, uc QueryCallGraphUseCase, stdout io.Writer, symbolID string, sc buildScope,
+	opts ports.EdgeQueryOptions, edges []ports.CallEdgeRef, nodes []string, dispatch []domain.SoundnessSink) error {
+	if err := writeEdgeScopeLine(stdout, "callers", opts); err != nil {
+		return err
+	}
+	return writeForeignTransitiveAnswer(ctx, newForeignModuleIndex(uc, sc), stdout, "transitive callers", symbolID, edges, nodes, true, dispatchClause(dispatch))
 }
 
 func runCallersTransitive(ctx context.Context, symbolID string, maxDepth int, jsonOut bool, uc QueryCallGraphUseCase, stdout io.Writer, sc buildScope, opts ports.EdgeQueryOptions, progress ports.TraversalProgressReporter) error {
@@ -471,14 +513,17 @@ func runCallersTransitive(ctx context.Context, symbolID string, maxDepth int, js
 	if err := writeEdgeQueryNotices(ctx, stdout, "transitive callers", symbolID, uc, sc, pr, jsonOut, knownGaps(res.NotSearched)); err != nil {
 		return err
 	}
-	if err := printTransitiveResult("callers", symbolID, maxDepth, res, jsonOut, stdout, opts); err != nil {
+	// Every symbol in the closure, the root among them, is one whose callers the
+	// closure claims to hold.
+	dispatch, derr := dependencyDispatchSinks(ctx, uc, append([]string{symbolID}, nodes...), sc)
+	if derr != nil {
+		return derr
+	}
+	if err := printTransitiveResult("callers", symbolID, maxDepth, res, jsonOut, stdout, opts, dispatch); err != nil {
 		return err
 	}
 	if len(nodes) > 0 && !jsonOut {
-		if err := writeEdgeScopeLine(stdout, "callers", opts); err != nil {
-			return err
-		}
-		return writeForeignTransitiveAnswer(ctx, newForeignModuleIndex(uc, sc), stdout, "transitive callers", symbolID, edges, nodes, true)
+		return writePresentTransitiveCallers(ctx, uc, stdout, symbolID, sc, opts, edges, nodes, dispatch)
 	}
 	if len(nodes) == 0 && !jsonOut {
 		v, verr := negativeCallAnswer(ctx, symbolID, true, uc, sc, opts, pr.failedPkg, pr.detail)
@@ -524,14 +569,14 @@ func runCalleesTransitive(ctx context.Context, symbolID string, maxDepth int, js
 	if err := writeEdgeQueryNotices(ctx, stdout, "transitive callees", symbolID, uc, sc, pr, jsonOut, knownGaps(res.NotSearched)); err != nil {
 		return err
 	}
-	if err := printTransitiveResult("callees", symbolID, maxDepth, res, jsonOut, stdout, opts); err != nil {
+	if err := printTransitiveResult("callees", symbolID, maxDepth, res, jsonOut, stdout, opts, nil); err != nil {
 		return err
 	}
 	if len(nodes) > 0 && !jsonOut {
 		if err := writeEdgeScopeLine(stdout, "callees", opts); err != nil {
 			return err
 		}
-		return writeForeignTransitiveAnswer(ctx, newForeignModuleIndex(uc, sc), stdout, "transitive callees", symbolID, edges, nodes, false)
+		return writeForeignTransitiveAnswer(ctx, newForeignModuleIndex(uc, sc), stdout, "transitive callees", symbolID, edges, nodes, false, "")
 	}
 	if len(nodes) == 0 && !jsonOut {
 		v, verr := negativeCallAnswer(ctx, symbolID, false, uc, sc, opts, pr.failedPkg, pr.detail)
@@ -582,25 +627,26 @@ const traversalDepthRemedy = "--depth 0"
 // the completeness marker is not separable from the nodes it qualifies — and
 // because "truncated" and "jsonOut" as adjacent bool parameters is a call site
 // that compiles when it is transposed.
-func printTransitiveResult(direction, root string, maxDepth int, res cgapp.TraversalResult, jsonOut bool, stdout io.Writer, opts ports.EdgeQueryOptions) error {
+func printTransitiveResult(direction, root string, maxDepth int, res cgapp.TraversalResult, jsonOut bool, stdout io.Writer, opts ports.EdgeQueryOptions, dispatch []domain.SoundnessSink) error {
 	nodes, edges, truncated := res.Nodes, res.Edges, res.Truncated
 	if jsonOut {
 		if nodes == nil {
 			nodes = []string{}
 		}
 		result := transitiveResult{
-			Root:        root,
-			Direction:   direction,
-			MaxDepth:    maxDepth,
-			Truncated:   truncated,
-			Remedy:      traversalDepthRemedy,
-			NodeCount:   len(nodes),
-			EdgeCount:   len(edges),
-			Nodes:       nodes,
-			Edges:       toEdgeRefsJSON(edges),
-			Scope:       edgeScopeLine(direction, opts),
-			SetAside:    storeSetAside.take().json(),
-			NotSearched: storeNotSearched.take().json(),
+			Root:               root,
+			Direction:          direction,
+			MaxDepth:           maxDepth,
+			Truncated:          truncated,
+			Remedy:             traversalDepthRemedy,
+			NodeCount:          len(nodes),
+			EdgeCount:          len(edges),
+			Nodes:              nodes,
+			Edges:              toEdgeRefsJSON(edges),
+			Scope:              edgeScopeLine(direction, opts),
+			SetAside:           storeSetAside.take().json(),
+			NotSearched:        storeNotSearched.take().json(),
+			DependencyDispatch: toDispatchJSON(dispatch),
 		}
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")

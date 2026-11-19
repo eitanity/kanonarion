@@ -104,6 +104,12 @@ var validFills = map[reflect.Type]reflect.Value{
 		callgraphdomain.ExportDirective{Kind: callgraphdomain.ExportWasm, Name: "x"}),
 	reflect.TypeFor[callgraphdomain.InterruptHandler](): reflect.ValueOf(
 		callgraphdomain.InterruptHandler{Kind: callgraphdomain.HandlerInterruptNew, Site: callgraphdomain.SourcePosition{File: "x.go", Line: 1}}),
+	reflect.TypeFor[callgraphdomain.DependencyDispatch](): reflect.ValueOf(
+		callgraphdomain.DependencyDispatch{Escape: callgraphdomain.DispatchEscape{
+			Kind: callgraphdomain.EscapeConversion, Type: "x", Via: "x", Function: "x", Site: callgraphdomain.SourcePosition{File: "x.go", Line: 1},
+		}, Interfaces: []string{"x"}, ProductionEscape: callgraphdomain.DispatchEscape{
+			Kind: callgraphdomain.EscapeConversion, Type: "x", Via: "x", Function: "x", Site: callgraphdomain.SourcePosition{File: "x.go", Line: 1},
+		}, ProductionInterfaces: []string{"x"}}),
 }
 
 // fill sets v to a non-zero value, descending into composites.

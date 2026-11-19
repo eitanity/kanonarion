@@ -1027,6 +1027,9 @@ type CallGraphNode struct {
 	HandlerKind string
 	HandlerFile string
 	HandlerLine int
+	// DependencyDispatch is the node's dependency dispatch detail, opaque for the
+	// same reason; empty when its type never escapes the module.
+	DependencyDispatch string
 }
 
 // CallGraphEdge is a directed call edge between two node IDs.

@@ -188,9 +188,10 @@ Two consequences worth knowing before you read a negative:
 An absence is only as good as the set of starting points it was searched from, so
 the rung names it. The confirming search starts at what the analysis can name as a
 way INTO the module — its public API, its package initialisers, a command's
-`main`, a function with an export directive, an `http.Handler` — because those
-are the only ways a consumer's build enters it. The `main` the go command
-synthesises to run a test binary is not one of them, and neither is a
+`main`, a function with an export directive, an `http.Handler`. Where none
+reaches the symbol, a route from a method a dependency could call through a
+value production code hands it holds the negative at `unconfirmed`. The `main`
+the go command synthesises to run a test binary is not one of them, and neither is a
 dependency's `_test.go` file, which your build does not compile.
 
 An export directive in a package-level function's doc comment makes that
@@ -583,15 +584,13 @@ deliberate: narrowing the search would discard evidence. What tells you which
 you have is the root classification below, so read a route's root before acting
 on it, and split a count by root before reporting one.
 
-A route says a path exists. It does not say what starts the path, and a route
-rooted at an HTTP handler, at a test helper, and at an exported function nothing
-in the project calls were all reported the same way. Every route now reports what
-sits at its **root**, read from the stored call graph the answer was computed
-over — the test axis, the exported-API flag, and the edges into the node.
+Every route reports what sits at its **root**, read from the stored call graph
+the answer was computed over — the test axis, the exported-API flag, and the
+edges into the node.
 
 | Kind | Means |
 |---|---|
-| `ingress` | The root is entered from outside the module's own call structure: an `http.Handler` implementation, the process entry point, a package initialiser, a function exported to the WebAssembly host or to C, an interrupt handler, or a function a dependency calls back into. The `reason` says which. |
+| `ingress` | The root is entered from outside the module's own call structure: an `http.Handler` implementation, the process entry point, a package initialiser, a function exported to the WebAssembly host or to C, an interrupt handler, a function a dependency calls back into, or, where nothing in the module calls it, a method a dependency can call through a value production code hands it. The `reason` says which. |
 | `exported-api` | The root is exported by the analysed module and called by nothing in it. A consumer could drive it; this project does not. |
 | `internal` | The root has in-project callers and is not itself an entry point — the route begins where the analyser stopped, not where execution starts. The `remedy` names the `kanonarion callers` query that walks the hops above it. |
 | `test` | The root is a test-scope declaration. This is printed **on the same line as the answer**, so a test-only reach is never read as a production one. |

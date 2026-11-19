@@ -9,16 +9,15 @@ import (
 	fetchdomain "code.eitanity.com/kanonarion/internal/fetch/domain"
 )
 
-// The lookup name is migration 18, one column on callgraph_edges, the last
-// callgraph migration.
+// The lookup name is migration 18, one column on callgraph_edges.
 func TestMigrations_LookupNameIsMigrationEighteen(t *testing.T) {
 	t.Parallel()
 	migs := sqlite.Migrations()
-	if n := len(migs); n != 18 {
-		t.Fatalf("callgraph migrations = %d, want 18", n)
+	if n := len(migs); n < 18 {
+		t.Fatalf("callgraph migrations = %d, want at least 18", n)
 	}
-	if last := migs[len(migs)-1]; last.Version != 18 || last.Fn != nil {
-		t.Errorf("last callgraph migration is %d (back-fill %v), want 18 with no back-fill", last.Version, last.Fn != nil)
+	if m := migs[17]; m.Version != 18 || m.Fn != nil {
+		t.Errorf("callgraph migration 18 is %d (back-fill %v), want 18 with no back-fill", m.Version, m.Fn != nil)
 	}
 	s := openTestStore(t)
 	if n := countRows(t, s, `SELECT COUNT(*) FROM pragma_table_info('callgraph_edges') WHERE name = 'lookup_name'`); n != 1 {

@@ -859,6 +859,9 @@ func negativeSearchToOutput(s *vuldomain.NegativeSearch, classify routeRootFunc)
 	if s.ShippedCodePathFound {
 		routes = append(routes, s.ShippedCodeRoute)
 	}
+	if s.DispatchPathFound {
+		routes = append(routes, s.DispatchRoute)
+	}
 	out.Routes = routesToOutput(routes, classify)
 	return out
 }

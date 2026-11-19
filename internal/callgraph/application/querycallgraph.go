@@ -93,6 +93,21 @@ func (uc *QueryCallGraphUseCase) GetCallGraphRecordFrom(ctx context.Context, coo
 	return rec, found, nil
 }
 
+// DependencyDispatchOf maps each of symbolIDs carrying a dependency dispatch
+// fact in its served record to the fact's detail. found is false when the store
+// cannot answer, which a caller must not read as "no facts".
+func (uc *QueryCallGraphUseCase) DependencyDispatchOf(ctx context.Context, symbolIDs []string, pipelineVersion string, scope coordinate.ModuleSet, toolchain gotoolchain.Version) (map[string]string, bool, error) {
+	reader, ok := uc.store.(cgports.CallGraphDispatchReader)
+	if !ok {
+		return nil, false, nil
+	}
+	facts, err := reader.DependencyDispatchOf(ctx, symbolIDs, servedPipeline(pipelineVersion), scope, toolchain)
+	if err != nil {
+		return nil, false, fmt.Errorf("reading dependency dispatch: %w", err)
+	}
+	return facts, true, nil
+}
+
 // WorktreeRouting reports which working tree answered for a local coordinate,
 // and how many the ledger holds for it. found is false when the store cannot
 // distinguish trees, or holds no worktree generation for the coordinate.

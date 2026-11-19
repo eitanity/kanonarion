@@ -286,6 +286,16 @@ const (
 	HandlerInterruptNew = callgraphdomain.HandlerInterruptNew
 )
 
+// The values of EscapeKind, as the internal package defines them.
+//
+// Stability: supporting constants of the EscapeKind type; unstable pre-v1.
+// Values may be added within a major version; treat an unrecognised value
+// conservatively (§4).
+const (
+	EscapeConversion   = callgraphdomain.EscapeConversion
+	EscapeTypeArgument = callgraphdomain.EscapeTypeArgument
+)
+
 // The values of ExtractionRunStatus, as the internal package defines them.
 //
 // Stability: supporting constants of the ExtractionRunStatus type; unstable pre-v1.
@@ -660,18 +670,19 @@ const (
 // Values may be added within a major version; treat an unrecognised value
 // conservatively.
 const (
-	SinkAssemblyOrLinknameLeaf    = callgraphdomain.SinkAssemblyOrLinknameLeaf
-	SinkDroppedPackageEdges       = callgraphdomain.SinkDroppedPackageEdges
-	SinkInterfaceDispatch         = callgraphdomain.SinkInterfaceDispatch
-	SinkModuleSurfaceUnenumerated = callgraphdomain.SinkModuleSurfaceUnenumerated
-	SinkPluginLeaf                = callgraphdomain.SinkPluginLeaf
-	SinkReferenceScopeUnmeasured  = callgraphdomain.SinkReferenceScopeUnmeasured
-	SinkReflectDispatch           = callgraphdomain.SinkReflectDispatch
-	SinkTestHarnessEntry          = callgraphdomain.SinkTestHarnessEntry
-	SinkTestScopeUnmeasured       = callgraphdomain.SinkTestScopeUnmeasured
-	SinkTypeOnlyCallee            = callgraphdomain.SinkTypeOnlyCallee
-	SinkUnresolvedEdge            = callgraphdomain.SinkUnresolvedEdge
-	SinkUnsafePointerLeaf         = callgraphdomain.SinkUnsafePointerLeaf
+	SinkAssemblyOrLinknameLeaf       = callgraphdomain.SinkAssemblyOrLinknameLeaf
+	SinkDependencyDispatchUnmeasured = callgraphdomain.SinkDependencyDispatchUnmeasured
+	SinkDroppedPackageEdges          = callgraphdomain.SinkDroppedPackageEdges
+	SinkInterfaceDispatch            = callgraphdomain.SinkInterfaceDispatch
+	SinkModuleSurfaceUnenumerated    = callgraphdomain.SinkModuleSurfaceUnenumerated
+	SinkPluginLeaf                   = callgraphdomain.SinkPluginLeaf
+	SinkReferenceScopeUnmeasured     = callgraphdomain.SinkReferenceScopeUnmeasured
+	SinkReflectDispatch              = callgraphdomain.SinkReflectDispatch
+	SinkTestHarnessEntry             = callgraphdomain.SinkTestHarnessEntry
+	SinkTestScopeUnmeasured          = callgraphdomain.SinkTestScopeUnmeasured
+	SinkTypeOnlyCallee               = callgraphdomain.SinkTypeOnlyCallee
+	SinkUnresolvedEdge               = callgraphdomain.SinkUnresolvedEdge
+	SinkUnsafePointerLeaf            = callgraphdomain.SinkUnsafePointerLeaf
 )
 
 // The values of StageStatus, as the internal package defines them.

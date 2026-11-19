@@ -219,6 +219,52 @@ and none as TinyGo's; it now records the split TinyGo builds. Unchanged for
 every walk without `--tinygo`. Rows at `1.11.0` stay and are re-resolved rather
 than read.
 
+## Call graph record: pipeline `0.15.0` → `0.16.0`, and callgraph migration 19 - methods a dependency can call
+
+**Record shape change; store migration 19; no schema-version bump.** An exported
+method of a module type records, inside the seal, as `dependency_dispatch`, how a
+dependency can call it with no edge in the module's graph: the first conversion
+of its type (or a type embedding it) to an interface, or the type passed as a
+type argument to a generic declared outside the module or to an owned generic
+that converts or hands on that type parameter, with the function and site
+(`escape`), and the package-level interfaces declared outside the module
+that contain the method and that the type satisfies (`interfaces`); `production`
+holds the same over hand-offs outside test code, absent when none is. The field is
+omitted when absent, so a node without one marshals to the bytes it always did.
+Migration 19 adds its row copy, so an edge answer reads it without decoding the
+record:
+
+```sql
+CREATE TABLE IF NOT EXISTS callgraph_dependency_dispatch (
+    record_content_hash TEXT NOT NULL,
+    module_path         TEXT NOT NULL,
+    module_version      TEXT NOT NULL,
+    pipeline_version    TEXT NOT NULL,
+    node_id             TEXT NOT NULL,
+    detail              TEXT NOT NULL,
+    PRIMARY KEY (record_content_hash, node_id)
+);
+CREATE INDEX IF NOT EXISTS callgraph_dependency_dispatch_node_idx
+    ON callgraph_dependency_dispatch (node_id, pipeline_version)
+```
+
+No back-fill: every existing record is at `0.15.0` or earlier, which is never
+served at `0.16.0`. Store `v94` -> `v95`.
+
+An empty `callers` answer for such a method reads `UNRESOLVED` naming
+`dependency-dispatch-unmeasured`, where a `0.15.0` record read `RESOLVED-ABSENT`.
+A non-empty one stays `RESOLVED-PRESENT` and carries the sink on its `answer:`
+line; single-hop `--json` states it on stderr. `callers --transitive --json` gains
+`dependency_dispatch`, always present, and a `callgraph-show --json` node gains
+it, omitted when absent. Where a production hand-off exists, a
+`reachability` route root nothing in the module calls reads `ingress`, where it
+read `exported-api` or `internal`, and a clean read-time negative search past
+such a method that reaches the symbol reads `unconfirmed` and lists that route.
+
+Records are keyed `(module, version, pipeline_version)`: `0.15.0` rows stay and
+become unreachable. Cost is one re-extraction per coordinate on its next
+`callgraph` or `local` run.
+
 ## Call graph record: pipeline `0.14.0` → `0.15.0` - template text in a package var or an embedded file
 
 **Record content change; no store migration; no schema-version bump.** A

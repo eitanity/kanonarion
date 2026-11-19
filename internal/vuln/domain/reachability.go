@@ -368,6 +368,15 @@ type NegativeSearch struct {
 	// is worse than one reported with its rooting named.
 	ShippedCodePathFound bool
 	ShippedCodeRoute     ReachabilityRoute
+	// DispatchPathFound is a route found only once the methods a dependency
+	// could call through a value the module hands it were added as roots, after
+	// the entry points found none. It never contradicts the negative: the
+	// hand-off may never run, and the dependency may never call that method. It
+	// holds a clean search at unconfirmed. DispatchDetail is the hand-off of
+	// DispatchRoute's root.
+	DispatchPathFound bool
+	DispatchRoute     ReachabilityRoute
+	DispatchDetail    string
 	// ReflectiveDispatch is every call site in the graph searched whose callee
 	// IsReflectiveLookup names. The traversal above went past each reachable one
 	// whose name set is known; a reachable one without holds the rung at
@@ -664,6 +673,11 @@ func searchedSoundness(d ReachabilityDerivation, s *NegativeSearch) (soundness R
 			" whose methods are not known, which this search cannot follow, so a route may exist that it could not see: " +
 			strings.Join(firstSites(unbound), "; ") + ". A call-graph search found no path" +
 			entryPointRootingNote(s) + lookupSitesNote(s) + searchedGraphsNote(s)
+	case s.DispatchPathFound:
+		// A dependency's call into the module has no edge, so an empty search past
+		// a method it could call is not an absence; it is not a path either.
+		return SoundnessUnconfirmed, dispatchReason(s) + ". A call-graph search found no path" +
+			entryPointRootingNote(s) + lookupSitesNote(s) + searchedGraphsNote(s)
 	case len(s.UnjoinedCalls) > 0:
 		// The traversal stopped at calls into modules it holds no graph for, so its
 		// empty result is not an absence; the recorded derivation keeps the rung.
@@ -678,6 +692,23 @@ func searchedSoundness(d ReachabilityDerivation, s *NegativeSearch) (soundness R
 			ReachabilityDerivation{Analyser: AnalyserCallGraphBFS, Fidelity: s.Fidelity, Rooting: d.Rooting})
 		return rung, reason + entryPointRootingNote(s) + lookupSitesNote(s) + searchedGraphsNote(s)
 	}
+}
+
+// dispatchReason states the route a dependency-callable method opens.
+func dispatchReason(s *NegativeSearch) string {
+	root := "the route's root"
+	if len(s.DispatchRoute) > 0 {
+		root = s.DispatchRoute[0].String()
+	}
+	reason := root + " is a method a dependency could call through a value the module hands it"
+	if s.DispatchDetail != "" {
+		reason += " (" + s.DispatchDetail + ")"
+	}
+	reason += ", and it reaches the vulnerable symbol"
+	if len(s.DispatchRoute) > 1 {
+		reason += " along " + s.DispatchRoute.String()
+	}
+	return reason + ", so a route may exist that this graph has no edge for"
 }
 
 // LocalProbeClause closes the reason of a negative LocalProbeSettles holds for.

@@ -78,6 +78,9 @@ func projectCallGraph(rec callgraphdomain.CallGraphRecord) ports.CallGraphProjec
 			HandlerKind:   string(n.InterruptHandler.Kind),
 			HandlerFile:   n.InterruptHandler.Site.File,
 			HandlerLine:   n.InterruptHandler.Site.Line,
+			// Production hand-offs only: a consumer's build compiles no test that
+			// hands the value over. A detail, so a route rooted at the node names it.
+			DependencyDispatch: n.DependencyDispatch.Production().Describe(),
 		})
 	}
 	// Reference edges are projected alongside calls, deliberately. A handler
