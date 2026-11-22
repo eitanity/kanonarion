@@ -131,15 +131,13 @@ func runCallers(ctx context.Context, symbolID string, jsonOut bool, uc QueryCall
 	if err != nil {
 		return fmt.Errorf("finding callers: %w", err)
 	}
-
 	// A dropped package produces no SSA and therefore no node, so the "not a node
-	// in the graph" classification below would blame the symbol for its module's
-	// build failure. The dropped-edges notice is the accurate reason, and it is
-	// printed instead.
-	if len(refs) == 0 && pr.failedPkg == "" {
-		if cerr := classifyEmptyEdgeResult(ctx, symbolID, uc, sc); cerr != nil {
-			return cerr
-		}
+	// in the graph" classification would blame the symbol for its module's build
+	// failure; the dropped-edges notice is the accurate reason. A lowering gap is
+	// the same: the node may exist only as the end of an edge the record lacks.
+	gaps, err := classifyEmptyEdges(ctx, symbolID, uc, sc, pr, len(refs))
+	if err != nil {
+		return err
 	}
 
 	if err := writeEdgeQueryNotices(ctx, stdout, "callers", symbolID, uc, sc, pr, jsonOut, edgeGaps(uc, symbolID, true, opts)); err != nil {
@@ -153,15 +151,14 @@ func runCallers(ctx context.Context, symbolID string, jsonOut bool, uc QueryCall
 	if derr != nil {
 		return derr
 	}
+	if jsonOut {
+		reportLoweringNotice("callers", symbolID, gaps)
+	}
 	if len(refs) > 0 && !jsonOut {
-		return writePresentCallers(ctx, uc, stdout, symbolID, sc, opts, refs, dispatch)
+		return writePresentCallers(ctx, uc, stdout, symbolID, sc, opts, refs, dispatchClause(dispatch)+loweringClause(gaps))
 	}
 	if len(refs) == 0 && !jsonOut {
-		v, verr := negativeCallAnswer(ctx, symbolID, true, uc, sc, opts, pr.failedPkg, pr.detail)
-		if verr != nil {
-			return verr
-		}
-		return writeCallAnswer(stdout, "callers", symbolID, v, opts)
+		return writeEmptyEdgeAnswer(ctx, stdout, "callers", symbolID, true, uc, sc, opts, pr, gaps)
 	}
 	return nil
 }
@@ -281,15 +278,13 @@ func runCallees(ctx context.Context, symbolID string, jsonOut bool, uc QueryCall
 	if err != nil {
 		return fmt.Errorf("finding callees: %w", err)
 	}
-
 	// A dropped package produces no SSA and therefore no node, so the "not a node
-	// in the graph" classification below would blame the symbol for its module's
-	// build failure. The dropped-edges notice is the accurate reason, and it is
-	// printed instead.
-	if len(refs) == 0 && pr.failedPkg == "" {
-		if cerr := classifyEmptyEdgeResult(ctx, symbolID, uc, sc); cerr != nil {
-			return cerr
-		}
+	// in the graph" classification would blame the symbol for its module's build
+	// failure; the dropped-edges notice is the accurate reason. A lowering gap is
+	// the same: the node may exist only as the end of an edge the record lacks.
+	gaps, err := classifyEmptyEdges(ctx, symbolID, uc, sc, pr, len(refs))
+	if err != nil {
+		return err
 	}
 
 	if err := writeEdgeQueryNotices(ctx, stdout, "callees", symbolID, uc, sc, pr, jsonOut, edgeGaps(uc, symbolID, false, opts)); err != nil {
@@ -299,18 +294,17 @@ func runCallees(ctx context.Context, symbolID string, jsonOut bool, uc QueryCall
 	if err := printEdgeRefs("callees", symbolID, refs, jsonOut, stdout); err != nil {
 		return err
 	}
+	if jsonOut {
+		reportLoweringNotice("callees", symbolID, gaps)
+	}
 	if len(refs) > 0 && !jsonOut {
 		if err := writeEdgeScopeLine(stdout, "callees", opts); err != nil {
 			return err
 		}
-		return writeForeignEdgeAnswer(ctx, newForeignModuleIndex(uc, sc), stdout, "callees", symbolID, refs, false, "")
+		return writeForeignEdgeAnswer(ctx, newForeignModuleIndex(uc, sc), stdout, "callees", symbolID, refs, false, loweringClause(gaps))
 	}
 	if len(refs) == 0 && !jsonOut {
-		v, verr := negativeCallAnswer(ctx, symbolID, false, uc, sc, opts, pr.failedPkg, pr.detail)
-		if verr != nil {
-			return verr
-		}
-		return writeCallAnswer(stdout, "callees", symbolID, v, opts)
+		return writeEmptyEdgeAnswer(ctx, stdout, "callees", symbolID, false, uc, sc, opts, pr, gaps)
 	}
 	return nil
 }
@@ -440,6 +434,9 @@ type transitiveResult struct {
 	// call through an interface, whose callers there the closure cannot hold.
 	// Always present, empty on a callees walk.
 	DependencyDispatch []dispatchJSON `json:"dependency_dispatch"`
+	// TinyGoLowering names the records the walk read that hold none of the calls
+	// TinyGo's compiler inserts, so the closure may be short. Absent when none.
+	TinyGoLowering []dispatchJSON `json:"tinygo_lowering_unrecorded,omitempty"`
 }
 
 // callersDispatch reads the queried method's dependency dispatch for the
@@ -462,21 +459,21 @@ func callersDispatch(ctx context.Context, uc QueryCallGraphUseCase, symbolID str
 // writePresentCallers writes the lines under a non-empty callers list: the
 // narrowing, then the answer line when it qualifies the list.
 func writePresentCallers(ctx context.Context, uc QueryCallGraphUseCase, stdout io.Writer, symbolID string, sc buildScope,
-	opts ports.EdgeQueryOptions, refs []ports.CallEdgeRef, dispatch []domain.SoundnessSink) error {
+	opts ports.EdgeQueryOptions, refs []ports.CallEdgeRef, extra string) error {
 	if err := writeEdgeScopeLine(stdout, "callers", opts); err != nil {
 		return err
 	}
-	return writeForeignEdgeAnswer(ctx, newForeignModuleIndex(uc, sc), stdout, "callers", symbolID, refs, true, dispatchClause(dispatch))
+	return writeForeignEdgeAnswer(ctx, newForeignModuleIndex(uc, sc), stdout, "callers", symbolID, refs, true, extra)
 }
 
 // writePresentTransitiveCallers writes the lines under a non-empty transitive
 // callers list: the narrowing, then the answer line when it qualifies the list.
 func writePresentTransitiveCallers(ctx context.Context, uc QueryCallGraphUseCase, stdout io.Writer, symbolID string, sc buildScope,
-	opts ports.EdgeQueryOptions, edges []ports.CallEdgeRef, nodes []string, dispatch []domain.SoundnessSink) error {
+	opts ports.EdgeQueryOptions, edges []ports.CallEdgeRef, nodes []string, extra string) error {
 	if err := writeEdgeScopeLine(stdout, "callers", opts); err != nil {
 		return err
 	}
-	return writeForeignTransitiveAnswer(ctx, newForeignModuleIndex(uc, sc), stdout, "transitive callers", symbolID, edges, nodes, true, dispatchClause(dispatch))
+	return writeForeignTransitiveAnswer(ctx, newForeignModuleIndex(uc, sc), stdout, "transitive callers", symbolID, edges, nodes, true, extra)
 }
 
 func runCallersTransitive(ctx context.Context, symbolID string, maxDepth int, jsonOut bool, uc QueryCallGraphUseCase, stdout io.Writer, sc buildScope, opts ports.EdgeQueryOptions, progress ports.TraversalProgressReporter) error {
@@ -500,15 +497,13 @@ func runCallersTransitive(ctx context.Context, symbolID string, maxDepth int, js
 		return fmt.Errorf("traversing callers: %w", err)
 	}
 	edges, nodes := res.Edges, res.Nodes
-
 	// A transitive walk is emptied by the same conditions a single hop is —
 	// a module never analysed, a symbol that is not a node, a module served by
 	// nothing at this pipeline version — and an empty walk that names none of
 	// them reads as a measured absence.
-	if len(edges) == 0 && pr.failedPkg == "" {
-		if cerr := classifyEmptyEdgeResult(ctx, symbolID, uc, sc); cerr != nil {
-			return cerr
-		}
+	gaps, err := classifyEmptyEdges(ctx, symbolID, uc, sc, pr, len(edges))
+	if err != nil {
+		return err
 	}
 	if err := writeEdgeQueryNotices(ctx, stdout, "transitive callers", symbolID, uc, sc, pr, jsonOut, knownGaps(res.NotSearched)); err != nil {
 		return err
@@ -519,18 +514,14 @@ func runCallersTransitive(ctx context.Context, symbolID string, maxDepth int, js
 	if derr != nil {
 		return derr
 	}
-	if err := printTransitiveResult("callers", symbolID, maxDepth, res, jsonOut, stdout, opts, dispatch); err != nil {
+	if err := printTransitiveResult("callers", symbolID, maxDepth, res, jsonOut, stdout, opts, transitiveSinks{dispatch: dispatch, lowering: loweringSinks(gaps)}); err != nil {
 		return err
 	}
 	if len(nodes) > 0 && !jsonOut {
-		return writePresentTransitiveCallers(ctx, uc, stdout, symbolID, sc, opts, edges, nodes, dispatch)
+		return writePresentTransitiveCallers(ctx, uc, stdout, symbolID, sc, opts, edges, nodes, dispatchClause(dispatch)+loweringClause(gaps))
 	}
 	if len(nodes) == 0 && !jsonOut {
-		v, verr := negativeCallAnswer(ctx, symbolID, true, uc, sc, opts, pr.failedPkg, pr.detail)
-		if verr != nil {
-			return verr
-		}
-		return writeCallAnswer(stdout, "transitive callers", symbolID, v, opts)
+		return writeEmptyEdgeAnswer(ctx, stdout, "transitive callers", symbolID, true, uc, sc, opts, pr, gaps)
 	}
 	return nil
 }
@@ -556,34 +547,28 @@ func runCalleesTransitive(ctx context.Context, symbolID string, maxDepth int, js
 		return fmt.Errorf("traversing callees: %w", err)
 	}
 	edges, nodes := res.Edges, res.Nodes
-
 	// A transitive walk is emptied by the same conditions a single hop is —
 	// a module never analysed, a symbol that is not a node, a module served by
 	// nothing at this pipeline version — and an empty walk that names none of
 	// them reads as a measured absence.
-	if len(edges) == 0 && pr.failedPkg == "" {
-		if cerr := classifyEmptyEdgeResult(ctx, symbolID, uc, sc); cerr != nil {
-			return cerr
-		}
+	gaps, err := classifyEmptyEdges(ctx, symbolID, uc, sc, pr, len(edges))
+	if err != nil {
+		return err
 	}
 	if err := writeEdgeQueryNotices(ctx, stdout, "transitive callees", symbolID, uc, sc, pr, jsonOut, knownGaps(res.NotSearched)); err != nil {
 		return err
 	}
-	if err := printTransitiveResult("callees", symbolID, maxDepth, res, jsonOut, stdout, opts, nil); err != nil {
+	if err := printTransitiveResult("callees", symbolID, maxDepth, res, jsonOut, stdout, opts, transitiveSinks{lowering: loweringSinks(gaps)}); err != nil {
 		return err
 	}
 	if len(nodes) > 0 && !jsonOut {
 		if err := writeEdgeScopeLine(stdout, "callees", opts); err != nil {
 			return err
 		}
-		return writeForeignTransitiveAnswer(ctx, newForeignModuleIndex(uc, sc), stdout, "transitive callees", symbolID, edges, nodes, false, "")
+		return writeForeignTransitiveAnswer(ctx, newForeignModuleIndex(uc, sc), stdout, "transitive callees", symbolID, edges, nodes, false, loweringClause(gaps))
 	}
 	if len(nodes) == 0 && !jsonOut {
-		v, verr := negativeCallAnswer(ctx, symbolID, false, uc, sc, opts, pr.failedPkg, pr.detail)
-		if verr != nil {
-			return verr
-		}
-		return writeCallAnswer(stdout, "transitive callees", symbolID, v, opts)
+		return writeEmptyEdgeAnswer(ctx, stdout, "transitive callees", symbolID, false, uc, sc, opts, pr, gaps)
 	}
 	return nil
 }
@@ -627,7 +612,13 @@ const traversalDepthRemedy = "--depth 0"
 // the completeness marker is not separable from the nodes it qualifies — and
 // because "truncated" and "jsonOut" as adjacent bool parameters is a call site
 // that compiles when it is transposed.
-func printTransitiveResult(direction, root string, maxDepth int, res cgapp.TraversalResult, jsonOut bool, stdout io.Writer, opts ports.EdgeQueryOptions, dispatch []domain.SoundnessSink) error {
+// transitiveSinks are what a transitive answer states about the edges it could
+// not hold: the dependency dispatch of its symbols, and a record's lowering gap.
+type transitiveSinks struct {
+	dispatch, lowering []domain.SoundnessSink
+}
+
+func printTransitiveResult(direction, root string, maxDepth int, res cgapp.TraversalResult, jsonOut bool, stdout io.Writer, opts ports.EdgeQueryOptions, sinks transitiveSinks) error {
 	nodes, edges, truncated := res.Nodes, res.Edges, res.Truncated
 	if jsonOut {
 		if nodes == nil {
@@ -646,7 +637,8 @@ func printTransitiveResult(direction, root string, maxDepth int, res cgapp.Trave
 			Scope:              edgeScopeLine(direction, opts),
 			SetAside:           storeSetAside.take().json(),
 			NotSearched:        storeNotSearched.take().json(),
-			DependencyDispatch: toDispatchJSON(dispatch),
+			DependencyDispatch: toDispatchJSON(sinks.dispatch),
+			TinyGoLowering:     toDispatchJSON(sinks.lowering),
 		}
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")

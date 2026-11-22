@@ -20,7 +20,7 @@ const checksumDetail = "the loader reported: a.go:3:8: missing go.sum entry for 
 func TestIncompleteGraphRemedy_ChecksumGapIsNotACompileError(t *testing.T) {
 	coord := coordinatetest.MustNew("example.com/inc", coordinate.LocalVersion)
 
-	got := domain.IncompleteGraphRemedy(coord, domain.FailureCauseModule, checksumDetail, "/work/tree")
+	got := domain.IncompleteGraphRemedy(coord, domain.FailureCauseModule, checksumDetail, "/work/tree", domain.BuildFrame{})
 
 	if strings.Contains(got, "Fix the package so it compiles") {
 		t.Errorf("a missing checksum entry was reported as a compile error:\n%s", got)

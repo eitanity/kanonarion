@@ -1002,6 +1002,9 @@ type CallGraphProjection struct {
 	// graph with none. TinyGo's reflect decides what a method lookup returns.
 	TinyGoTarget  string
 	TinyGoVersion string
+	// LoweringGap states that the graph holds none of the calls TinyGo's compiler
+	// inserts, naming the release; empty for a graph with them, or no TinyGo frame.
+	LoweringGap string
 }
 
 // CallGraphNode is the subset of a call graph node the analyser needs.

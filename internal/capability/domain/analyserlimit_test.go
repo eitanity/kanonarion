@@ -23,3 +23,18 @@ func TestAnalyseAnalyserLimitIsCaveatedWithTheReason(t *testing.T) {
 		}
 	}
 }
+
+// A TinyGo record without its compiler's inserted calls is caveated with the
+// release and what closes it.
+func TestAnalyseLoweringGapIsCaveatedWithTheRelease(t *testing.T) {
+	rec := cgdomain.CallGraphRecord{
+		OverallStatus: cgdomain.CallGraphStatusPartial,
+		FailureDetail: cgdomain.TinyGoLoweringGap{Found: "0.45.0", Covered: []string{"0.44.0"}}.Clause(),
+	}
+	got := Analyse(rec, nil, cgdomain.RootScopeProduction).Caveat
+	for _, want := range []string{"holds none of the calls TinyGo's compiler inserts (TinyGo 0.45.0 ran", "lower bound", "lowering table covers TinyGo 0.45.0"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("caveat lacks %q: %s", want, got)
+		}
+	}
+}

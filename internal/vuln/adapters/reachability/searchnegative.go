@@ -303,6 +303,7 @@ func (c *cachedProjection) search(rec *domain.VulnerabilityRecord, f domain.Vuln
 		// fact from the search never having run.
 		ReflectiveDispatch: c.reflectSites,
 		NotJoined:          c.notJoined,
+		LoweringGap:        c.projection.LoweringGap,
 	}
 	// Two searches over one graph, because they are two claims. The
 	// entry-point search is the one that may confirm or contradict the
@@ -716,6 +717,8 @@ func joinProjections(consumer, subject ports.CallGraphProjection, linked []strin
 		ServableAsCacheHit: consumer.ServableAsCacheHit && subject.ServableAsCacheHit,
 		StdlibPackages:     consumer.StdlibPackages,
 		DependencyPackages: consumer.DependencyPackages,
+		// Either half holding no lowering edges leaves the joined graph without them.
+		LoweringGap: joinedLoweringGap(consumer, subject),
 		// The consumer's frame is the build, so its reflect decides every site.
 		TinyGoTarget:  consumer.TinyGoTarget,
 		TinyGoVersion: consumer.TinyGoVersion,
@@ -912,4 +915,15 @@ func itOrThem(n int) string {
 		return "it"
 	}
 	return "them"
+}
+
+// joinedLoweringGap is each half's lowering gap, the consumer's first.
+func joinedLoweringGap(consumer, subject ports.CallGraphProjection) string {
+	gaps := make([]string, 0, 2)
+	for _, g := range []string{consumer.LoweringGap, subject.LoweringGap} {
+		if g != "" {
+			gaps = append(gaps, g)
+		}
+	}
+	return strings.Join(gaps, "; ")
 }

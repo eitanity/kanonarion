@@ -91,6 +91,8 @@ type graph struct {
 	// when the record does not say. It is carried so a remedy printed later names
 	// the directory instead of a placeholder the reader cannot substitute.
 	analysisRoot string
+	// frame is the served record's build frame, so a remedy re-analyses in it.
+	frame callgraphdomain.BuildFrame
 	// nodes is keyed by (package, receiver, symbol) — what a route frame carries.
 	// A node ID would be the obvious key, but the frame does not hold one and
 	// reconstructing an ID from its parts encodes an ID convention this context
@@ -165,7 +167,7 @@ func (c *Classifier) facts(ctx context.Context, coord coordinate.ModuleCoordinat
 			Unavailable: fmt.Sprintf(
 				"the route's entry point %s is not a node in %s's call graph, so the graph cannot say what enters it",
 				frame, coord),
-			UnavailableRemedy: callgraphdomain.ReanalysisInstruction(coord, g.analysisRoot) + ", to re-analyse the module the route starts in",
+			UnavailableRemedy: callgraphdomain.FrameReanalysisInstruction(coord, g.analysisRoot, g.frame, false) + ", to re-analyse the module the route starts in",
 		}
 	}
 	return vuldomain.RootFacts{
@@ -256,7 +258,7 @@ func (c *Classifier) read(ctx context.Context, coord coordinate.ModuleCoordinate
 			unavailable: fmt.Sprintf("no call graph is stored for %s, so nothing can be said about what enters the route", coord),
 			// No record came back, so there is no tree to name: the instruction says
 			// so rather than printing a command with a placeholder in it.
-			remedy: callgraphdomain.ReanalysisInstruction(coord, ""),
+			remedy: callgraphdomain.FrameReanalysisInstruction(coord, "", c.frame(), false),
 		}
 	case len(rec.Nodes) == 0:
 		// A record with no nodes is not an empty module. It is a module analysed at
@@ -267,11 +269,21 @@ func (c *Classifier) read(ctx context.Context, coord coordinate.ModuleCoordinate
 			unavailable: fmt.Sprintf(
 				"%s's call graph was analysed at %s and holds no nodes, so it cannot say what enters the route",
 				coord, rec.Completeness),
-			remedy: callgraphdomain.ReanalysisInstruction(coord, rec.AnalysisRoot),
+			remedy: callgraphdomain.FrameReanalysisInstruction(coord, rec.AnalysisRoot, rec.Frame, false),
+		}
+	}
+	// Without the calls TinyGo's compiler inserts, the upward search can miss
+	// every route through the runtime, so its distance is no answer.
+	if gap, ok := callgraphdomain.ReadTinyGoLoweringGap(rec.FailureDetail); ok {
+		return &graph{
+			unavailable: fmt.Sprintf("%s's call graph holds none of the calls TinyGo's compiler inserts (%s), "+
+				"so it cannot say what enters the route", coord, gap.Detail()),
+			remedy: gap.Remedy() + " Then re-analyse: " + callgraphdomain.FrameReanalysisInstruction(coord, rec.AnalysisRoot, rec.Frame, false),
 		}
 	}
 
 	g := &graph{
+		frame:           rec.Frame,
 		analysisRoot:    rec.AnalysisRoot,
 		nodes:           make(map[frameKey]callgraphdomain.CallNode, len(rec.Nodes)),
 		callers:         make(map[string]int),
@@ -314,6 +326,15 @@ func (c *Classifier) read(ctx context.Context, coord coordinate.ModuleCoordinate
 
 // frameMiss is the unavailable graph for a coordinate held only under other
 // frames, naming them and the remedy for this read's; nil when that is not why.
+// frame is the frame this read is served under, zero when none was named.
+func (c *Classifier) frame() callgraphdomain.BuildFrame {
+	if c.readFrame == nil {
+		return callgraphdomain.BuildFrame{}
+	}
+	f, _ := c.readFrame()
+	return f
+}
+
 func (c *Classifier) frameMiss(ctx context.Context, coord coordinate.ModuleCoordinate) *graph {
 	history, ok := c.graphs.(GraphHistory)
 	if !ok || c.readFrame == nil {

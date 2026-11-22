@@ -633,7 +633,7 @@ func TestAnalyseDir_MissingChecksumEntryNamesTheGapNotTheSource(t *testing.T) {
 	if !domain.RecordIsIncomplete(rec) {
 		t.Fatalf("the record is not incomplete, so no remedy is printed at all (status %s)", rec.OverallStatus)
 	}
-	remedy := domain.IncompleteGraphRemedy(coord, rec.FailureCause, rec.FailureDetail, dir)
+	remedy := domain.IncompleteGraphRemedy(coord, rec.FailureCause, rec.FailureDetail, dir, domain.BuildFrame{})
 	if strings.Contains(remedy, "Fix the package so it compiles") {
 		t.Errorf("the reader is told to edit source that is fine:\n%s", remedy)
 	}

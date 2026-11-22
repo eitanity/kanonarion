@@ -320,6 +320,10 @@ func StampReachabilityRooting(record *VulnerabilityRecord) {
 // was not one this search may speak to. It never means "searched and found
 // nothing"; that is a non-nil value with PathFound false.
 type NegativeSearch struct {
+	// LoweringGap names the graphs searched that hold none of the calls TinyGo's
+	// compiler inserts. A route through one has no edge, so no search over such a
+	// graph confirms or disputes a negative.
+	LoweringGap string
 	// NotSearched names why no search could be made, and is empty on a search
 	// that ran. A value here means every other field below is unset.
 	//
@@ -654,6 +658,8 @@ func searchedSoundness(d ReachabilityDerivation, s *NegativeSearch) (soundness R
 		return rung, reason + ". No call-graph search stands behind this rung: " + why
 	}
 	switch {
+	case s.LoweringGap != "":
+		return SoundnessUnconfirmed, loweringGapReason(s) + lookupSitesNote(s) + searchedGraphsNote(s)
 	case s.PathFound && s.InRecordedFrame:
 		return SoundnessDisputed, disputedReason(d, s) + lookupHopsNote(s.Route) + lookupSitesNote(s) + searchedGraphsNote(s)
 	case s.PathFound:
@@ -692,6 +698,17 @@ func searchedSoundness(d ReachabilityDerivation, s *NegativeSearch) (soundness R
 			ReachabilityDerivation{Analyser: AnalyserCallGraphBFS, Fidelity: s.Fidelity, Rooting: d.Rooting})
 		return rung, reason + entryPointRootingNote(s) + lookupSitesNote(s) + searchedGraphsNote(s)
 	}
+}
+
+// loweringGapReason states why a search over a graph without TinyGo's
+// compiler-inserted calls settles nothing, and what it found.
+func loweringGapReason(s *NegativeSearch) string {
+	reason := "the call graph searched holds none of the calls TinyGo's compiler inserts (" + s.LoweringGap +
+		"), so a route through one has no edge in it"
+	if s.PathFound {
+		return reason + ". A call-graph search found the route " + s.Route.String()
+	}
+	return reason + ". A call-graph search found no path" + entryPointRootingNote(s)
 }
 
 // dispatchReason states the route a dependency-callable method opens.

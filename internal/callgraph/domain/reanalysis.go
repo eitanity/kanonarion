@@ -2,6 +2,7 @@ package domain
 
 import (
 	"fmt"
+	"runtime"
 	"strings"
 
 	"code.eitanity.com/kanonarion/internal/coordinate"
@@ -108,19 +109,40 @@ func ReanalysisCommand(coord coordinate.ModuleCoordinate, dir string, force bool
 // path through it that yields a placeholder: an unnamed working tree produces a
 // sentence, so no caller can emit one by passing the empty string.
 func reanalysis(coord coordinate.ModuleCoordinate, dir, flags string) string {
-	if line, ok := ReanalysisCommand(coord, dir, flags == " --force"); ok {
-		return line
-	}
-	return UnnamedWorkingTreeLead + ", so run kanonarion local" + flags + " from inside it"
+	return frameReanalysis(coord, dir, BuildFrame{}, false, flags == " --force")
 }
 
 // TinyGoReanalysisInstruction is ReanalysisInstruction for the TinyGo build: the
-// re-run with --tinygo, which no stored standard-frame record answers.
-func TinyGoReanalysisInstruction(coord coordinate.ModuleCoordinate, dir string) string {
-	if line, ok := ReanalysisCommand(coord, dir, false); ok {
-		return line + gotoolchain.TinyGoFlag
+// re-run with --tinygo, which no stored standard-frame record answers. An empty
+// target is one the caller cannot name, and the line says <target>.
+func TinyGoReanalysisInstruction(coord coordinate.ModuleCoordinate, dir, target string) string {
+	return frameReanalysis(coord, dir, BuildFrame{TinyGoTarget: target}, true, false)
+}
+
+// FrameReanalysisInstruction is the re-run of a record extracted under frame:
+// it keeps the flag that selects the frame, which a plain re-run would drop. This
+// host's own frame needs none, as no flag selects it.
+func FrameReanalysisInstruction(coord coordinate.ModuleCoordinate, dir string, frame BuildFrame, force bool) string {
+	return frameReanalysis(coord, dir, frame, false, force)
+}
+
+func frameReanalysis(coord coordinate.ModuleCoordinate, dir string, frame BuildFrame, tinyGo, force bool) string {
+	flags := ""
+	if force {
+		flags = " --force"
 	}
-	return UnnamedWorkingTreeLead + ", so run kanonarion local" + gotoolchain.TinyGoFlag + " from inside it"
+	switch {
+	case frame.TinyGoTarget != "":
+		flags += " --tinygo " + frame.TinyGoTarget
+	case tinyGo:
+		flags += gotoolchain.TinyGoFlag
+	case !frame.IsZero() && (frame.GOOS != runtime.GOOS || frame.GOARCH != runtime.GOARCH):
+		flags += " " + frame.FlagSpelling()
+	}
+	if line, ok := ReanalysisCommand(coord, dir, force); ok {
+		return line + strings.TrimPrefix(flags, " --force")
+	}
+	return UnnamedWorkingTreeLead + ", so run kanonarion local" + flags + " from inside it"
 }
 
 // IsReFetchable reports whether coord names bytes 'kanonarion fetch' can go and
@@ -168,21 +190,34 @@ const MissingChecksumRemedy = "go mod tidy"
 // --force is owed exactly when the stored record would otherwise answer the
 // re-run, the same question RecordIsCacheable decides, so remedy and reuse gate
 // cannot disagree. dir is the working tree when the caller knows it.
-func IncompleteGraphRemedy(coord coordinate.ModuleCoordinate, cause FailureCause, detail, dir string) string {
-	rerun := ReanalysisInstruction(coord, dir)
+func IncompleteGraphRemedy(coord coordinate.ModuleCoordinate, cause FailureCause, detail, dir string, frame BuildFrame) string {
+	rerun := FrameReanalysisInstruction(coord, dir, frame, false)
 	if cause == FailureCauseModule && !coord.IsLocal() {
-		rerun = ForcedReanalysisInstruction(coord, dir)
+		rerun = FrameReanalysisInstruction(coord, dir, frame, true)
 	}
 	// Ahead of every branch: the source was never judged, so advice about the
 	// source or the cache would send the reader after a fault that is not there.
 	if l, ok := gotoolchain.ReadAnalyserLimit(detail); ok {
 		if !l.ClearedBy(gotoolchain.AnalysingGo()) {
 			// No --force: such a record is never served back, so a plain re-run measures.
-			return "  " + l.Statement() + "\n  " + l.Remedy() + " Then re-analyse:\n  " + ReanalysisInstruction(coord, dir)
+			return "  " + l.Statement() + "\n  " + l.Remedy() + " Then re-analyse:\n  " + FrameReanalysisInstruction(coord, dir, frame, false)
 		}
 		return "  A kanonarion built with " + l.Built + " wrote this record and could not read code requiring " +
 			l.Required + "; this one was built with " + gotoolchain.AnalysingGo() + ". Re-analyse:\n  " +
-			ReanalysisInstruction(coord, dir)
+			FrameReanalysisInstruction(coord, dir, frame, false)
+	}
+	// Ahead of the cause branches: kanonarion's own limit, stated beside any
+	// failure the load reported, whose remedy follows. Such a record is never
+	// served back, so a plain re-run measures.
+	if g, ok := ReadTinyGoLoweringGap(detail); ok {
+		gap := "  " + g.Statement() + "\n  " + g.Remedy()
+		if g.ClosedByThisBinary() {
+			gap = "  A kanonarion without a lowering table for TinyGo " + g.Found + " wrote this record; this one has one."
+		}
+		if rest := withoutTinyGoLoweringGap(detail); rest != "" {
+			return gap + "\n" + IncompleteGraphRemedy(coord, cause, rest, dir, frame)
+		}
+		return gap + " Then re-analyse:\n  " + FrameReanalysisInstruction(coord, dir, frame, false)
 	}
 	// Ahead of the cause branches below: this shares their axis and contradicts
 	// the advice they give.

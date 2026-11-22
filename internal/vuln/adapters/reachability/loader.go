@@ -59,6 +59,9 @@ func projectCallGraph(rec callgraphdomain.CallGraphRecord) ports.CallGraphProjec
 		TinyGoTarget:       rec.Frame.TinyGoTarget,
 		TinyGoVersion:      rec.Frame.TinyGoVersion,
 	}
+	if g, ok := callgraphdomain.ReadTinyGoLoweringGap(rec.FailureDetail); ok {
+		proj.LoweringGap = rec.Coordinate.String() + ": " + g.Detail()
+	}
 	reflectInternal := map[string]bool{}
 	for _, n := range rec.Nodes {
 		if n.Package == "reflect" {

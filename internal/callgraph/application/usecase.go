@@ -443,6 +443,12 @@ func (uc *ExtractCallGraphUseCase) lookupCachedRecord(ctx context.Context, log *
 	// that failure permanent. Re-analysis APPENDS; the ladder in composition
 	// decides which generation answers afterwards, so nothing is overwritten.
 	superseded := domain2.PinnedAnalysisSupersedes(existing, req.Inputs)
+	if found && !domain2.SameTinyGoRelease(existing.Frame, uc.analyser.AnalyserMetadata().Frame) {
+		log.InfoContext(ctx, "callgraph_cache_other_tinygo_release",
+			slog.String("recorded_tinygo_version", existing.Frame.TinyGoVersion),
+			slog.String("content_hash", existing.ContentHash))
+		return existing, found, false, nil
+	}
 	if found && domain2.RecordIsCacheable(existing) && !superseded {
 		log.InfoContext(ctx, "callgraph_cache_hit")
 		return existing, found, true, nil

@@ -264,7 +264,7 @@ func writeIncompletenessRemedy(ctx context.Context, stdout io.Writer, r cgdomain
 	if !cgdomain.RecordIsIncomplete(r) && (!limited || !cgdomain.RecordIsFailure(r)) {
 		return nil
 	}
-	if _, err := fmt.Fprintln(stdout, incompleteGraphRemedy(ctx, r.Coordinate, r.FailureCause, r.FailureDetail, dir)); err != nil {
+	if _, err := fmt.Fprintln(stdout, incompleteGraphRemedy(ctx, r.Coordinate, r.FailureCause, r.FailureDetail, dir, r.Frame)); err != nil {
 		return fmt.Errorf("writing incompleteness remedy: %w", err)
 	}
 	return nil

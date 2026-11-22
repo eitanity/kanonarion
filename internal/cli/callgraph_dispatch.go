@@ -100,6 +100,13 @@ func (c *dispatchNoticeCollector) report(kind, symbolID string, sinks []domain.S
 		" do not include calls a dependency makes through an interface: "+strings.Join(parts, "; ")+"\n")
 }
 
+// note holds one prepared statement line.
+func (c *dispatchNoticeCollector) note(line string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.lines = append(c.lines, line)
+}
+
 // flush states on w what no document took.
 func (c *dispatchNoticeCollector) flush(w io.Writer) {
 	c.mu.Lock()

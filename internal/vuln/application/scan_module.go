@@ -413,6 +413,8 @@ type ScanModuleUseCase struct {
 	// setAside states the generations a write or reuse read set aside; nil logs
 	// them at warn level instead.
 	setAside SetAsideReporter
+	// tinyGoRelease is the TinyGo release this run analyses under; nil for none.
+	tinyGoRelease func() string
 }
 
 // NewScanModuleUseCase returns a new ScanModuleUseCase.
@@ -490,6 +492,22 @@ func annotateRouteDispatch(
 func (uc *ScanModuleUseCase) WithCallGraphLoader(loader ports.CallGraphLoader) *ScanModuleUseCase {
 	uc.callGraphLoader = loader
 	return uc
+}
+
+// WithTinyGoRelease names the TinyGo release this run analyses under, "" for
+// none. A stored graph another release built is not taken as already done.
+func (uc *ScanModuleUseCase) WithTinyGoRelease(release func() string) *ScanModuleUseCase {
+	uc.tinyGoRelease = release
+	return uc
+}
+
+// sameTinyGoRelease reports whether a stored graph of version was built by the
+// release this run analyses under.
+func (uc *ScanModuleUseCase) sameTinyGoRelease(version string) bool {
+	if uc.tinyGoRelease == nil {
+		return version == ""
+	}
+	return version == uc.tinyGoRelease()
 }
 
 // WithCallGraphSpawner sets the spawner used to run on-demand callgraph
@@ -1518,7 +1536,7 @@ func (uc *ScanModuleUseCase) maybeEnsureCallGraph(ctx context.Context, params Sc
 
 	if !params.Force {
 		proj, loadErr := uc.callGraphLoader.Load(ctx, params.Coordinate)
-		if loadErr == nil && proj.ServableAsCacheHit {
+		if loadErr == nil && proj.ServableAsCacheHit && uc.sameTinyGoRelease(proj.TinyGoVersion) {
 			return "" // callgraph already in store
 		}
 		switch {

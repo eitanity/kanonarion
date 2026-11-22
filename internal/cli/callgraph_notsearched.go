@@ -180,7 +180,7 @@ func (s notSearchedRows) writeNotice(w io.Writer, what, how string) error {
 			continue
 		}
 		if line, ok := domain.ReanalysisCommand(r.Coordinate, r.AnalysisRoot, false); ok {
-			b.WriteString("  " + line + "\n")
+			b.WriteString("  " + line + targetFlagHint() + "\n")
 			continue
 		}
 		// A local coordinate whose working tree no record names gets the house

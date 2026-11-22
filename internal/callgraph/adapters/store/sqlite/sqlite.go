@@ -1611,6 +1611,12 @@ func (s *Store) WorktreeGeneration(ctx context.Context, coord coordinate.ModuleC
 		return domain2.CallGraphRecord{}, false, nil
 	}
 	pred, fargs := frameFilter(frame)
+	// The release is selected here, not in frameFilter: reuse claims the same
+	// build, and a read selects on the frame alone (domain.SameTinyGoRelease).
+	if !frame.IsZero() {
+		pred += " AND tinygo_version = ?"
+		fargs = append(fargs, frame.TinyGoVersion)
+	}
 	q := `SELECT serialised, content_hash, overall_status, completeness, failure_cause, extracted_at, analyser, rowid
 FROM callgraph_records
 WHERE module_path = ? AND module_version = ? AND pipeline_version = ?

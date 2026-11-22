@@ -91,4 +91,15 @@ const (
 	OpWasmExportCheckRun Op = "wasmexport-check-run"
 	OpWasmExportRun      Op = "wasmexport-run"
 	OpWasmExportExit     Op = "wasmexport-exit"
+
+	// The constructs only some releases lower to a call, or lower to a different
+	// one: a table that names no callee for an op records no edge for it.
+	OpArrayEqual                Op = "array-equal"
+	OpStringFromBytesComparedTo Op = "string-from-bytes-compared-to-conversion"
+	OpStringFromBytesCompared   Op = "string-from-bytes-compared"
+	OpChanTrySend               Op = "chan-try-send"
+	OpChanTryRecv               Op = "chan-try-recv"
+	OpUnwindCheck               Op = "unwind-check"
+	OpUnwindClear               Op = "unwind-clear"
+	OpAsyncifyCatch             Op = "asyncify-catch"
 )

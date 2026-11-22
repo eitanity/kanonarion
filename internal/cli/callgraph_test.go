@@ -208,7 +208,7 @@ func TestPrintEdgeRefs_JSON(t *testing.T) {
 
 func TestPrintTransitiveResult_Empty(t *testing.T) {
 	var buf bytes.Buffer
-	if err := printTransitiveResult("callers", "x.F", 0, cgapp.TraversalResult{}, false, &buf, cgports.EdgeQueryOptions{}, nil); err != nil {
+	if err := printTransitiveResult("callers", "x.F", 0, cgapp.TraversalResult{}, false, &buf, cgports.EdgeQueryOptions{}, transitiveSinks{}); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(buf.String(), "No transitive callers") {
@@ -219,7 +219,7 @@ func TestPrintTransitiveResult_Empty(t *testing.T) {
 func TestPrintTransitiveResult_WithNodes(t *testing.T) {
 	nodes := []string{"a.F", "b.G"}
 	var buf bytes.Buffer
-	if err := printTransitiveResult("callers", "x.F", 3, cgapp.TraversalResult{Nodes: nodes}, false, &buf, cgports.EdgeQueryOptions{}, nil); err != nil {
+	if err := printTransitiveResult("callers", "x.F", 3, cgapp.TraversalResult{Nodes: nodes}, false, &buf, cgports.EdgeQueryOptions{}, transitiveSinks{}); err != nil {
 		t.Fatal(err)
 	}
 	got := buf.String()
@@ -233,7 +233,7 @@ func TestPrintTransitiveResult_WithNodes(t *testing.T) {
 
 func TestPrintTransitiveResult_JSON(t *testing.T) {
 	var buf bytes.Buffer
-	if err := printTransitiveResult("callees", "x.F", 0, cgapp.TraversalResult{Nodes: []string{"a.F"}}, true, &buf, cgports.EdgeQueryOptions{}, nil); err != nil {
+	if err := printTransitiveResult("callees", "x.F", 0, cgapp.TraversalResult{Nodes: []string{"a.F"}}, true, &buf, cgports.EdgeQueryOptions{}, transitiveSinks{}); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(buf.String(), `"root"`) {

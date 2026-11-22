@@ -359,11 +359,11 @@ The record also holds what TinyGo adds beyond the source's calls:
   channel, `append`, `panic`/`recover`, type assertion, interface comparison,
   `go`, `defer`, heap allocation, the bounds, nil and divide-by-zero checks, and
   `print`/`println` each become a call to the runtime function TinyGo emits for
-  them. The functions come from a table kanonarion keeps per TinyGo release.
-  Under a release the table does not cover, the record is `Partial` with
-  `compiler-inserted runtime calls and the entry points TinyGo exports by name
-  are not recorded: TinyGo <version> is outside kanonarion's lowering table,
-  which covers TinyGo <versions>`; everything else in it is measured as usual.
+  them, from a table kanonarion keeps per TinyGo release. Under a release the
+  table does not cover, the record is `Partial` with `compiler-inserted runtime
+  calls and the entry points TinyGo exports by name are not recorded: TinyGo
+  <version> is outside kanonarion's lowering table, which covers TinyGo
+  <versions>`, and every read over it names `tinygo-lowering-unrecorded`.
 - **Bodies `//go:linkname` supplies**, edge kind `linkname`, in both forms: the
   implementing package names the declaration (`//go:linkname timeSleep
   time.Sleep`), or a declaration without a body names its implementation

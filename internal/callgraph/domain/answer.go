@@ -2,6 +2,7 @@ package domain
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -117,6 +118,10 @@ const (
 	// through that value has no edge: an empty callers answer cannot rule it out,
 	// and a non-empty one lists the module's own callers only.
 	SinkDependencyDispatchUnmeasured SinkKind = "dependency-dispatch-unmeasured"
+	// SinkTinyGoLoweringUnrecorded is a TinyGo record analysed by a kanonarion
+	// with no lowering table for its release: no compiler-inserted call is in it,
+	// so an empty answer cannot rule one out and a non-empty one may be short.
+	SinkTinyGoLoweringUnrecorded SinkKind = "tinygo-lowering-unrecorded"
 )
 
 // SoundnessSink is a single reason an empty answer was downgraded to
@@ -161,6 +166,14 @@ func (v Answer) Reason() string {
 		parts = append(parts, s.Describe())
 	}
 	return strings.Join(parts, "; ")
+}
+
+// WithSinks is v downgraded by sinks: an answer with any is UNRESOLVED.
+func (v Answer) WithSinks(sinks ...SoundnessSink) Answer {
+	if len(sinks) == 0 {
+		return v
+	}
+	return Answer{Outcome: AnswerUnresolved, Sinks: dedupeSinks(append(slices.Clone(v.Sinks), sinks...))}
 }
 
 // SymbolMethodName extracts the short method or function name from a call-graph

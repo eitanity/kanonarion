@@ -231,10 +231,12 @@ type fakeAnalyser struct {
 	identity      domain.WorktreeIdentity
 	identityErr   error
 	identityCalls int
+	// frame is the frame the analyser runs under.
+	frame domain.BuildFrame
 }
 
 func (f *fakeAnalyser) AnalyserMetadata() ports.AnalyserMetadata {
-	return ports.AnalyserMetadata{Algorithm: domain.AlgorithmCHA, Version: "test"}
+	return ports.AnalyserMetadata{Algorithm: domain.AlgorithmCHA, Version: "test", Frame: f.frame}
 }
 
 func (f *fakeAnalyser) Analyse(_ context.Context, _ string, coord coordinate.ModuleCoordinate, inputs domain.AnalysisInputs) (domain.CallGraphRecord, error) {

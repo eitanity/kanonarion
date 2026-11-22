@@ -261,6 +261,32 @@ it, omitted when absent. Where a production hand-off exists, a
 read `exported-api` or `internal`, and a clean read-time negative search past
 such a method that reaches the symbol reads `unconfirmed` and lists that route.
 
+Under `--tinygo`, TinyGo 0.43.0 and 0.44.0 have lowering tables: their records
+hold `compiler-inserted` edges and the named wasm export, and are `Extracted`
+where they were `Partial` with the lowering sentence, which now lists
+`0.42.0, 0.43.0, 0.44.0`. From 0.43.0 a wasm build supports recover, so its
+records gain edges to `runtime.setupDeferFrame`, `runtime.destroyDeferFrame`,
+`runtime.clearUnwind`, `runtime.unwindPending` and the asyncify panic-replay
+functions. TinyGo 0.42.0 records are unchanged. A record under a release no table
+covers keeps the cause its load stated (empty, or `module` for a package that
+does not compile) where it stated `environment`. No column and no cause value is
+added. Such a record, at either cause, is never served as a cache hit, its remedy
+names the release instead of the module cache, and its re-run keeps `--tinygo`.
+A `callers` or `callees` read over it names the sink `tinygo-lowering-unrecorded`:
+on the answer line of a list, as `UNRESOLVED` for an empty answer or a symbol only
+such a call reaches (where it read `RESOLVED-ABSENT` or "not in the call-graph
+store"), on stderr under single-hop `--json`, and as `tinygo_lowering_unrecorded`,
+omitted when absent, on `--transitive --json`. A reachability negative search
+over it reads `unconfirmed`, never `confirmed` or `disputed`, and its
+`negative_search` gains `tinygo_lowering_unrecorded`; route-root classification
+reads it as unavailable; `capability` caveats it. Every re-analysis line keeps
+the record's frame flag, `--target` included, except this host's own.
+A `0.16.0` record written before this change, `environment` with the sentence,
+reads the same; it still ranks below a graph with no environment cause, and a
+new one ranks by recency. `local`, `callgraph`, the standard-library extraction
+and a scan's on-demand call graph reuse a TinyGo record only under the release
+that built it; reads still select on the target.
+
 Records are keyed `(module, version, pipeline_version)`: `0.15.0` rows stay and
 become unreachable. Cost is one re-extraction per coordinate on its next
 `callgraph` or `local` run.

@@ -147,7 +147,7 @@ func supersededPipelineError(symbolID, modulePath string, stored []ports.CallGra
 	if cErr != nil {
 		return fmt.Errorf("naming the re-analysis of module %q: %w", modulePath, cErr)
 	}
-	remedy := "  " + domain.ReanalysisInstruction(remedyCoord, "")
+	remedy := "  " + frameReanalysis(remedyCoord, "")
 	// ExitNotFound, the same code callgraph-show and usage already answer for
 	// this condition: the request is well-formed and the named command produces
 	// the record it asks for.
@@ -253,9 +253,9 @@ func buildVersionRemedy(modulePath, version string) string {
 	coord, err := coordinate.NewModuleCoordinate(modulePath, version)
 	if err != nil {
 		at := modulePath + "@" + version
-		return "kanonarion fetch " + at + " && kanonarion callgraph " + at
+		return "kanonarion fetch " + at + " && kanonarion callgraph " + at + targetFlagHint()
 	}
-	return domain.ReanalysisInstruction(coord, "")
+	return frameReanalysis(coord, "")
 }
 
 // classifyEmptyEdgeResult turns an empty callers/callees result into either
@@ -353,6 +353,8 @@ type partialRoot struct {
 	// does not say. It is carried so the remedy names that directory rather than
 	// leaving the reader an invocation they cannot run.
 	analysisRoot string
+	// frame is the record's build frame, so a TinyGo record's re-run keeps --tinygo.
+	frame domain.BuildFrame
 }
 
 // rootPartialStatus loads the call graph record(s) owning symbolID and reports
@@ -410,6 +412,11 @@ func rootPartialStatus(ctx context.Context, symbolID string, uc QueryCallGraphUs
 // notePartialRecord records what a Partial record says about the root: its
 // failed packages, an analyser limit, and the package the symbol is in.
 func notePartialRecord(out *partialRoot, failedSet map[string]bool, rec domain.CallGraphRecord, coord coordinate.ModuleCoordinate, symbolID string) {
+	// A record Partial only for the lowering gap dropped no package; the answer
+	// line states that gap instead (loweringGapsOfRead).
+	if _, gap := domain.ReadTinyGoLoweringGap(rec.FailureDetail); gap && len(rec.FailedPackages) == 0 {
+		return
+	}
 	out.isPartial = true
 	for _, p := range rec.FailedPackages {
 		failedSet[p] = true
@@ -423,6 +430,7 @@ func notePartialRecord(out *partialRoot, failedSet map[string]bool, rec domain.C
 		out.cause = rec.FailureCause
 		out.detail = rec.FailureDetail
 		out.analysisRoot = rec.AnalysisRoot
+		out.frame = rec.Frame
 	}
 }
 
@@ -646,7 +654,7 @@ func droppedEdgesNotice(ctx context.Context, kind, symbolID string, pr partialRo
 	// the reader's to fix, and a gap this host's cold module cache opened is not a
 	// compile error to go looking for. Naming a command that cannot run and naming
 	// one that re-serves the record complained about are the same defect.
-	return line + ".\n" + incompleteGraphRemedy(ctx, pr.coord, pr.cause, pr.detail, pr.analysisRoot)
+	return line + ".\n" + incompleteGraphRemedy(ctx, pr.coord, pr.cause, pr.detail, pr.analysisRoot, pr.frame)
 }
 
 // writeDroppedEdgesNotice prints droppedEdgesNotice, in text mode only.

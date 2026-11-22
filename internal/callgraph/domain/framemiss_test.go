@@ -31,9 +31,10 @@ func TestFrameMissReason(t *testing.T) {
 		t.Errorf("remedy = %q", remedy)
 	}
 
-	// Generations naming two trees agree on none, so the lead sentence stands.
+	// Generations naming two trees agree on none, so the lead sentence stands,
+	// still declaring the frame.
 	recs[1].AnalysisRoot = "/elsewhere"
-	if _, remedy, _ = FrameMissReason(local, recs, wasm, " --target wasip1/wasm", "this read's"); remedy != ReanalysisInstruction(local, "") {
+	if _, remedy, _ = FrameMissReason(local, recs, wasm, " --target wasip1/wasm", "this read's"); remedy != UnnamedWorkingTreeLead+", so run kanonarion local --target wasip1/wasm from inside it" {
 		t.Errorf("remedy with no agreed tree = %q", remedy)
 	}
 	published, err := coordinate.NewModuleCoordinate("example.com/dep", "v1.0.0")

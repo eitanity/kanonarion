@@ -14,6 +14,7 @@ func (w *walker) call(pos token.Pos, c *ssa.CallCommon) {
 		w.builtin(pos, b.Name(), c.Args)
 		return
 	}
+	w.invoked(pos, w.low.callMayUnwind(c))
 	if c.IsInvoke() || c.StaticCallee() != nil {
 		return
 	}
@@ -177,7 +178,9 @@ func allConst(vs []ssa.Value) bool {
 func (w *walker) deferStmt(v *ssa.Defer, inLoop bool) {
 	c := v.Common()
 	if b, ok := c.Value.(*ssa.Builtin); ok {
+		w.runningDefers = true
 		w.builtin(v.Pos(), b.Name(), c.Args)
+		w.runningDefers = false
 	}
 	if inLoop {
 		w.heapAlloc(v.Pos(), false)

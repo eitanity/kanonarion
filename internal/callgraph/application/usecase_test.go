@@ -100,6 +100,34 @@ func TestExecute_CacheHit(t *testing.T) {
 	}
 }
 
+// A held TinyGo record is a cache hit only for the release this run builds with.
+func TestExecute_CacheHitIsTheTinyGoReleasesOwn(t *testing.T) {
+	for _, tc := range []struct {
+		running string
+		hit     bool
+	}{{"0.42.0", true}, {"0.44.0", false}} {
+		facts, blobs, store := &fakeFactStore{}, &fakeBlobStore{}, &fakeCallGraphStore{}
+		analyser := &fakeAnalyser{frame: domain2.BuildFrame{GOOS: "js", GOARCH: "wasm", TinyGoTarget: "wasm", TinyGoVersion: tc.running}}
+		storeFetchRecord(t, facts, blobs, testCoord)
+		var h domain2.CallGraphRecordHasher
+		cached := mustSeal(t, h, domain2.CallGraphRecord{
+			SchemaVersion: domain2.CallGraphSchemaVersion, Coordinate: testCoord, Algorithm: domain2.AlgorithmCHA,
+			OverallStatus: domain2.CallGraphStatusExtracted, PipelineVersion: testPipelineV, ExtractedAt: testTime,
+			Frame: domain2.BuildFrame{GOOS: "js", GOARCH: "wasm", TinyGoTarget: "wasm", TinyGoVersion: "0.42.0"},
+		})
+		if err := store.PutCallGraphRecord(context.Background(), cached); err != nil {
+			t.Fatalf("PutCallGraphRecord: %v", err)
+		}
+		result, err := buildUseCase(facts, blobs, store, analyser).Execute(context.Background(), application.ExtractRequest{Coordinate: testCoord})
+		if err != nil {
+			t.Fatalf("Execute: %v", err)
+		}
+		if result.FromCache != tc.hit {
+			t.Errorf("running TinyGo %s over a 0.42.0 record: FromCache = %v, want %v", tc.running, result.FromCache, tc.hit)
+		}
+	}
+}
+
 func TestExecute_ModuleNotFetched(t *testing.T) {
 	facts := &fakeFactStore{}
 	blobs := &fakeBlobStore{}

@@ -81,6 +81,11 @@ func RecordIsCacheable(r CallGraphRecord) bool {
 	if _, ok := gotoolchain.ReadAnalyserLimit(r.FailureDetail); ok {
 		return false
 	}
+	// The same for a TinyGo release outside the lowering table, whatever cause
+	// the load stated: a kanonarion with the table re-measures it.
+	if _, ok := ReadTinyGoLoweringGap(r.FailureDetail); ok {
+		return false
+	}
 	switch r.FailureCause {
 	case FailureCauseEnvironment:
 		return false

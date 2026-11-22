@@ -680,6 +680,7 @@ const (
 	SinkReflectDispatch              = callgraphdomain.SinkReflectDispatch
 	SinkTestHarnessEntry             = callgraphdomain.SinkTestHarnessEntry
 	SinkTestScopeUnmeasured          = callgraphdomain.SinkTestScopeUnmeasured
+	SinkTinyGoLoweringUnrecorded     = callgraphdomain.SinkTinyGoLoweringUnrecorded
 	SinkTypeOnlyCallee               = callgraphdomain.SinkTypeOnlyCallee
 	SinkUnresolvedEdge               = callgraphdomain.SinkUnresolvedEdge
 	SinkUnsafePointerLeaf            = callgraphdomain.SinkUnsafePointerLeaf

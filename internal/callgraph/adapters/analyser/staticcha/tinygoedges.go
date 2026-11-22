@@ -2,7 +2,6 @@ package staticcha
 
 import (
 	"context"
-	"fmt"
 	"go/token"
 	"log/slog"
 	"strings"
@@ -79,6 +78,9 @@ func (g *tinyGoGraph) edge(from, to *ssa.Function, pos token.Pos, kind domain.Ed
 	g.added[kind]++
 }
 
+// The remedy for a stored lowering gap asks whether this binary's table closes it.
+func init() { domain.SetTinyGoLoweringReleases(tinylower.Versions()) }
+
 // addTinyGoEdges adds, under a TinyGo frame only, what TinyGo supplies beyond
 // the source's calls: the runtime calls its compiler emits, the bodies
 // //go:linkname supplies, and the interrupt handlers installed by value. It
@@ -95,13 +97,12 @@ func (a *Analyser) addTinyGoEdges(
 	}
 	gap := ""
 	if table, ok := tinylower.ForVersion(a.tinygo.Version()); ok {
-		addCompilerInserted(ctx, prog, funcs, g, table, a.lowerConfig())
+		addCompilerInserted(ctx, funcs, g, prog, table.Lowering(a.lowerConfig()))
 		if a.tinygo.BuildsWasm() {
 			attachNamedExports(prog, g, table.WasmExports())
 		}
 	} else {
-		gap = fmt.Sprintf("compiler-inserted runtime calls and the entry points TinyGo exports by name are not recorded: TinyGo %s is outside kanonarion's lowering table, which covers TinyGo %s",
-			a.tinygo.Version(), strings.Join(tinylower.Versions(), ", "))
+		gap = domain.TinyGoLoweringGap{Found: a.tinygo.Version(), Covered: tinylower.Versions()}.Clause()
 	}
 	addLinknameEdges(funcs, g, links)
 	attachInterruptHandlers(funcs, g)
@@ -111,17 +112,24 @@ func (a *Analyser) addTinyGoEdges(
 	return gap
 }
 
-// lowerConfig is what the lowering reads from the frame: the scheduler tag, and
-// the target's sizes and recover support, both read off the LLVM triple.
+// lowerConfig is what the lowering reads from the frame: the scheduler and
+// unwind tags, and the target's sizes. Recover support is the unwind tag's, or
+// for a release that sets none, the LLVM triple's (defer.go:28 at 0.42.0).
 func (a *Analyser) lowerConfig() tinylower.Config {
 	cfg := tinylower.Config{Scheduler: "none", Recover: true}
 	for _, t := range a.tinygo.Tags() {
 		if s, ok := strings.CutPrefix(t, "scheduler."); ok {
 			cfg.Scheduler = s
 		}
+		if u, ok := strings.CutPrefix(t, "tinygo.unwind."); ok {
+			cfg.Unwind = u
+		}
 	}
 	triple := a.tinygo.LLVMTriple()
-	if strings.HasPrefix(triple, "wasm32") || strings.HasPrefix(triple, "xtensa") {
+	switch {
+	case cfg.Unwind != "":
+		cfg.Recover = cfg.Unwind != "none"
+	case strings.HasPrefix(triple, "wasm32") || strings.HasPrefix(triple, "xtensa"):
 		cfg.Recover = false
 	}
 	if sizes, err := tinycgo.SizesFor(triple); err == nil {
@@ -145,7 +153,7 @@ func programFunc(prog *ssa.Program, pkg, name string) *ssa.Function {
 	return p.Func(name)
 }
 
-func addCompilerInserted(ctx context.Context, prog *ssa.Program, funcs []*ssa.Function, g *tinyGoGraph, table *tinylower.Table, cfg tinylower.Config) {
+func addCompilerInserted(ctx context.Context, funcs []*ssa.Function, g *tinyGoGraph, prog *ssa.Program, low *tinylower.Lowering) {
 	for _, fn := range funcs {
 		if ctx.Err() != nil {
 			return
@@ -153,8 +161,8 @@ func addCompilerInserted(ctx context.Context, prog *ssa.Program, funcs []*ssa.Fu
 		if !bodyRecorded(fn, g.mem) {
 			continue
 		}
-		for _, site := range tinylower.Sites(fn, cfg) {
-			for _, c := range table.Callees(site.Op) {
+		for _, site := range low.Sites(fn) {
+			for _, c := range low.Callees(site.Op) {
 				if target := programFunc(prog, c.Pkg, c.Name); target != nil {
 					g.edge(fn, target, site.Pos, domain.EdgeKindCompilerInserted)
 				}

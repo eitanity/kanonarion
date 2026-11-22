@@ -27,7 +27,7 @@ func TestTinyGoReanalysisInstruction(t *testing.T) {
 		{local, "", domain.UnnamedWorkingTreeLead + ", so run kanonarion local --tinygo <target> from inside it"},
 		{published, "", "kanonarion fetch example.com/drivers@v1.0.0 && kanonarion callgraph example.com/drivers@v1.0.0 --tinygo <target>"},
 	} {
-		if got := domain.TinyGoReanalysisInstruction(tc.coord, tc.dir); got != tc.want {
+		if got := domain.TinyGoReanalysisInstruction(tc.coord, tc.dir, ""); got != tc.want {
 			t.Errorf("TinyGoReanalysisInstruction(%s, %q) = %q, want %q", tc.coord, tc.dir, got, tc.want)
 		}
 	}

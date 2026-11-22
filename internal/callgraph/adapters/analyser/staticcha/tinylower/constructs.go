@@ -193,6 +193,13 @@ func (w *walker) typeAssert(v *ssa.TypeAssert) {
 
 func (w *walker) selectStmt(v *ssa.Select) {
 	switch {
+	case !v.Blocking && len(v.States) == 1:
+		// createNonBlockingSelect (channel.go:86 at 0.43.0).
+		if v.States[0].Dir == types.SendOnly {
+			w.add(v.Pos(), OpChanTrySend)
+		} else {
+			w.add(v.Pos(), OpChanTryRecv)
+		}
 	case len(v.States) > 0:
 		w.add(v.Pos(), OpChanSelect)
 	case v.Blocking:
@@ -223,7 +230,7 @@ func (w *walker) convert(v *ssa.Convert) {
 			if isRune(f.Elem()) {
 				w.add(v.Pos(), OpStringFromRunes)
 			} else {
-				w.add(v.Pos(), OpStringFromBytes)
+				w.add(v.Pos(), bytesToStringOp(v))
 			}
 		}
 		return
@@ -286,11 +293,24 @@ func (w *walker) compare(pos token.Pos, op token.Token, t types.Type, x, y ssa.V
 			}
 		}
 	case *types.Array:
-		if eq && u.Len() > 0 {
-			w.compare(pos, token.EQL, u.Elem(), nil, nil)
+		if eq {
+			w.compareArray(pos, u)
 		}
 	}
 }
+
+func (w *walker) compareArray(pos token.Pos, u *types.Array) {
+	switch {
+	case u.Len() > hashArrayUnrollLimit && isBinaryKey(u.Elem()):
+		// isMemequalArrayComparison (compiler.go:1721 at 0.43.0).
+		w.add(pos, OpArrayEqual)
+	case u.Len() > 0:
+		w.compare(pos, token.EQL, u.Elem(), nil, nil)
+	}
+}
+
+// hashArrayUnrollLimit is map.go:14's, which the array comparison also reads.
+const hashArrayUnrollLimit = 4
 
 func (w *walker) compareBasic(pos token.Pos, op token.Token, u *types.Basic) {
 	switch {
@@ -318,4 +338,110 @@ func isNilConst(v ssa.Value) bool {
 // lookup is a map read; go/ssa spells a string index as Index.
 func (w *walker) lookup(v *ssa.Lookup) {
 	w.add(v.Pos(), mapOp(mapKey(v.X.Type()), OpMapGetString, OpMapGetBinary, OpMapGetGeneric))
+}
+
+// bytesToStringOp names a string([]byte) by the comparison it feeds, which
+// later releases compare in place rather than copy: isByteSliceToStringComparison
+// at 0.43.0 (compiler.go:3061) needs both operands converted, and at 0.44.0
+// (compiler.go:3097) any operand that cannot write memory.
+func bytesToStringOp(v *ssa.Convert) Op {
+	if !isBytesToString(v) {
+		return OpStringFromBytes
+	}
+	if c := adjacentComparison(v, isBytesToString); c != nil && isComparison(c.Op) && isBytesToString(c.X) && isBytesToString(c.Y) {
+		return OpStringFromBytesComparedTo
+	}
+	if c := adjacentComparison(v, isStringComparisonOperand); c != nil && isComparison(c.Op) {
+		return OpStringFromBytesCompared
+	}
+	return OpStringFromBytes
+}
+
+func isComparison(op token.Token) bool {
+	switch op {
+	case token.EQL, token.NEQ, token.LSS, token.LEQ, token.GTR, token.GEQ:
+		return true
+	}
+	return false
+}
+
+// isBytesToString is isByteSliceToStringConvert (compiler.go:3080 at 0.43.0).
+func isBytesToString(value ssa.Value) bool {
+	v, ok := value.(*ssa.Convert)
+	if !ok {
+		return false
+	}
+	to, ok := v.Type().Underlying().(*types.Basic)
+	if !ok || to.Info()&types.IsString == 0 {
+		return false
+	}
+	from, ok := v.X.Type().Underlying().(*types.Slice)
+	if !ok {
+		return false
+	}
+	elem, ok := from.Elem().Underlying().(*types.Basic)
+	return ok && elem.Kind() == types.Byte
+}
+
+// isStringComparisonOperand is compiler.go:3107 at 0.44.0.
+func isStringComparisonOperand(value ssa.Value) bool {
+	switch v := value.(type) {
+	case *ssa.UnOp:
+		return v.Op == token.MUL
+	case *ssa.Slice:
+		b, ok := v.X.Type().Underlying().(*types.Basic)
+		return ok && b.Info()&types.IsString != 0
+	}
+	return isBytesToString(value)
+}
+
+// adjacentComparison is compiler.go:1744 at 0.43.0: the only comparison using
+// instr, when only debug refs and operands operandOK accepts run in between.
+func adjacentComparison(instr ssa.Instruction, operandOK func(ssa.Value) bool) *ssa.BinOp {
+	cmp := soleComparison(instr)
+	if cmp == nil || instr.Block() != cmp.Block() {
+		return nil
+	}
+	found := false
+	for _, in := range instr.Block().Instrs {
+		if !found {
+			found = in == instr
+			continue
+		}
+		if in == cmp {
+			return cmp
+		}
+		switch in := in.(type) {
+		case *ssa.DebugRef:
+		case ssa.Value:
+			if cmp.X != in && cmp.Y != in || !operandOK(in) {
+				return nil
+			}
+		default:
+			return nil
+		}
+	}
+	return nil
+}
+
+// soleComparison is the only BinOp using instr besides debug refs, or nil.
+func soleComparison(instr ssa.Instruction) *ssa.BinOp {
+	value, ok := instr.(ssa.Value)
+	if !ok || value.Referrers() == nil {
+		return nil
+	}
+	var cmp *ssa.BinOp
+	for _, r := range *value.Referrers() {
+		switch r := r.(type) {
+		case *ssa.DebugRef:
+		case *ssa.BinOp:
+			if cmp != nil {
+				return nil
+			}
+			cmp = r
+		default:
+			return nil
+		}
+	}
+	return cmp
 }

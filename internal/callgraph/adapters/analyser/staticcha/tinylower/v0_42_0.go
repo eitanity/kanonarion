@@ -99,6 +99,14 @@ var v0420 = &Table{
 		OpWasmExportCheckRun: {rt("wasmExportCheckRun")},                             // goroutine.go:182
 		OpWasmExportRun:      {task("start"), rt("wasmExportRun")},                   // goroutine.go:259, goroutine.go:263
 		OpWasmExportExit:     {rt("wasmExportExit")},                                 // goroutine.go:465
+
+		OpChanTrySend:               {rt("chanSelect")},      // channel.go:210
+		OpChanTryRecv:               {rt("chanSelect")},      // channel.go:210
+		OpStringFromBytesCompared:   {rt("stringFromBytes")}, // compiler.go:3501
+		OpStringFromBytesComparedTo: {rt("stringFromBytes")}, // compiler.go:3501
+		// OpArrayEqual, OpUnwindCheck, OpUnwindClear and OpAsyncifyCatch have none:
+		// this release compares arrays element by element (compiler.go:3275) and
+		// unwinds a panic by setjmp only (defer.go:28).
 	},
 	// symbol.go:338-350 names three entries by build mode. Only "default", the
 	// mode tinygo build uses, is recorded: kanonarion models no build mode, so

@@ -610,3 +610,35 @@ func TestReachability_NotRequestedIsNotAFailedAttempt(t *testing.T) {
 		t.Error("a scan that never asked for reachability recorded a failed attempt")
 	}
 }
+
+// A stored graph another TinyGo release built is not this run's: the spawner
+// re-derives under this release, and a graph of this release is used as held.
+func TestOnDemandCallGraph_AnotherTinyGoReleasesGraphSpawns(t *testing.T) {
+	for _, tc := range []struct {
+		stored string
+		spawns int
+	}{{"0.42.0", 1}, {"0.44.0", 0}} {
+		ctx := t.Context()
+		coord := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
+		facts := newFakeFacts()
+		blobs := newFakeBlob()
+		seedFact(t, facts, blobs, coord)
+		vulnStore := newFakeVulnStore()
+		snap := vulntest.MustNew("test", "v1")
+		_ = vulnStore.PutDatabaseSnapshot(ctx, snap, strings.NewReader("")) //nolint:errcheck
+		db := &fakeDatabase{snapshot: snap, vulnerables: map[coordinate.ModuleCoordinate][]string{coord: {"GO-2024-0001"}}}
+		scanner := newAffectedScannerFor(coord, "GO-2024-0001", []string{"Vuln"})
+		loader := &fakeCallGraphLoader{present: true, tinyGoVersion: tc.stored}
+		spawner := &fakeCallGraphSpawner{}
+		uc := newScanUCWith(facts, blobs, vulnStore, scanner, db, &fakeReachabilityAnalyser{}, loader, spawner).
+			WithTinyGoRelease(func() string { return "0.44.0" })
+		if _, err := uc.Scan(ctx, application.ScanModuleParams{
+			Coordinate: coord, WalkID: "walk-1", Snapshot: &snap, EnableReachability: true,
+		}); err != nil {
+			t.Fatalf("Scan: %v", err)
+		}
+		if spawner.callCount() != tc.spawns {
+			t.Errorf("stored %s under 0.44.0: %d spawns, want %d", tc.stored, spawner.callCount(), tc.spawns)
+		}
+	}
+}

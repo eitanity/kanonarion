@@ -91,4 +91,12 @@ var allOps = []tinylower.Op{
 	tinylower.OpWasmExportCheckRun,
 	tinylower.OpWasmExportRun,
 	tinylower.OpWasmExportExit,
+	tinylower.OpArrayEqual,
+	tinylower.OpStringFromBytesComparedTo,
+	tinylower.OpStringFromBytesCompared,
+	tinylower.OpChanTrySend,
+	tinylower.OpChanTryRecv,
+	tinylower.OpUnwindCheck,
+	tinylower.OpUnwindClear,
+	tinylower.OpAsyncifyCatch,
 }

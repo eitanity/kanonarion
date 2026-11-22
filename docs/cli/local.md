@@ -52,8 +52,9 @@ loader's own go command: `linux/amd64` with no declaration, `wasip1/wasm` under
 `--target wasip1/wasm`, `tinygo/wasip1 (wasip1/wasm)` under `--tinygo wasip1`.
 Build constraints decide which files compile, so one tree can hold one record
 per frame, and every read selects the frame it declares (or this host's). The
-reuse below is per frame: `local .` and `local . --tinygo wasip1` on an unchanged
-tree are two records, and a later run of either reuses its own.
+reuse below is per frame and TinyGo release: `local .` and `local . --tinygo
+wasip1` on an unchanged tree are two records, and a later run of each reuses its
+own.
 
 Under `--tinygo`, TinyGo's own packages (`machine`, `device/arm`, `runtime` and
 the rest of `TINYGOROOT/src`) are analysed with bodies, so a callback the
@@ -133,10 +134,10 @@ become permanent and `--force` is not needed to clear it: a failure with no
 usable toolchain, a cancelled run, or an incomplete graph whose loader reported
 `module lookup disabled by GOPROXY=off`. That last is a cold module cache - the
 summary says so and names `go mod download all`; re-running without the flag
-re-analyses. The same holds for a graph this kanonarion could not read because
-the code requires a newer Go than the binary was built with: a newer build
-re-analyses it without the flag. A graph the tree's own compile errors left
-incomplete is served: fixing them moves the digest.
+re-analyses. The same holds where this kanonarion could not read code needing
+newer Go, or had no lowering table for the TinyGo release: a newer build
+re-analyses it. A graph the tree's own compile errors left incomplete is served:
+fixing them moves the digest.
 
 Records written before this digest, or before a run recorded what limited it,
 state nothing, so the first `local` run after upgrading re-analyses and later

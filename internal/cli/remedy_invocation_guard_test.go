@@ -1816,8 +1816,8 @@ func TestRemedyGuardJudgesTheTinyGoRemedies(t *testing.T) {
 		t.Fatal(err)
 	}
 	texts := []string{
-		gotoolchain.TinyGoPackageRemedy([]string{"machine"}, cgdomain.TinyGoReanalysisInstruction(local, "/work/tree")),
-		gotoolchain.TinyGoPackageRemedy([]string{"machine"}, cgdomain.TinyGoReanalysisInstruction(fetched, "")),
+		gotoolchain.TinyGoPackageRemedy([]string{"machine"}, cgdomain.TinyGoReanalysisInstruction(local, "/work/tree", "")),
+		gotoolchain.TinyGoPackageRemedy([]string{"machine"}, cgdomain.TinyGoReanalysisInstruction(fetched, "", "")),
 	}
 	for _, args := range [][]string{
 		{"local", "."}, {"walk", "--gomod", "./go.mod", "--no-progress"}, {"audit", "--gomod", "./go.mod"},

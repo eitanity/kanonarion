@@ -1,9 +1,8 @@
 package staticcha_test
 
 import (
-	"bufio"
-	"bytes"
 	"context"
+	"debug/elf"
 	"encoding/binary"
 	"errors"
 	"log/slog"
@@ -32,8 +31,9 @@ func TestTinyGoOracle_EveryLinkedFunctionIsReachable(t *testing.T) {
 	}
 	cases := []struct {
 		program, target string
-		// residual is what this record cannot reach and why; see the wexp case.
-		residual []string
+		// residual is what this record cannot reach and why, by TinyGo release;
+		// see the wexp case.
+		residual map[string][]string
 	}{
 		{program: "devarm", target: "pico"},
 		{program: "devarm", target: "pico2"},
@@ -46,13 +46,15 @@ func TestTinyGoOracle_EveryLinkedFunctionIsReachable(t *testing.T) {
 		{program: "irq", target: "arduino"},
 		{program: "irq", target: "hifive1b"},
 		// Each is called only from fmt, strconv, time, cmp or x/mod, which the
-		// record holds without bodies.
-		{program: "wexp", target: "wasip1", residual: []string{
-			"internal/reflectlite.(*RawType).Elem", "internal/reflectlite.(Value).IsNil", "internal/reflectlite.(Value).Pointer",
-			"internal/reflectlite.New", "internal/task.(*Mutex).Unlock", "os.(*File).Write", "os.(unixFileHandle).Write",
-			"reflect.(Value).Elem", "reflect.(Value).Field", "reflect.(Value).Index",
-			"runtime.interfaceTypeAssert", "runtime.stringLess", "runtime.stringNext",
-			"unicode/utf8.AppendRune", "unicode/utf8.RuneCountInString",
+		// record holds without bodies. From 0.43.0 a wasm build supports recover,
+		// so the defer frames of fmt and time call the frame and unwind functions,
+		// and sync's catchers take Mutex.Lock by pointer, so it is linked. Which of
+		// reflect.toType and runtime.savePanicReplay each release links unreached
+		// is its own: 0.44.0's liveStackRanges reaches the second through a func value.
+		{program: "wexp", target: "wasip1", residual: map[string][]string{
+			"0.42.0": append(slices.Clone(wexpResidual), "runtime.interfaceTypeAssert"),
+			"0.43.0": append(slices.Concat(wexpResidual, wexpUnwindResidual), "runtime.savePanicReplay"),
+			"0.44.0": append(slices.Concat(wexpResidual, wexpUnwindResidual), "reflect.toType"),
 		}},
 	}
 	for _, c := range cases {
@@ -91,11 +93,26 @@ func TestTinyGoOracle_EveryLinkedFunctionIsReachable(t *testing.T) {
 				}
 			}
 			slices.Sort(unreachable)
-			if !slices.Equal(unreachable, c.residual) {
-				t.Errorf("%d of %d linked Go functions unreachable: %v\nwant %v", len(unreachable), len(linked), unreachable, c.residual)
+			residual := slices.Sorted(slices.Values(c.residual[frame.Version()]))
+			if !slices.Equal(unreachable, residual) {
+				t.Errorf("%d of %d linked Go functions unreachable under TinyGo %s: %v\nwant %v",
+					len(unreachable), len(linked), frame.Version(), unreachable, residual)
 			}
 		})
 	}
+}
+
+var wexpResidual = []string{
+	"internal/reflectlite.(*RawType).Elem", "internal/reflectlite.(Value).IsNil", "internal/reflectlite.(Value).Pointer",
+	"internal/reflectlite.New", "internal/task.(*Mutex).Unlock", "os.(*File).Write", "os.(unixFileHandle).Write",
+	"reflect.(Value).Elem", "reflect.(Value).Field", "reflect.(Value).Index",
+	"runtime.stringLess", "runtime.stringNext",
+	"unicode/utf8.AppendRune", "unicode/utf8.RuneCountInString",
+}
+
+var wexpUnwindResidual = []string{
+	"internal/task.(*Mutex).Lock", "runtime.clearUnwind", "runtime.destroyDeferFrame",
+	"runtime.panicRewindData", "runtime.panicRewindStackPointer", "runtime.setupDeferFrame",
 }
 
 func isDir(p string) bool {
@@ -113,7 +130,8 @@ func modulePath(t *testing.T, dir string) string {
 }
 
 // linkedGoFunctions builds the program and lists the Go functions the linker
-// kept: ELF text symbols, or the wasm name section's defined functions.
+// kept: ELF function symbols, or the wasm name section's defined functions. An
+// ELF data symbol a linker script places in .text is not one.
 func linkedGoFunctions(t *testing.T, ctx context.Context, dir, target string) []string {
 	t.Helper()
 	out := filepath.Join(t.TempDir(), "out")
@@ -129,18 +147,7 @@ func linkedGoFunctions(t *testing.T, ctx context.Context, dir, target string) []
 	if target == "wasip1" {
 		names = wasmFunctionNames(t, out)
 	} else {
-		nm := childproc.CommandContext(ctx, "nm", "--defined-only", out)
-		b, err := nm.Output()
-		if err != nil {
-			t.Fatalf("nm: %v", err)
-		}
-		sc := bufio.NewScanner(bytes.NewReader(b))
-		for sc.Scan() {
-			f := strings.SplitN(sc.Text(), " ", 3)
-			if len(f) == 3 && (f[1] == "t" || f[1] == "T") {
-				names = append(names, f[2])
-			}
-		}
+		names = elfFunctionNames(t, out)
 	}
 	var goNamed []string
 	for _, n := range names {
@@ -151,13 +158,37 @@ func linkedGoFunctions(t *testing.T, ctx context.Context, dir, target string) []
 	return goNamed
 }
 
+// elfFunctionNames lists an ELF artefact's defined function symbols.
+func elfFunctionNames(t *testing.T, path string) []string {
+	t.Helper()
+	f, err := elf.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.Close() }()
+	syms, err := f.Symbols()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, s := range syms {
+		if elf.ST_TYPE(s.Info) == elf.STT_FUNC && s.Section != elf.SHN_UNDEF {
+			names = append(names, s.Name)
+		}
+	}
+	return names
+}
+
 // isGoFunctionName keeps dotted names and drops what TinyGo links that no Go
 // declaration produces: type descriptors, constant data (pkg$string.N and the
-// like), assembler-local labels, and the wrappers and dispatch thunks its
-// compiler synthesises (goroutine.go:300, goroutine.go:155, interface.go).
+// like), assembler-local labels, and the wrappers, dispatch thunks and panic
+// catchers its compiler synthesises (goroutine.go:300, goroutine.go:155,
+// interface.go, calls.go:158, calls.go:222 and calls.go:306 at 0.43.0).
 func isGoFunctionName(n string) bool {
 	if !strings.Contains(n, ".") || strings.HasPrefix(n, "reflect/types.") || strings.HasPrefix(n, ".L") ||
-		strings.HasPrefix(n, "interface:") || strings.Contains(n, "$gowrapper") || strings.HasSuffix(n, "#wasmexport") {
+		strings.HasPrefix(n, "interface:") || strings.Contains(n, "$gowrapper") || strings.HasSuffix(n, "#wasmexport") ||
+		strings.Contains(n, ".asyncifycatch.") || strings.Contains(n, ".asyncifysuspendcatch.") ||
+		strings.HasPrefix(n, "tinygo.asyncify.") {
 		return false
 	}
 	head := strings.TrimLeft(n, "(*")

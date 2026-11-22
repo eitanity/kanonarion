@@ -5,7 +5,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	cgdomain "code.eitanity.com/kanonarion/internal/callgraph/domain"
 	"code.eitanity.com/kanonarion/internal/coordinate"
 	localdomain "code.eitanity.com/kanonarion/internal/local/domain"
 )
@@ -170,7 +169,7 @@ func remedyRebuildGraphThenRescan(coord coordinate.ModuleCoordinate, walkID stri
 	return reachabilityRemedy{
 		lead: "Run",
 		lines: []string{
-			cgdomain.ReanalysisInstruction(coord, ""),
+			frameReanalysis(coord, ""),
 			rescanInvocation(coord, walkID, true),
 		},
 	}

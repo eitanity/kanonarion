@@ -845,8 +845,8 @@ func (a *Analyser) analyseDirOnce(
 }
 
 // stateLoweringGap makes a record that lacks one edge class Partial and leads
-// its detail with why. The cause is this run: a kanonarion whose table covers
-// the TinyGo version measures the class.
+// its detail with why. The cause stays the load's: the gap is kanonarion's own
+// limit, read from the detail as an analyser limit is (domain.ReadTinyGoLoweringGap).
 func stateLoweringGap(rec domain.CallGraphRecord, gap string) domain.CallGraphRecord {
 	if gap == "" {
 		return rec
@@ -855,7 +855,6 @@ func stateLoweringGap(rec domain.CallGraphRecord, gap string) domain.CallGraphRe
 		rec.OverallStatus = domain.CallGraphStatusPartial
 	}
 	rec.FailureDetail = strings.TrimSuffix(gap+"; "+rec.FailureDetail, "; ")
-	rec.FailureCause = domain.FailureCauseEnvironment
 	return rec
 }
 

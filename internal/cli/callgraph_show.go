@@ -387,7 +387,7 @@ func runCallGraphHistory(ctx context.Context, coord coordinate.ModuleCoordinate,
 	}
 	if note != "" {
 		if _, werr := fmt.Fprintf(stdout, "\nnot listed above: %s.\n  re-analyse it: %s\n",
-			note, domain.ReanalysisInstruction(coord, "")); werr != nil {
+			note, frameReanalysis(coord, "")); werr != nil {
 			return fmt.Errorf("writing output: %w", werr)
 		}
 	}
@@ -403,7 +403,7 @@ func writeNoCallGraphHistory(ctx context.Context, coord coordinate.ModuleCoordin
 	}
 	line := fmt.Sprintf("no callgraph records for %s at pipeline %s", coord, cgapp.PipelineVersion)
 	if note != "" {
-		line += " — " + note + ".\n  re-analyse it: " + domain.ReanalysisInstruction(coord, "")
+		line += " — " + note + ".\n  re-analyse it: " + frameReanalysis(coord, "")
 	}
 	if _, werr := fmt.Fprintln(stdout, line); werr != nil {
 		return fmt.Errorf("writing output: %w", werr)
