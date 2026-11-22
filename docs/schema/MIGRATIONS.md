@@ -170,6 +170,17 @@ values there, as they did when `verdict` and `reachability_state` gained theirs)
   a record that names no frame. `callgraph-show` text gains a `frame:` line and
   `--history` a `frame:` line per generation, both absent on such a record.
 
+## Store: module `store`, migration 1 - the store plans without statistics
+
+**No table or record change, no pipeline bump.** Migration 1 of the new `store`
+module deletes every row of `sqlite_stat1` and `sqlite_stat4`, and the opening
+process reloads the empty statistics. Call-graph and interface writes no longer
+run `PRAGMA optimize`, so nothing writes statistics, and a fresh store and a
+migrated one plan their reads on SQLite's built-in estimates alike. Statistics
+left stale by earlier writes had sent symbol and dependency-dispatch reads onto
+whole-table scans. Store `v95` -> `v96`; an older build refuses a `v96` store at
+the schema gate, naming `store@v1`.
+
 ## Fetch record: pipeline `0.6.0` → `0.7.0`
 
 **Derivation change; no record shape change, no store migration.** A `0.7.0`

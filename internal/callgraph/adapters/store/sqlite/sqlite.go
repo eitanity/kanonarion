@@ -1069,7 +1069,6 @@ INSERT OR IGNORE INTO callgraph_edges (
 	}); err != nil {
 		return err //nolint:wrapcheck // RetryOnBusy already names the write and wraps the driver's error; wrapping again would say it twice
 	}
-	_, _ = s.db.DB().ExecContext(ctx, `PRAGMA optimize`) //nolint:errcheck
 	return nil
 }
 
@@ -2166,6 +2165,12 @@ func storedBytesHashToSeal(raw []byte, edges []domain2.CallEdge, storedHash stri
 	return err == nil && digest == storedHash
 }
 
+// fetchEdgesQuery is the edge read of one record, in canonical sort order.
+const fetchEdgesQuery = `SELECT from_id, to_id, confidence, call_site_file, call_site_line, reflect_dispatch, kind, lookup_name
+	    FROM callgraph_edges
+	    WHERE record_content_hash = ?
+	    ORDER BY from_id, to_id, call_site_file, call_site_line`
+
 // fetchEdges queries callgraph_edges for the edges belonging to ONE record,
 // addressed by that record's content hash, in canonical sort order (from_id,
 // to_id, call_site_file, call_site_line).
@@ -2176,12 +2181,7 @@ func storedBytesHashToSeal(raw []byte, edges []domain2.CallEdge, storedHash stri
 // every other generation's — and the hash verification over the reconstructed
 // record would then fail on a record nothing had tampered with.
 func (s *Store) fetchEdges(ctx context.Context, recordContentHash string, expected int, pool *identifierPool) ([]domain2.CallEdge, error) {
-	const q = `SELECT from_id, to_id, confidence, call_site_file, call_site_line, reflect_dispatch, kind, lookup_name
-	    FROM callgraph_edges
-	    WHERE record_content_hash = ?
-	    ORDER BY from_id, to_id, call_site_file, call_site_line`
-
-	rows, err := s.db.DB().QueryContext(ctx, q, recordContentHash)
+	rows, err := s.db.DB().QueryContext(ctx, fetchEdgesQuery, recordContentHash)
 	if err != nil {
 		return nil, fmt.Errorf("fetching callgraph edges: %w", err)
 	}
@@ -2729,29 +2729,29 @@ LIMIT 2`
 // FindCallers returns all edges where the callee matches symbolID, restricted
 // to edges owned by a module in scope (see ports.CallGraphStore).
 func (s *Store) FindCallers(ctx context.Context, symbolID string, pipelineVersion string, scope coordinate.ModuleSet, opts ports.EdgeQueryOptions) ([]ports.CallEdgeRef, error) {
-	q := `SELECT DISTINCT record_content_hash, from_module, from_version, pipeline_version,
-	                   from_id, to_id, confidence, is_test, kind
-	            FROM callgraph_edges
-	            WHERE to_id = ? AND pipeline_version = ?`
-	if opts.ExcludeTests {
-		q += ` AND is_test = 0`
-	}
-	q += ` ORDER BY from_module, from_version, from_id`
+	q := edgesQuery("to_id", "= ?", "from_id", opts.ExcludeTests)
 	return s.queryEdges(ctx, q, symbolID, pipelineVersion, scope, opts.Toolchain)
 }
 
 // FindCallees returns all edges where the caller matches symbolID, restricted
 // to edges owned by a module in scope (see ports.CallGraphStore).
 func (s *Store) FindCallees(ctx context.Context, symbolID string, pipelineVersion string, scope coordinate.ModuleSet, opts ports.EdgeQueryOptions) ([]ports.CallEdgeRef, error) {
+	q := edgesQuery("from_id", "= ?", "to_id", opts.ExcludeTests)
+	return s.queryEdges(ctx, q, symbolID, pipelineVersion, scope, opts.Toolchain)
+}
+
+// edgesQuery is the edge read FindCallers, FindCallees and frontierEdges run:
+// matchCol is compared by match (`= ?` or an IN list), and orderCol sorts last.
+// Both columns are literals from those callers, never query input.
+func edgesQuery(matchCol, match, orderCol string, excludeTests bool) string {
 	q := `SELECT DISTINCT record_content_hash, from_module, from_version, pipeline_version,
 	                   from_id, to_id, confidence, is_test, kind
 	            FROM callgraph_edges
-	            WHERE from_id = ? AND pipeline_version = ?`
-	if opts.ExcludeTests {
+	            WHERE ` + matchCol + ` ` + match + ` AND pipeline_version = ?`
+	if excludeTests {
 		q += ` AND is_test = 0`
 	}
-	q += ` ORDER BY from_module, from_version, to_id`
-	return s.queryEdges(ctx, q, symbolID, pipelineVersion, scope, opts.Toolchain)
+	return q + ` ORDER BY from_module, from_version, ` + orderCol
 }
 
 // FindCallersOfEach returns every edge whose callee is any of symbolIDs
@@ -2812,14 +2812,7 @@ func (s *Store) frontierEdges(ctx context.Context, matchCol, orderCol string, sy
 		}
 		args = append(args, pipelineVersion)
 
-		q := `SELECT DISTINCT record_content_hash, from_module, from_version, pipeline_version,
-	                   from_id, to_id, confidence, is_test, kind
-	            FROM callgraph_edges
-	            WHERE ` + matchCol + ` IN (` + strings.Join(placeholders, ",") + `) AND pipeline_version = ?`
-		if opts.ExcludeTests {
-			q += ` AND is_test = 0`
-		}
-		q += ` ORDER BY from_module, from_version, ` + orderCol
+		q := edgesQuery(matchCol, `IN (`+strings.Join(placeholders, ",")+`)`, orderCol, opts.ExcludeTests)
 
 		batchCandidates, err := s.edgeCandidates(ctx, q, args, scope)
 		if err != nil {
@@ -2878,6 +2871,13 @@ func (s *Store) dispatchServedHash(ctx context.Context, path, version, pipelineV
 	return h, err
 }
 
+// dispatchQuery reads the dispatch rows of n node ids at one pipeline version.
+func dispatchQuery(n int) string {
+	return `SELECT record_content_hash, module_path, module_version, node_id, detail
+FROM callgraph_dependency_dispatch
+WHERE node_id IN (` + strings.TrimSuffix(strings.Repeat("?,", n), ",") + `) AND pipeline_version = ?`
+}
+
 // dispatchRows reads the in-scope rows of symbolIDs at pipelineVersion.
 func (s *Store) dispatchRows(ctx context.Context, symbolIDs []string, pipelineVersion string, scope coordinate.ModuleSet) ([]dispatchRow, error) {
 	var rows []dispatchRow
@@ -2890,10 +2890,7 @@ func (s *Store) dispatchRows(ctx context.Context, symbolIDs []string, pipelineVe
 			args = append(args, id)
 		}
 		args = append(args, pipelineVersion)
-		q := `SELECT record_content_hash, module_path, module_version, node_id, detail
-FROM callgraph_dependency_dispatch
-WHERE node_id IN (` + strings.TrimSuffix(strings.Repeat("?,", len(batch)), ",") + `) AND pipeline_version = ?`
-		rs, err := s.db.DB().QueryContext(ctx, q, args...)
+		rs, err := s.db.DB().QueryContext(ctx, dispatchQuery(len(batch)), args...)
 		if err != nil {
 			return nil, fmt.Errorf("querying dependency dispatch: %w", err)
 		}
