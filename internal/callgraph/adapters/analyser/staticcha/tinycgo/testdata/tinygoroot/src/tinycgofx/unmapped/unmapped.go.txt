@@ -11,8 +11,6 @@ union two { int i; float f; };
 */
 import "C"
 
-import _ "syscall" // the generated cgo file imports it
-
 func Complex()   { _ = C.fake_complex() }
 func Bits() any  { return C.struct_bits{} }
 func Two() any   { return C.union_two{} }

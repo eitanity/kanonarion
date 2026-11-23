@@ -74,15 +74,20 @@ func Load(ctx context.Context, cfg Config, patterns ...string) (Result, error) {
 		}
 	})
 	res := Result{Roots: roots}
-	packages.Visit(roots, nil, func(p *packages.Package) {
-		if ctx.Err() != nil {
+	seen := map[*packages.Package]bool{}
+	visit := func(p *packages.Package) {
+		if ctx.Err() != nil || seen[p] {
 			return
 		}
+		seen[p] = true
 		l.ensure(ctx, p)
 		if l.isTinyGo(p) {
 			res.TinyGo = append(res.TinyGo, p)
 		}
-	})
+	}
+	packages.Visit(roots, nil, visit)
+	// Listed for a generated file after the walk above passed its package.
+	packages.Visit(l.listed, nil, visit)
 	if err := ctx.Err(); err != nil {
 		return Result{}, fmt.Errorf("loading under the TinyGo frame: %w", err)
 	}
@@ -102,6 +107,10 @@ type loader struct {
 	// checked those type-checked so far.
 	byPath  map[string]*packages.Package
 	checked map[*packages.Package]bool
+	// listed are the generated imports the closure lacked, listed on demand;
+	// tried says which were.
+	listed []*packages.Package
+	tried  map[string]bool
 }
 
 // ensure type-checks p after everything it imports.
@@ -120,6 +129,45 @@ func (l *loader) ensure(ctx context.Context, p *packages.Package) {
 // list does not add them to a standard package's imports, so they are resolved
 // from the closure, as TinyGo's loader resolves every import from its program.
 var generatedImports = []string{"syscall"}
+
+// generatedImport is the closure's package at path, listed now when the
+// closure lacks it. Its imports already in the closure are bound to the
+// closure's packages, so each path is one package.
+func (l *loader) generatedImport(ctx context.Context, path string) *packages.Package {
+	if ip := l.byPath[path]; ip != nil || l.tried[path] {
+		return ip
+	}
+	if l.tried == nil {
+		l.tried = map[string]bool{}
+	}
+	l.tried[path] = true
+	listed, err := packages.Load(&packages.Config{
+		Mode: listMode, Dir: l.cfg.Dir, Context: ctx, Env: l.cfg.Env, BuildFlags: l.cfg.BuildFlags,
+	}, path)
+	if err != nil || len(listed) != 1 {
+		return nil
+	}
+	bound := map[*packages.Package]*packages.Package{}
+	var bind func(p *packages.Package) *packages.Package
+	bind = func(p *packages.Package) *packages.Package {
+		if b, ok := bound[p]; ok {
+			return b
+		}
+		if have := l.byPath[p.PkgPath]; have != nil {
+			bound[p] = have
+			return have
+		}
+		bound[p] = p
+		l.byPath[p.PkgPath] = p
+		for ipath, ip := range p.Imports {
+			p.Imports[ipath] = bind(ip)
+		}
+		return p
+	}
+	ip := bind(listed[0])
+	l.listed = append(l.listed, ip)
+	return ip
+}
 
 func (l *loader) cleanup() {
 	if l.tmp != "" {
@@ -189,9 +237,13 @@ func (l *loader) check(ctx context.Context, p *packages.Package) {
 			if gen := l.processCgo(ctx, p, files); gen != nil {
 				files = append(files, gen)
 				for _, path := range generatedImports {
-					if ip := l.byPath[path]; ip != nil {
+					if ip := l.generatedImport(ctx, path); ip != nil {
 						l.ensure(ctx, ip)
 						extra[path] = ip
+						if p.Imports == nil {
+							p.Imports = map[string]*packages.Package{}
+						}
+						p.Imports[path] = ip
 					}
 				}
 			}

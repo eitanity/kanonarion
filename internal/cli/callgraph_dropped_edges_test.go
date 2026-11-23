@@ -257,3 +257,23 @@ func TestDroppedEdgeRemedy_LocalColdCacheReanalysesWithoutForce(t *testing.T) {
 		t.Errorf("a cold cache was reported as a compile error:\n%s", got)
 	}
 }
+
+// A package the cgo translation gap alone dropped is not analysed rather than
+// failing to typecheck, and its remedy sends no one to fix the source.
+func TestDroppedEdgesNotice_ACgoTranslationGap(t *testing.T) {
+	clause := cgdomain.CgoTranslationGapClause("example.com/app",
+		[]string{"C.pp_t: struct (unnamed at main.go:9:9) * is a C type this analysis does not translate"}, false)
+	pr := partialRoot{failedPkg: "example.com/app", coord: coordinatetest.MustNew("example.com/app", coordinate.LocalVersion),
+		isPartial: true, cause: cgdomain.FailureCauseUnrecorded, detail: clause, analysisRoot: "/work/tree",
+		frame: cgdomain.BuildFrame{GOOS: "wasip1", GOARCH: "wasm", TinyGoTarget: "wasip1", TinyGoVersion: "0.44.0"}}
+	got := droppedEdgesNotice(context.Background(), "callers", "example.com/app.P", pr)
+	for _, want := range []string{`package "example.com/app" was not analysed: kanonarion's cgo translation does not cover what it uses`,
+		"not in the source", "kanonarion local /work/tree --tinygo wasip1"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("notice does not say %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "Fix the package") || strings.Contains(got, "did not typecheck") {
+		t.Errorf("notice blames the source:\n%s", got)
+	}
+}

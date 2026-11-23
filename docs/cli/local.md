@@ -133,10 +133,9 @@ A record the environment limited is never served back, so a bad run does not
 become permanent and `--force` is not needed to clear it: a failure with no
 usable toolchain, a cancelled run, or an incomplete graph whose loader reported
 `module lookup disabled by GOPROXY=off`. That last is a cold module cache - the
-summary says so and names `go mod download all`; re-running without the flag
-re-analyses. The same holds where this kanonarion could not read code needing
-newer Go, or had no lowering table for the TinyGo release: a newer build
-re-analyses it. A graph the tree's own compile errors left incomplete is served:
+summary names `go mod download all`. The same holds where this kanonarion
+could not read code needing newer Go, had no lowering table for the TinyGo
+release, or could not translate a cgo preamble's C declaration. A graph the tree's own compile errors left incomplete is served:
 fixing them moves the digest.
 
 Records written before this digest, or before a run recorded what limited it,

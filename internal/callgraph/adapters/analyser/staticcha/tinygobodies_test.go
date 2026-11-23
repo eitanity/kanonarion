@@ -62,3 +62,46 @@ func hasEdge(rec domain.CallGraphRecord, from, to string) bool {
 	}
 	return false
 }
+
+// A C type the cgo translation refuses is kanonarion's gap: the detail leads
+// with it and drops the type errors it causes, and with no compile error of the
+// package's own no cause is filed and the record is never served back. A
+// compile error beside it keeps the module's cause and its line. Neither
+// program imports syscall, which the generated cgo file does.
+func TestAnalyseDir_ACgoTranslationGapIsKanonarions(t *testing.T) {
+	tinycgotest.RequireClang(t)
+	frame := tinycgotest.Frame(t)
+	for _, tc := range []struct {
+		program, lead string
+		cause         domain.FailureCause
+		compileErr    string
+	}{
+		{"gap", "kanonarion's cgo translation does not cover what example.com/gap uses: C.pp_t: struct (unnamed", domain.FailureCauseUnrecorded, ""},
+		{"gapbroken", "kanonarion's cgo translation does not cover what example.com/gapbroken uses, beside its own compile errors: C.pp_t: struct (unnamed",
+			domain.FailureCauseModule, "undefined: missing"},
+	} {
+		t.Run(tc.program, func(t *testing.T) {
+			coord, err := coordinate.NewModuleCoordinate("example.com/"+tc.program, coordinate.LocalVersion)
+			if err != nil {
+				t.Fatal(err)
+			}
+			a := staticcha.New("0.0.0-test", "", slog.Default()).WithTinyGo(frame)
+
+			rec, err := a.AnalyseDir(context.Background(), tinycgotest.Program(t, tc.program), coord)
+
+			if err != nil || rec.OverallStatus != domain.CallGraphStatusPartial {
+				t.Fatalf("AnalyseDir = %v, %v: %s", rec.OverallStatus, err, rec.FailureDetail)
+			}
+			if !strings.HasPrefix(rec.FailureDetail, tc.lead) || strings.Contains(rec.FailureDetail, "_Cgo_pp_t") ||
+				!strings.Contains(rec.FailureDetail, tc.compileErr) || strings.Contains(rec.FailureDetail, "syscall") {
+				t.Errorf("detail = %q", rec.FailureDetail)
+			}
+			if rec.FailureCause != tc.cause || domain.RecordIsCacheable(rec) {
+				t.Errorf("cause %q, cacheable %v; want %q, never served", rec.FailureCause, domain.RecordIsCacheable(rec), tc.cause)
+			}
+			if !slices.Equal(rec.FailedPackages, []string{coord.Path()}) {
+				t.Errorf("failed packages = %v", rec.FailedPackages)
+			}
+		})
+	}
+}

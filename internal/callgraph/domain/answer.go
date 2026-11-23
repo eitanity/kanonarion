@@ -268,7 +268,7 @@ func ClassifyNegativeAnswer(in NegativeAnswerInputs) Answer {
 		sinks = append(sinks, SoundnessSink{
 			Kind:   SinkDroppedPackageEdges,
 			Site:   site,
-			Detail: "package " + in.DroppedEdgePackage + " " + DroppedPackageReason(in.DroppedEdgeDetail) + ", so its edges were dropped",
+			Detail: "package " + in.DroppedEdgePackage + " " + DroppedPackageReasonFor(in.DroppedEdgePackage, in.DroppedEdgeDetail) + ", so its edges were dropped",
 		})
 	}
 

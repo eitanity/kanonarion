@@ -25,6 +25,8 @@ type astNode struct {
 	Type                *qualType       `json:"type"`
 	FixedUnderlyingType *qualType       `json:"fixedUnderlyingType"`
 	OwnedTagDecl        *declRef        `json:"ownedTagDecl"`
+	Decl                *declRef        `json:"decl"`
+	IsTagOwned          bool            `json:"isTagOwned"`
 	Inner               []*astNode      `json:"inner"`
 }
 
@@ -37,6 +39,24 @@ type declRef struct {
 	ID   string `json:"id"`
 	Kind string `json:"kind"`
 	Name string `json:"name"`
+}
+
+// ownedAnonymousTag is the unnamed struct, union or enum a typedef declares,
+// else nil. Clang 21 names it in an ElaboratedType's ownedTagDecl; clang 22
+// dropped ElaboratedType and marks the RecordType or EnumType isTagOwned.
+func ownedAnonymousTag(td *astNode) *declRef {
+	if len(td.Inner) != 1 {
+		return nil
+	}
+	inner := td.Inner[0]
+	ref := inner.OwnedTagDecl
+	if ref == nil && inner.IsTagOwned && (inner.Kind == "RecordType" || inner.Kind == "EnumType") {
+		ref = inner.Decl
+	}
+	if ref == nil || ref.Name != "" {
+		return nil
+	}
+	return ref
 }
 
 // macroDef is one #define from clang's -dM output. value is what follows the

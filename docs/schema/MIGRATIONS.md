@@ -298,6 +298,23 @@ new one ranks by recency. `local`, `callgraph`, the standard-library extraction
 and a scan's on-demand call graph reuse a TinyGo record only under the release
 that built it; reads still select on the target.
 
+Under `--tinygo`, three changes to cgo packages:
+
+- With clang 22, a preamble's anonymous `typedef struct`, `union` or `enum` is
+  translated as under clang 21: the record is `Extracted` where it was
+  `Partial`, cause `module`.
+- A cgo package whose imports do not reach `syscall` loads. Its record is
+  `Extracted` where it was `Partial` with `could not import syscall (no metadata
+  for syscall)`.
+- A C type the translation refuses, or a `#cgo CFLAGS` line, leads the detail as
+  `kanonarion's cgo translation does not cover what <package> uses: …`, and the
+  `undefined: _Cgo_<name>` errors it causes leave the detail. With no other
+  compile error the cause is empty where it was `module`; beside one it stays
+  `module`. Either record is never served as a cache hit, and `callers` and
+  `callees` say a package the gap alone dropped was not analysed. A `0.16.0`
+  record written before this change quotes the refusal under `module`; it reads
+  as the gap too and is re-measured on the next run.
+
 Records are keyed `(module, version, pipeline_version)`: `0.15.0` rows stay and
 become unreachable. Cost is one re-extraction per coordinate on its next
 `callgraph` or `local` run.

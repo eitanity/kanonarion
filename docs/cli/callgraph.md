@@ -376,20 +376,19 @@ The record also holds what TinyGo adds beyond the source's calls:
   `interrupt.New`, whether named, a method value or a function literal, carries
   `interrupt_handler`, and reachability starts there as it does at an export.
 
-TinyGo's packages are written for TinyGo's cgo, so they are read the way TinyGo
-reads them: `import "C"` is removed and every `C.<name>` becomes the name TinyGo
-declares for it. A package that only imports `"C"` for its preamble needs
-nothing more. A file that references C names needs a C compiler: `clang` on
-`PATH`, else the highest-numbered `clang-<N>` (Debian and Ubuntu install only
-the versioned name). The preamble is compiled for the target with the
-`cflags`, `cpu` and ABI of its definition under `TINYGOROOT/targets/`, and its
-declarations become Go declarations. The record is `Partial` when:
+TinyGo's packages are read the way TinyGo reads them: `import "C"` is removed
+and every `C.<name>` becomes the name TinyGo declares for it. A package that
+only imports `"C"` for its preamble needs nothing more. A file that references C
+names needs a C compiler: `clang` on `PATH`, else the highest-numbered
+`clang-<N>`. The preamble is compiled for the target with the `cflags`, `cpu`
+and ABI of its definition under `TINYGOROOT/targets/`, and its declarations
+become Go declarations. The record is `Partial` when:
 
 | Message | What it means |
 |---|---|
 | `package <path>: no C compiler found on PATH (looked for clang, then clang-<N>)` | The named file references C names and this host has no clang. Install one and re-analyse |
 | `clang rejected the preamble: <file>:<line>:<col>: error: …` | clang's first diagnostic for the file's preamble under this target |
-| `C.<name>: <C type> is a C type this analysis does not translate` | The C declaration uses a type outside the translated set: bit fields, a union of more than one field, `__int128`, `_Complex`, an anonymous struct named only inside another |
+| `kanonarion's cgo translation does not cover what <package> uses: …` | A C type kanonarion does not translate (bit fields, a union of several fields, `__int128`, `_Complex`, an unnamed struct inside another or behind a pointer), or a `#cgo CFLAGS` line. The gap is kanonarion's, so the record is never served from cache |
 | `C.<name>: the macro "<text>" is not a constant this analysis evaluates: …` | A referenced macro that is not an integer, float, character or string constant, or an expression of those |
 
 The result line names the frame the analysis ran under. With `--from-walk`, the

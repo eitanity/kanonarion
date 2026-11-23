@@ -395,8 +395,8 @@ func (f *cgoFile) createRecordNode(name string, n *astNode) ast.Node {
 // typedefUnderlying is a typedef's type, naming an anonymous struct, union or
 // enum it declares as TinyGo names one.
 func (f *cgoFile) typedefUnderlying(name string, n *astNode) ast.Expr {
-	if len(n.Inner) == 1 && n.Inner[0].OwnedTagDecl != nil && n.Inner[0].OwnedTagDecl.Name == "" {
-		owned := f.decls.byID[n.Inner[0].OwnedTagDecl.ID]
+	if ref := ownedAnonymousTag(n); ref != nil {
+		owned := f.decls.byID[ref.ID]
 		if owned == nil {
 			f.unsupported(name, spelling(n.Type))
 			return nil
@@ -643,9 +643,8 @@ func (f *cgoFile) probeEnums() {
 	}
 	for _, name := range slices.Sorted(maps.Keys(f.decls.typedefs)) {
 		td := f.decls.typedefs[name]
-		if len(td.Inner) == 1 && td.Inner[0].OwnedTagDecl != nil && td.Inner[0].OwnedTagDecl.Name == "" &&
-			td.Inner[0].OwnedTagDecl.Kind == "EnumDecl" {
-			ids, spellings = append(ids, td.Inner[0].OwnedTagDecl.ID), append(spellings, name)
+		if ref := ownedAnonymousTag(td); ref != nil && ref.Kind == "EnumDecl" {
+			ids, spellings = append(ids, ref.ID), append(spellings, name)
 		}
 	}
 	if len(ids) == 0 {

@@ -86,6 +86,11 @@ func RecordIsCacheable(r CallGraphRecord) bool {
 	if _, ok := ReadTinyGoLoweringGap(r.FailureDetail); ok {
 		return false
 	}
+	// And for a C declaration the TinyGo cgo translation refused, which records
+	// before the clause filed as the module's: one that translates it re-measures.
+	if _, ok := ReadCgoTranslationGap(r.FailureDetail); ok {
+		return false
+	}
 	switch r.FailureCause {
 	case FailureCauseEnvironment:
 		return false

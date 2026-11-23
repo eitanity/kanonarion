@@ -23,8 +23,6 @@ void fake_copy(const uint8_t *src, uint8_t *dst, size_t n);
 */
 import "C"
 
-import _ "syscall" // TinyGo's generated cgo file imports it; machine reaches it the same way
-
 const (
 	Int  = C.FAKE_INT
 	Name = C.FAKE_NAME

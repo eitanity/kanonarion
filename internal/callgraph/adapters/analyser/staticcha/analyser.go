@@ -8,9 +8,11 @@ import (
 	"go/version"
 	"io"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 
 	"code.eitanity.com/kanonarion/internal/adapters/childproc"
@@ -732,7 +734,7 @@ func (a *Analyser) analyseDirOnce(
 	a.logMem(ctx, "all_packages_processed")
 
 	if build.Registered() == 0 {
-		return a.noPackageTypeCheckedRecord(coord, target, tempDir, targetPkgPaths, allLoadErrs, metaErrs, build), nil
+		return stateCgoGap(a.noPackageTypeCheckedRecord(coord, target, tempDir, targetPkgPaths, allLoadErrs, metaErrs, build), build.CgoGaps, len(allLoadErrs)), nil
 	}
 
 	if ctx.Err() != nil {
@@ -835,6 +837,7 @@ func (a *Analyser) analyseDirOnce(
 
 	rec = a.newCallGraphRecord(coord, build, nodes, edges, ifaces, impls, overallStatus, allLoadErrs, failedPkgs)
 	rec = stateGraphIncompleteness(rec, overallStatus, mode, tempDir, metaErrs, allLoadErrs, failedPkgs, build, mem)
+	rec = stateCgoGap(rec, build.CgoGaps, len(allLoadErrs))
 	rec = stateLoweringGap(rec, loweringGap)
 	// The last thing the analysis says. What follows is the caller sealing and
 	// storing the record, which on a large graph is the longest stretch after this
@@ -855,6 +858,24 @@ func stateLoweringGap(rec domain.CallGraphRecord, gap string) domain.CallGraphRe
 		rec.OverallStatus = domain.CallGraphStatusPartial
 	}
 	rec.FailureDetail = strings.TrimSuffix(gap+"; "+rec.FailureDetail, "; ")
+	return rec
+}
+
+// stateCgoGap leads a record's detail with the cgo translation's gap. With no
+// compile error beside it the module's cause is withdrawn: the gap is
+// kanonarion's, read from the detail as a lowering gap is.
+func stateCgoGap(rec domain.CallGraphRecord, gaps map[string]*cgoGap, compileErrs int) domain.CallGraphRecord {
+	if len(gaps) == 0 {
+		return rec
+	}
+	clauses := make([]string, 0, len(gaps))
+	for _, pkg := range slices.Sorted(maps.Keys(gaps)) {
+		clauses = append(clauses, domain.CgoTranslationGapClause(pkg, gaps[pkg].refusals, gaps[pkg].mixed))
+	}
+	rec.FailureDetail = strings.TrimSuffix(strings.Join(clauses, "; ")+"; "+rec.FailureDetail, "; ")
+	if compileErrs == 0 && rec.FailureCause == domain.FailureCauseModule {
+		rec.FailureCause = domain.FailureCauseUnrecorded
+	}
 	return rec
 }
 

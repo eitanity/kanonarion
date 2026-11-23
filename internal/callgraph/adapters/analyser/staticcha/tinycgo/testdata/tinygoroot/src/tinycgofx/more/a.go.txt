@@ -28,8 +28,6 @@ void *opaque(struct never_defined *p);
 */
 import "C"
 
-import _ "syscall" // the generated cgo file imports it
-
 func A() C.anon_t    { return C.anon_t{a: 1} }
 func E() C.anon_e    { return C.ANON_B }
 func U() C.union_one { return C.union_one{only: 1} }

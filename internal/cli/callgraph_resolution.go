@@ -643,6 +643,9 @@ func droppedEdgesNotice(ctx context.Context, kind, symbolID string, pr partialRo
 		why = "was not analysed: the kanonarion that analysed " + pr.coord.String() + " was built with " +
 			l.Built + " and the code requires " + l.Required
 	}
+	if g, ok := domain.ReadCgoTranslationGap(pr.detail); ok && g.DroppedBy(pr.failedPkg) {
+		why = "was not analysed: kanonarion's cgo translation does not cover what it uses"
+	}
 	line := fmt.Sprintf(
 		"notice: unmeasured on one side — package %q %s, so edges "+
 			"with an end inside it were dropped; the %s of %s listed below are what the store does hold "+

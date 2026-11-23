@@ -1,0 +1,388 @@
+{
+ "inner": [
+  {
+   "completeDefinition": true,
+   "id": "0x59ee3ac63310",
+   "inner": [
+    {
+     "id": "0x59ee3ac633a8",
+     "kind": "FieldDecl",
+     "name": "a",
+     "type": {
+      "qualType": "int"
+     }
+    }
+   ],
+   "kind": "RecordDecl",
+   "tagUsed": "struct"
+  },
+  {
+   "id": "0x59ee3ac63468",
+   "inner": [
+    {
+     "decl": {
+      "id": "0x59ee3ac63310",
+      "kind": "RecordDecl",
+      "name": ""
+     },
+     "id": "0x59ee3ac63430",
+     "isTagOwned": true,
+     "kind": "RecordType",
+     "type": {
+      "qualType": "struct anon_t"
+     }
+    }
+   ],
+   "kind": "TypedefDecl",
+   "name": "anon_t",
+   "type": {
+    "qualType": "struct anon_t"
+   }
+  },
+  {
+   "completeDefinition": true,
+   "id": "0x59ee3ac634d8",
+   "inner": [
+    {
+     "id": "0x59ee3ac63570",
+     "kind": "FieldDecl",
+     "name": "only",
+     "type": {
+      "qualType": "int"
+     }
+    }
+   ],
+   "kind": "RecordDecl",
+   "tagUsed": "union"
+  },
+  {
+   "id": "0x59ee3acf0ec8",
+   "inner": [
+    {
+     "decl": {
+      "id": "0x59ee3ac634d8",
+      "kind": "RecordDecl",
+      "name": ""
+     },
+     "id": "0x59ee3acf0e90",
+     "isTagOwned": true,
+     "kind": "RecordType",
+     "type": {
+      "qualType": "union anon_u"
+     }
+    }
+   ],
+   "kind": "TypedefDecl",
+   "name": "anon_u",
+   "type": {
+    "qualType": "union anon_u"
+   }
+  },
+  {
+   "id": "0x59ee3acf0f38",
+   "inner": [
+    {
+     "id": "0x59ee3acf0fe0",
+     "kind": "EnumConstantDecl",
+     "name": "ANON_A",
+     "type": {
+      "qualType": "int"
+     }
+    },
+    {
+     "id": "0x59ee3acf1090",
+     "inner": [
+      {
+       "id": "0x59ee3acf1070",
+       "inner": [
+        {
+         "id": "0x59ee3acf1058",
+         "inner": [
+          {
+           "id": "0x59ee3acf1038",
+           "kind": "IntegerLiteral",
+           "type": {
+            "qualType": "int"
+           },
+           "value": "1"
+          }
+         ],
+         "kind": "UnaryOperator",
+         "type": {
+          "qualType": "int"
+         }
+        }
+       ],
+       "kind": "ConstantExpr",
+       "type": {
+        "qualType": "int"
+       },
+       "value": "-1"
+      }
+     ],
+     "kind": "EnumConstantDecl",
+     "name": "ANON_B",
+     "type": {
+      "qualType": "int"
+     }
+    }
+   ],
+   "kind": "EnumDecl"
+  },
+  {
+   "id": "0x59ee3acf1158",
+   "inner": [
+    {
+     "decl": {
+      "id": "0x59ee3acf0f38",
+      "kind": "EnumDecl",
+      "name": ""
+     },
+     "id": "0x59ee3acf1120",
+     "isTagOwned": true,
+     "kind": "EnumType",
+     "type": {
+      "qualType": "enum anon_e"
+     }
+    }
+   ],
+   "kind": "TypedefDecl",
+   "name": "anon_e",
+   "type": {
+    "qualType": "enum anon_e"
+   }
+  },
+  {
+   "fixedUnderlyingType": {
+    "qualType": "unsigned char"
+   },
+   "id": "0x59ee3acf11e0",
+   "inner": [
+    {
+     "id": "0x59ee3acf1288",
+     "kind": "EnumConstantDecl",
+     "name": "FIXED_A",
+     "type": {
+      "qualType": "unsigned char"
+     }
+    }
+   ],
+   "kind": "EnumDecl"
+  },
+  {
+   "id": "0x59ee3acf1348",
+   "inner": [
+    {
+     "decl": {
+      "id": "0x59ee3acf11e0",
+      "kind": "EnumDecl",
+      "name": ""
+     },
+     "id": "0x59ee3acf1310",
+     "isTagOwned": true,
+     "kind": "EnumType",
+     "type": {
+      "qualType": "enum anon_fixed"
+     }
+    }
+   ],
+   "kind": "TypedefDecl",
+   "name": "anon_fixed",
+   "type": {
+    "qualType": "enum anon_fixed"
+   }
+  },
+  {
+   "completeDefinition": true,
+   "id": "0x59ee3acf13b8",
+   "inner": [
+    {
+     "completeDefinition": true,
+     "id": "0x59ee3acf1438",
+     "inner": [
+      {
+       "id": "0x59ee3acf14d0",
+       "kind": "FieldDecl",
+       "name": "x",
+       "type": {
+        "qualType": "int"
+       }
+      }
+     ],
+     "kind": "RecordDecl",
+     "tagUsed": "struct"
+    },
+    {
+     "id": "0x59ee3acf1588",
+     "kind": "FieldDecl",
+     "name": "in",
+     "type": {
+      "qualType": "struct (unnamed at anon-typedefs.h:5:18)"
+     }
+    },
+    {
+     "id": "0x59ee3acf15f0",
+     "kind": "FieldDecl",
+     "name": "y",
+     "type": {
+      "qualType": "int"
+     }
+    }
+   ],
+   "kind": "RecordDecl",
+   "tagUsed": "struct"
+  },
+  {
+   "id": "0x59ee3acf1708",
+   "inner": [
+    {
+     "decl": {
+      "id": "0x59ee3acf13b8",
+      "kind": "RecordDecl",
+      "name": ""
+     },
+     "id": "0x59ee3acf16d0",
+     "isTagOwned": true,
+     "kind": "RecordType",
+     "type": {
+      "qualType": "struct anon_nest"
+     }
+    }
+   ],
+   "kind": "TypedefDecl",
+   "name": "anon_nest",
+   "type": {
+    "qualType": "struct anon_nest"
+   }
+  },
+  {
+   "completeDefinition": true,
+   "id": "0x59ee3acf1778",
+   "inner": [
+    {
+     "id": "0x59ee3acf1810",
+     "kind": "FieldDecl",
+     "name": "x",
+     "type": {
+      "qualType": "int"
+     }
+    }
+   ],
+   "kind": "RecordDecl",
+   "name": "pt",
+   "tagUsed": "struct"
+  },
+  {
+   "id": "0x59ee3acf18b8",
+   "inner": [
+    {
+     "decl": {
+      "id": "0x59ee3acf1778",
+      "kind": "RecordDecl",
+      "name": "pt"
+     },
+     "id": "0x59ee3acf1880",
+     "kind": "RecordType",
+     "type": {
+      "qualType": "struct pt"
+     }
+    }
+   ],
+   "kind": "TypedefDecl",
+   "name": "pt_t",
+   "type": {
+    "qualType": "struct pt"
+   }
+  },
+  {
+   "completeDefinition": true,
+   "id": "0x59ee3acf1910",
+   "inner": [
+    {
+     "id": "0x59ee3acf19a8",
+     "kind": "FieldDecl",
+     "name": "b",
+     "type": {
+      "qualType": "int"
+     }
+    }
+   ],
+   "kind": "RecordDecl",
+   "name": "named_s",
+   "tagUsed": "struct"
+  },
+  {
+   "id": "0x59ee3acf1a68",
+   "inner": [
+    {
+     "decl": {
+      "id": "0x59ee3acf1910",
+      "kind": "RecordDecl",
+      "name": "named_s"
+     },
+     "id": "0x59ee3acf1a30",
+     "isTagOwned": true,
+     "kind": "RecordType",
+     "type": {
+      "qualType": "struct named_s"
+     }
+    }
+   ],
+   "kind": "TypedefDecl",
+   "name": "named_t",
+   "type": {
+    "qualType": "struct named_s"
+   }
+  },
+  {
+   "id": "0x59ee3acf1b18",
+   "inner": [
+    {
+     "decl": {
+      "id": "0x59ee3ac63468",
+      "kind": "TypedefDecl",
+      "name": "anon_t"
+     },
+     "id": "0x59ee3acf1ae0",
+     "inner": [
+      {
+       "decl": {
+        "id": "0x59ee3ac63310",
+        "kind": "RecordDecl",
+        "name": ""
+       },
+       "id": "0x59ee3ac63430",
+       "isTagOwned": true,
+       "kind": "RecordType",
+       "type": {
+        "qualType": "struct anon_t"
+       }
+      }
+     ],
+     "kind": "TypedefType",
+     "type": {
+      "qualType": "anon_t"
+     }
+    }
+   ],
+   "kind": "TypedefDecl",
+   "name": "anon_chain",
+   "type": {
+    "desugaredQualType": "struct anon_t",
+    "qualType": "anon_t",
+    "typeAliasDeclId": "0x59ee3ac63468"
+   }
+  },
+  {
+   "id": "0x59ee3acf1b88",
+   "kind": "VarDecl",
+   "name": "anon_var",
+   "type": {
+    "desugaredQualType": "struct anon_t",
+    "qualType": "anon_t",
+    "typeAliasDeclId": "0x59ee3ac63468"
+   }
+  }
+ ],
+ "kind": "TranslationUnitDecl"
+}

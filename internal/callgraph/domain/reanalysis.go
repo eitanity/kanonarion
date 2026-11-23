@@ -22,6 +22,15 @@ func DroppedPackageReason(detail string) string {
 	return "did not typecheck"
 }
 
+// DroppedPackageReasonFor is DroppedPackageReason for one package, which a
+// cgo translation gap alone may have dropped.
+func DroppedPackageReasonFor(pkg, detail string) string {
+	if g, ok := ReadCgoTranslationGap(detail); ok && g.DroppedBy(pkg) {
+		return "was not analysed: kanonarion's cgo translation does not cover what it uses"
+	}
+	return DroppedPackageReason(detail)
+}
+
 // AnalyserLimitCaveat states a record's analyser limit for a caveat line, and
 // the remedy when it still binds this binary ("" when this binary clears it).
 func AnalyserLimitCaveat(detail string) (clause, remedy string, ok bool) {
@@ -219,6 +228,22 @@ func IncompleteGraphRemedy(coord coordinate.ModuleCoordinate, cause FailureCause
 		}
 		return gap + " Then re-analyse:\n  " + FrameReanalysisInstruction(coord, dir, frame, false)
 	}
+	// The same for the cgo translation's refusals. A package with compile errors
+	// of its own files the module's cause, and their remedy follows; such a record
+	// is never served back, so the re-run needs no --force.
+	if g, ok := ReadCgoTranslationGap(detail); ok {
+		gap := "  " + g.Statement() + "\n  " + g.Remedy()
+		if !g.Legacy && cause == FailureCauseModule {
+			return gap + "\n" + causeRemedy(coord, cause, detail, FrameReanalysisInstruction(coord, dir, frame, false))
+		}
+		return gap + " Re-analyse:\n  " + FrameReanalysisInstruction(coord, dir, frame, false)
+	}
+	return causeRemedy(coord, cause, detail, rerun)
+}
+
+// causeRemedy is IncompleteGraphRemedy's advice by cause, once no limit of
+// kanonarion's own explains the gap.
+func causeRemedy(coord coordinate.ModuleCoordinate, cause FailureCause, detail, rerun string) string {
 	// Ahead of the cause branches below: this shares their axis and contradicts
 	// the advice they give.
 	if IsMissingChecksumEntry(detail) {

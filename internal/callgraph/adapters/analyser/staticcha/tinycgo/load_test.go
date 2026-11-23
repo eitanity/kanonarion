@@ -13,6 +13,7 @@ import (
 	"code.eitanity.com/kanonarion/internal/adapters/goenv"
 	"code.eitanity.com/kanonarion/internal/callgraph/adapters/analyser/staticcha/tinycgo"
 	"code.eitanity.com/kanonarion/internal/callgraph/adapters/analyser/staticcha/tinycgo/tinycgotest"
+	"code.eitanity.com/kanonarion/internal/callgraph/domain"
 	"golang.org/x/tools/go/packages"
 )
 
@@ -169,6 +170,11 @@ func TestLoad_AnUnmappedTypeIsNamedNotGuessed(t *testing.T) {
 			t.Errorf("no error says %q:\n%s", want, strings.Join(got, "\n"))
 		}
 	}
+	// Each but the macro, which tinygo refuses too, is kanonarion's gap.
+	if refusals, _, rest := domain.SplitCgoTranslationErrors(got); len(refusals) != 4 || len(rest) != 2 ||
+		!strings.Contains(rest[0], "NOT_A_CONSTANT") {
+		t.Errorf("refusals %q, the rest %q; want every error but the macro a refusal", refusals, rest)
+	}
 }
 
 // The remaining forms: anonymous typedefs, a one-field union, static and
@@ -188,6 +194,9 @@ func TestLoad_TranslatesTheRemainingForms(t *testing.T) {
 	conflict := errs["tinycgofx/conflict"]
 	if len(conflict) == 0 || !strings.Contains(conflict[0], "shared_t defined previously at") {
 		t.Errorf("conflict: %v, want the second definition refused", conflict)
+	}
+	if refusals, _, _ := domain.SplitCgoTranslationErrors(conflict); len(refusals) != 0 {
+		t.Errorf("a conflict TinyGo refuses too reads as kanonarion's gap: %q", refusals)
 	}
 	scope := tinyGoPackage(t, res, "tinycgofx/more").Types.Scope()
 	for name, want := range map[string]string{
