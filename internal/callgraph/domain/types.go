@@ -424,6 +424,9 @@ type CallNode struct {
 	// InterruptHandler is the registration that installs the function as a
 	// hardware interrupt handler by value; zero when nothing does.
 	InterruptHandler InterruptHandler
+	// DependencyDispatch is how a dependency can call this exported method
+	// through a value the module handed it; zero when its type never escapes.
+	DependencyDispatch DependencyDispatch
 }
 
 // InterfaceType is an interface declared in the analysed module, made

@@ -25,26 +25,50 @@ type Config struct {
 	// Recover is whether the target supports recover, which decides whether a
 	// function with a recover point builds a defer frame (defer.go:28).
 	Recover bool
+	// Unwind is the value of the frame's tinygo.unwind.* build tag: how a panic
+	// unwinds. A release that sets no such tag leaves it empty.
+	Unwind string
 }
+
+// returnUnwind is usesReturnUnwind (defer.go:39 at 0.43.0): a panic returns
+// through each frame instead of jumping to the landing pad.
+func (c Config) returnUnwind() bool { return c.Unwind == "asyncify" || c.Unwind == "explicit" }
 
 // maxStackAlloc is the smaller of TinyGo's two stack-allocation limits
 // (compileopts/config.go:226); a target with a larger stack is over-approximated.
 const maxStackAlloc = 256
 
+// Lowering is one release's lowering under one build. It holds what TinyGo
+// works out once per program: which functions a call can unwind through.
+type Lowering struct {
+	table *Table
+	cfg   Config
+	props map[*ssa.Function]callProps
+}
+
+// Lowering returns the release's lowering under cfg.
+func (t *Table) Lowering(cfg Config) *Lowering {
+	return &Lowering{table: t, cfg: cfg, props: make(map[*ssa.Function]callProps)}
+}
+
 // Sites returns the runtime calls TinyGo emits for fn's instructions, in
 // instruction order. A function without a body has none.
-func Sites(fn *ssa.Function, cfg Config) []Site {
-	w := &walker{cfg: cfg, fn: fn}
+func (l *Lowering) Sites(fn *ssa.Function) []Site {
+	w := &walker{cfg: l.cfg, fn: fn, low: l}
 	w.readPragmas()
 	if w.wasmExport != "" {
 		w.add(fn.Pos(), OpWasmExportCheckRun)
-		if cfg.Scheduler != "none" {
+		if l.cfg.Scheduler != "none" {
 			w.add(fn.Pos(), OpWasmExportRun, OpWasmExportExit)
 		}
 	}
 	if w.deferFrame() {
 		w.add(fn.Pos(), OpDeferSetup)
+		if l.cfg.returnUnwind() {
+			w.add(fn.Pos(), OpUnwindClear) // the landing pad, defer.go:95 at 0.43.0
+		}
 	}
+	w.body = fn.Blocks != nil && !isUnwindRuntime(fn, l.cfg)
 	loops := blocksInLoops(fn)
 	for _, b := range fn.Blocks {
 		for _, in := range b.Instrs {
@@ -57,15 +81,25 @@ func Sites(fn *ssa.Function, cfg Config) []Site {
 type walker struct {
 	cfg        Config
 	fn         *ssa.Function
+	low        *Lowering
 	sites      []Site
 	noBounds   bool
 	noHeap     bool
 	wasmExport string
+	// body is whether an invoke here gets the post-call unwind check; the
+	// runtime's own unwind helpers do not (calls.go:527 at 0.43.0).
+	body bool
+	// runningDefers is set while a deferred call is lowered, which runs inside
+	// createRunDefers and so gets no post-call check.
+	runningDefers bool
 }
 
 func (w *walker) add(pos token.Pos, ops ...Op) {
 	for _, op := range ops {
 		w.sites = append(w.sites, Site{Pos: pos, Op: op})
+		if runtimeInvokes[op] {
+			w.invoked(pos, true)
+		}
 	}
 }
 
@@ -116,7 +150,12 @@ func (w *walker) instr(in ssa.Instruction, inLoop bool) {
 	case *ssa.Return:
 		if w.deferFrame() {
 			w.add(v.Pos(), OpDeferDestroy)
+			if w.cfg.returnUnwind() {
+				w.add(v.Pos(), OpUnwindCheck) // compiler.go:1619 at 0.43.0
+			}
 		}
+	case *ssa.RunDefers:
+		w.runDefers(v.Pos())
 	case *ssa.Go:
 		w.goStmt(v)
 	case *ssa.Defer:
@@ -187,3 +226,6 @@ func (w *walker) makeValue(in ssa.Instruction) bool {
 	}
 	return true
 }
+
+// Callees is the release's Callees.
+func (l *Lowering) Callees(op Op) []Callee { return l.table.Callees(op) }

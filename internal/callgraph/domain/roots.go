@@ -32,6 +32,9 @@ type RootCandidate struct {
 	// Handler is the registration that installs the node as an interrupt
 	// handler, zero when nothing does.
 	Handler InterruptHandler
+	// Dispatch is the node's dependency dispatch detail, empty when its type
+	// never escapes the module.
+	Dispatch string
 }
 
 // RootScope says whether test-declared nodes may root a traversal.
@@ -256,6 +259,45 @@ func SelectEntryPointRoots(candidates []RootCandidate, scope RootScope) []string
 		if c.IsExportedAPI || ExternalEntryPointReason(c.Symbol, c.Receiver, c.Export, c.Handler) != "" {
 			roots = append(roots, c.ID)
 		}
+	}
+	sort.Strings(roots)
+	return roots
+}
+
+// DependencyDispatchEntryReason names why a node a dependency can call through a
+// value the module hands it is entered from outside, and "" for no detail. It
+// is the weaker witness, so readers consult it only where nothing above names
+// an entry point.
+func DependencyDispatchEntryReason(detail string) string {
+	if detail == "" {
+		return ""
+	}
+	return "a method a dependency can call through a value the module hands it — " + detail
+}
+
+// SelectDependencyDispatchRoots returns the owned nodes a dependency can call
+// through a value the module hands it that SelectEntryPointRoots does not
+// already name, on the same scope rules.
+//
+// It is a second root set rather than more of the first, so a search that
+// already found a path from the named entry points keeps that path: these
+// roots are tried only where those found nothing, and can then only turn a
+// confirmed absence back into a found path.
+//
+// Results are sorted for determinism.
+func SelectDependencyDispatchRoots(candidates []RootCandidate, scope RootScope) []string {
+	var roots []string
+	for _, c := range candidates {
+		if c.IsExternal || c.Dispatch == "" {
+			continue
+		}
+		if c.IsTest && scope == RootScopeProduction {
+			continue
+		}
+		if c.IsExportedAPI || ExternalEntryPointReason(c.Symbol, c.Receiver, c.Export, c.Handler) != "" {
+			continue
+		}
+		roots = append(roots, c.ID)
 	}
 	sort.Strings(roots)
 	return roots

@@ -17,6 +17,7 @@ package rootclass
 import (
 	"context"
 	"fmt"
+	"maps"
 
 	"code.eitanity.com/kanonarion/internal/coordinate"
 
@@ -90,6 +91,8 @@ type graph struct {
 	// when the record does not say. It is carried so a remedy printed later names
 	// the directory instead of a placeholder the reader cannot substitute.
 	analysisRoot string
+	// frame is the served record's build frame, so a remedy re-analyses in it.
+	frame callgraphdomain.BuildFrame
 	// nodes is keyed by (package, receiver, symbol) — what a route frame carries.
 	// A node ID would be the obvious key, but the frame does not hold one and
 	// reconstructing an ID from its parts encodes an ID convention this context
@@ -109,6 +112,10 @@ type graph struct {
 	// entryReason names why a node is an entry point, for the nodes that are
 	// one. A miss is not an entry point; the map is only over the witnesses.
 	entryReason map[string]string
+	// dispatchReason names the owned methods a dependency can call through a
+	// value the module hands it. It is the weaker witness, read only where
+	// entryReason finds nothing, so no distance that was found changes.
+	dispatchReason map[string]string
 }
 
 // parentEdge is one edge into a node, carrying what the upward search needs to
@@ -160,7 +167,7 @@ func (c *Classifier) facts(ctx context.Context, coord coordinate.ModuleCoordinat
 			Unavailable: fmt.Sprintf(
 				"the route's entry point %s is not a node in %s's call graph, so the graph cannot say what enters it",
 				frame, coord),
-			UnavailableRemedy: callgraphdomain.ReanalysisInstruction(coord, g.analysisRoot) + ", to re-analyse the module the route starts in",
+			UnavailableRemedy: callgraphdomain.FrameReanalysisInstruction(coord, g.analysisRoot, g.frame, false) + ", to re-analyse the module the route starts in",
 		}
 	}
 	return vuldomain.RootFacts{
@@ -187,6 +194,12 @@ func externalInvocation(g *graph, node callgraphdomain.CallNode) string {
 	}
 	if g.externalCallers[node.ID] > 0 {
 		return "called from outside the analysed module — a dependency invokes it"
+	}
+	// Only where no in-module caller is recorded: there the graph's silence is
+	// the claim, and a dependency calling through the value it was handed is the
+	// one caller it could not record.
+	if g.callers[node.ID] == 0 {
+		return g.dispatchReason[node.ID]
 	}
 	return ""
 }
@@ -245,7 +258,7 @@ func (c *Classifier) read(ctx context.Context, coord coordinate.ModuleCoordinate
 			unavailable: fmt.Sprintf("no call graph is stored for %s, so nothing can be said about what enters the route", coord),
 			// No record came back, so there is no tree to name: the instruction says
 			// so rather than printing a command with a placeholder in it.
-			remedy: callgraphdomain.ReanalysisInstruction(coord, ""),
+			remedy: callgraphdomain.FrameReanalysisInstruction(coord, "", c.frame(), false),
 		}
 	case len(rec.Nodes) == 0:
 		// A record with no nodes is not an empty module. It is a module analysed at
@@ -256,23 +269,37 @@ func (c *Classifier) read(ctx context.Context, coord coordinate.ModuleCoordinate
 			unavailable: fmt.Sprintf(
 				"%s's call graph was analysed at %s and holds no nodes, so it cannot say what enters the route",
 				coord, rec.Completeness),
-			remedy: callgraphdomain.ReanalysisInstruction(coord, rec.AnalysisRoot),
+			remedy: callgraphdomain.FrameReanalysisInstruction(coord, rec.AnalysisRoot, rec.Frame, false),
+		}
+	}
+	// Without the calls TinyGo's compiler inserts, the upward search can miss
+	// every route through the runtime, so its distance is no answer.
+	if gap, ok := callgraphdomain.ReadTinyGoLoweringGap(rec.FailureDetail); ok {
+		return &graph{
+			unavailable: fmt.Sprintf("%s's call graph holds none of the calls TinyGo's compiler inserts (%s), "+
+				"so it cannot say what enters the route", coord, gap.Detail()),
+			remedy: gap.Remedy() + " Then re-analyse: " + callgraphdomain.FrameReanalysisInstruction(coord, rec.AnalysisRoot, rec.Frame, false),
 		}
 	}
 
 	g := &graph{
+		frame:           rec.Frame,
 		analysisRoot:    rec.AnalysisRoot,
 		nodes:           make(map[frameKey]callgraphdomain.CallNode, len(rec.Nodes)),
 		callers:         make(map[string]int),
 		externalCallers: make(map[string]int),
 		parents:         make(map[string][]parentEdge, len(rec.Nodes)),
 		entryReason:     make(map[string]string),
+		dispatchReason:  make(map[string]string),
 	}
 	external := make(map[string]bool, len(rec.Nodes))
 	for _, n := range rec.Nodes {
 		external[n.ID] = n.IsExternal
 		if reason := callgraphdomain.ExternalEntryPointReason(n.Symbol, n.Receiver, n.ExportDirective, n.InterruptHandler); reason != "" && !n.IsExternal {
 			g.entryReason[n.ID] = reason
+		} else if !n.IsExternal && n.DependencyDispatch.InProduction() {
+			// Production hand-offs only: the classification is about production code.
+			g.dispatchReason[n.ID] = callgraphdomain.DependencyDispatchEntryReason(n.DependencyDispatch.Production().Describe())
 		}
 		if n.IsExternal {
 			// A route frame in the analysed module can only match a node the module
@@ -299,6 +326,15 @@ func (c *Classifier) read(ctx context.Context, coord coordinate.ModuleCoordinate
 
 // frameMiss is the unavailable graph for a coordinate held only under other
 // frames, naming them and the remedy for this read's; nil when that is not why.
+// frame is the frame this read is served under, zero when none was named.
+func (c *Classifier) frame() callgraphdomain.BuildFrame {
+	if c.readFrame == nil {
+		return callgraphdomain.BuildFrame{}
+	}
+	f, _ := c.readFrame()
+	return f
+}
+
 func (c *Classifier) frameMiss(ctx context.Context, coord coordinate.ModuleCoordinate) *graph {
 	history, ok := c.graphs.(GraphHistory)
 	if !ok || c.readFrame == nil {
@@ -342,8 +378,20 @@ const ancestrySearchBound = 0
 // report Direct and launder a registration into an all-calls chain; see
 // domain.EntryPointAncestry.
 func (g *graph) entryPointAncestry(nodeID string) vuldomain.EntryPointAncestry {
+	out := g.ancestryAgainst(nodeID, g.entryReason)
+	if out.Found || len(g.dispatchReason) == 0 {
+		return out
+	}
+	both := make(map[string]string, len(g.entryReason)+len(g.dispatchReason))
+	maps.Copy(both, g.dispatchReason)
+	maps.Copy(both, g.entryReason)
+	return g.ancestryAgainst(nodeID, both)
+}
+
+// ancestryAgainst is the upward search against one set of entry points.
+func (g *graph) ancestryAgainst(nodeID string, entryReason map[string]string) vuldomain.EntryPointAncestry {
 	out := vuldomain.EntryPointAncestry{Computed: true, SearchBound: ancestrySearchBound}
-	if reason, ok := g.entryReason[nodeID]; ok {
+	if reason, ok := entryReason[nodeID]; ok {
 		out.Found = true
 		out.EntryPointID = nodeID
 		out.EntryPointReason = reason
@@ -362,7 +410,7 @@ func (g *graph) entryPointAncestry(nodeID string) vuldomain.EntryPointAncestry {
 		var bestID string
 		var best pathState
 		for id, st := range next {
-			if _, ok := g.entryReason[id]; !ok {
+			if _, ok := entryReason[id]; !ok {
 				continue
 			}
 			if bestID == "" || betterEntryPoint(id, st, bestID, best) {
@@ -373,7 +421,7 @@ func (g *graph) entryPointAncestry(nodeID string) vuldomain.EntryPointAncestry {
 			out.Found = true
 			out.Hops = hops
 			out.EntryPointID = bestID
-			out.EntryPointReason = g.entryReason[bestID]
+			out.EntryPointReason = entryReason[bestID]
 			out.Weakest = string(best.weakest)
 			out.ViaReference = best.reference
 			return out

@@ -878,6 +878,7 @@ func resolveToolModule(toolPath string, reqVersions map[string]string) (modPath,
 func resetInvocationState() {
 	storeSetAside.reset()
 	storeNotSearched.reset()
+	storeDispatchNotice.reset()
 	recordseal.SetStoreLocation("")
 	modcacheMode, modcacheDir, goSumPath = false, "", ""
 	projectGoSumPath = ""

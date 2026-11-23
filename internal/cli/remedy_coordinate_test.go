@@ -222,7 +222,7 @@ func TestIncompleteGraphRemedy_NeverPrintsAPlaceholder(t *testing.T) {
 		} {
 			for _, detail := range []string{"", "missing go.sum entry for x; to add it: go mod tidy"} {
 				for _, dir := range []string{"", "/srv/checkouts/project"} {
-					got := cgdomain.IncompleteGraphRemedy(coord, cause, detail, dir)
+					got := cgdomain.IncompleteGraphRemedy(coord, cause, detail, dir, cgdomain.BuildFrame{})
 					if strings.Contains(got, cgdomain.LocalDirPlaceholder) {
 						t.Errorf("IncompleteGraphRemedy(%s, %q, dir=%q) prints %s:\n%s",
 							coord, cause, dir, cgdomain.LocalDirPlaceholder, got)

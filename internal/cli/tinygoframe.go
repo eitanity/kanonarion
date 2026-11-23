@@ -102,11 +102,11 @@ func tinyGoPackagesIn(ctx context.Context, detail string) ([]string, bool) {
 
 // incompleteGraphRemedy is cgdomain.IncompleteGraphRemedy, except that a load
 // that failed on packages only TinyGo provides is sent to the TinyGo build.
-func incompleteGraphRemedy(ctx context.Context, coord coordinate.ModuleCoordinate, cause cgdomain.FailureCause, detail, dir string) string {
+func incompleteGraphRemedy(ctx context.Context, coord coordinate.ModuleCoordinate, cause cgdomain.FailureCause, detail, dir string, frame cgdomain.BuildFrame) string {
 	if pkgs, ok := tinyGoPackagesIn(ctx, detail); ok {
-		return gotoolchain.TinyGoPackageRemedy(pkgs, cgdomain.TinyGoReanalysisInstruction(coord, dir))
+		return gotoolchain.TinyGoPackageRemedy(pkgs, cgdomain.TinyGoReanalysisInstruction(coord, dir, ""))
 	}
-	return cgdomain.IncompleteGraphRemedy(coord, cause, detail, dir)
+	return cgdomain.IncompleteGraphRemedy(coord, cause, detail, dir, frame)
 }
 
 // withTinyGoRemedy appends the TinyGo remedy to a go list refusal whose missing

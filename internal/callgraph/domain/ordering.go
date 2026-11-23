@@ -1,5 +1,7 @@
 package domain
 
+import "slices"
+
 // This file holds the one canonical ordering per collection in a
 // CallGraphRecord. There was previously one comparator inside the hasher and a
 // second on the record, and they had drifted: the record's edge comparator
@@ -59,10 +61,48 @@ func CallNodeLess(a, b CallNode) bool {
 	if a.IsTest != b.IsTest {
 		return !a.IsTest
 	}
+	return nodeFactsLess(a, b)
+}
+
+// nodeFactsLess orders two nodes on the facts extraction stamps on them.
+func nodeFactsLess(a, b CallNode) bool {
 	if a.ExportDirective != b.ExportDirective {
 		return exportDirectiveLess(a.ExportDirective, b.ExportDirective)
 	}
-	return interruptHandlerLess(a.InterruptHandler, b.InterruptHandler)
+	if a.InterruptHandler != b.InterruptHandler {
+		return interruptHandlerLess(a.InterruptHandler, b.InterruptHandler)
+	}
+	return dependencyDispatchLess(a.DependencyDispatch, b.DependencyDispatch)
+}
+
+func dependencyDispatchLess(a, b DependencyDispatch) bool {
+	if !handOffEqual(a, b) {
+		return handOffLess(a, b)
+	}
+	return handOffLess(a.Production(), b.Production())
+}
+
+func handOffEqual(a, b DependencyDispatch) bool {
+	return a.Escape == b.Escape && slices.Equal(a.SortedInterfaces(), b.SortedInterfaces())
+}
+
+func handOffLess(a, b DependencyDispatch) bool {
+	ea, eb := a.Escape, b.Escape
+	switch {
+	case ea.Kind != eb.Kind:
+		return ea.Kind < eb.Kind
+	case ea.Type != eb.Type:
+		return ea.Type < eb.Type
+	case ea.Via != eb.Via:
+		return ea.Via < eb.Via
+	case ea.Function != eb.Function:
+		return ea.Function < eb.Function
+	case ea.Site.File != eb.Site.File:
+		return ea.Site.File < eb.Site.File
+	case ea.Site.Line != eb.Site.Line:
+		return ea.Site.Line < eb.Site.Line
+	}
+	return slices.Compare(a.SortedInterfaces(), b.SortedInterfaces()) < 0
 }
 
 func exportDirectiveLess(a, b ExportDirective) bool {

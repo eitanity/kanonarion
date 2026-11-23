@@ -192,16 +192,16 @@ func foreignDrawOfNodes(ctx context.Context, ix *foreignModuleIndex, edges []por
 
 // writeForeignTransitiveAnswer is writeForeignEdgeAnswer for a transitive walk,
 // whose answer is a node list.
-func writeForeignTransitiveAnswer(ctx context.Context, ix *foreignModuleIndex, stdout io.Writer, kind, symbolID string, edges []ports.CallEdgeRef, nodes []string, callerSide bool) error {
+func writeForeignTransitiveAnswer(ctx context.Context, ix *foreignModuleIndex, stdout io.Writer, kind, symbolID string, edges []ports.CallEdgeRef, nodes []string, callerSide bool, extra string) error {
 	d, err := foreignDrawOfNodes(ctx, ix, edges, nodes, callerSide)
 	if err != nil {
 		return err
 	}
-	if !d.drawn() {
+	if !d.drawn() && extra == "" {
 		return nil
 	}
-	if _, werr := fmt.Fprintf(stdout, "answer: RESOLVED-PRESENT — %s of %s%s\n",
-		countOf(len(nodes), kind), symbolID, d.clause(kind)); werr != nil {
+	if _, werr := fmt.Fprintf(stdout, "answer: RESOLVED-PRESENT — %s of %s%s%s\n",
+		countOf(len(nodes), kind), symbolID, d.clause(kind), extra); werr != nil {
 		return fmt.Errorf("writing answer: %w", werr)
 	}
 	return nil
@@ -241,16 +241,16 @@ func sortedLabels(set map[string]struct{}) []string {
 // The outcome token is RESOLVED-PRESENT, the same one the implementers query
 // prints for a non-empty answer: rows were found, and what needs saying is where
 // they came from, not whether they exist.
-func writeForeignEdgeAnswer(ctx context.Context, ix *foreignModuleIndex, stdout io.Writer, kind, symbolID string, refs []ports.CallEdgeRef, callerSide bool) error {
+func writeForeignEdgeAnswer(ctx context.Context, ix *foreignModuleIndex, stdout io.Writer, kind, symbolID string, refs []ports.CallEdgeRef, callerSide bool, extra string) error {
 	d, err := foreignDrawOfEdges(ctx, ix, refs, callerSide)
 	if err != nil {
 		return err
 	}
-	if !d.drawn() {
+	if !d.drawn() && extra == "" {
 		return nil
 	}
-	if _, werr := fmt.Fprintf(stdout, "answer: RESOLVED-PRESENT — %s of %s%s\n",
-		countOf(len(refs), kind), symbolID, d.clause(kind)); werr != nil {
+	if _, werr := fmt.Fprintf(stdout, "answer: RESOLVED-PRESENT — %s of %s%s%s\n",
+		countOf(len(refs), kind), symbolID, d.clause(kind), extra); werr != nil {
 		return fmt.Errorf("writing answer: %w", werr)
 	}
 	return nil

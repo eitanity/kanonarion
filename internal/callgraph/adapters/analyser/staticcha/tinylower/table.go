@@ -17,6 +17,9 @@ type Table struct {
 	version string
 	callees map[Op][]Callee
 	wasm    []NamedExport
+	// binOpFallsThrough is whether the release's unwind analysis treats a BinOp
+	// that cannot unwind as one that might, as 0.43.0's does.
+	binOpFallsThrough bool
 }
 
 // NamedExport is a function the compiler exports to the WebAssembly host under
@@ -55,6 +58,8 @@ func Versions() []string {
 
 var tables = map[string]*Table{
 	v0420.version: v0420,
+	v0430.version: v0430,
+	v0440.version: v0440,
 }
 
 func rt(name string) Callee   { return Callee{Pkg: "runtime", Name: name} }

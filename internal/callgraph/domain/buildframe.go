@@ -58,6 +58,12 @@ func SameFrame(a, b BuildFrame) bool {
 	return a.GOOS == b.GOOS && a.GOARCH == b.GOARCH && a.GOARM == b.GOARM && a.TinyGoTarget == b.TinyGoTarget
 }
 
+// SameTinyGoRelease reports whether a held record was built by the TinyGo
+// release an analysis would run now. Reads select on SameFrame; reusing a record
+// instead of analysing also claims the build was the same, and two releases
+// compile different runtimes and lower differently.
+func SameTinyGoRelease(held, now BuildFrame) bool { return held.TinyGoVersion == now.TinyGoVersion }
+
 // frameKey is the selection key as one comparable value.
 type frameKey struct{ goos, goarch, goarm, tinygo string }
 

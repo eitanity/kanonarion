@@ -2,6 +2,7 @@ package domain
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -111,6 +112,16 @@ const (
 	// produces the same clean-looking zero as a dependency genuinely migrated
 	// off, and only the second is a measurement.
 	SinkModuleSurfaceUnenumerated SinkKind = "module-surface-unenumerated"
+	// SinkDependencyDispatchUnmeasured is an exported method whose type the
+	// module hands to code outside it, as an interface value or a type argument.
+	// A dependency's body is not in the module's graph, so a call it makes
+	// through that value has no edge: an empty callers answer cannot rule it out,
+	// and a non-empty one lists the module's own callers only.
+	SinkDependencyDispatchUnmeasured SinkKind = "dependency-dispatch-unmeasured"
+	// SinkTinyGoLoweringUnrecorded is a TinyGo record analysed by a kanonarion
+	// with no lowering table for its release: no compiler-inserted call is in it,
+	// so an empty answer cannot rule one out and a non-empty one may be short.
+	SinkTinyGoLoweringUnrecorded SinkKind = "tinygo-lowering-unrecorded"
 )
 
 // SoundnessSink is a single reason an empty answer was downgraded to
@@ -157,6 +168,14 @@ func (v Answer) Reason() string {
 	return strings.Join(parts, "; ")
 }
 
+// WithSinks is v downgraded by sinks: an answer with any is UNRESOLVED.
+func (v Answer) WithSinks(sinks ...SoundnessSink) Answer {
+	if len(sinks) == 0 {
+		return v
+	}
+	return Answer{Outcome: AnswerUnresolved, Sinks: dedupeSinks(append(slices.Clone(v.Sinks), sinks...))}
+}
+
 // SymbolMethodName extracts the short method or function name from a call-graph
 // symbol ID: the trailing identifier after the final '.'. It returns "" for an
 // empty ID or one ending in '.'. Examples: "pkg.(*T).M" -> "M", "pkg.Fn" -> "Fn".
@@ -188,10 +207,11 @@ type NegativeAnswerInputs struct {
 	// NodesByID indexes the owning module's nodes by ID, so an invoke site's
 	// callee method name can be read.
 	NodesByID map[string]CallNode
-	// ScanDispatch enables the interface-dispatch scan. It applies to a callers
-	// query, where a missing invoke->target edge hides a caller; a callees query
-	// cannot observe an empty bound-implementer set from stored edges, so it
-	// leaves this false.
+	// ScanDispatch enables the caller-side sinks: the interface-dispatch scan and
+	// the queried method's dependency dispatch. It applies to a callers query,
+	// where a missing invoke->target edge hides a caller; a callees query cannot
+	// observe an empty bound-implementer set from stored edges, so it leaves this
+	// false.
 	ScanDispatch bool
 	// TestScope is the owning module's test-scope axis. Anything other than
 	// Analysed means the answer covers production code only.
@@ -248,7 +268,7 @@ func ClassifyNegativeAnswer(in NegativeAnswerInputs) Answer {
 		sinks = append(sinks, SoundnessSink{
 			Kind:   SinkDroppedPackageEdges,
 			Site:   site,
-			Detail: "package " + in.DroppedEdgePackage + " " + DroppedPackageReason(in.DroppedEdgeDetail) + ", so its edges were dropped",
+			Detail: "package " + in.DroppedEdgePackage + " " + DroppedPackageReasonFor(in.DroppedEdgePackage, in.DroppedEdgeDetail) + ", so its edges were dropped",
 		})
 	}
 
@@ -275,6 +295,11 @@ func ClassifyNegativeAnswer(in NegativeAnswerInputs) Answer {
 	// method, so no caller edge does not prove no caller.
 	if in.ScanDispatch {
 		sinks = append(sinks, interfaceDispatchSinks(in.MethodName, in.Edges, in.NodesByID)...)
+		if in.Found {
+			if sink, ok := DependencyDispatchSink(in.QueriedNode); ok {
+				sinks = append(sinks, sink)
+			}
+		}
 	}
 
 	sinks = dedupeSinks(sinks)
@@ -320,6 +345,15 @@ func unmeasuredScopeSinks(in NegativeAnswerInputs, sinks []SoundnessSink) []Soun
 		})
 	}
 	return sinks
+}
+
+// DependencyDispatchSink is the sink a node's dependency dispatch fact states,
+// and false for a node without one.
+func DependencyDispatchSink(n CallNode) (SoundnessSink, bool) {
+	if n.DependencyDispatch.IsZero() {
+		return SoundnessSink{}, false
+	}
+	return SoundnessSink{Kind: SinkDependencyDispatchUnmeasured, Site: n.ID, Detail: n.DependencyDispatch.Describe()}, true
 }
 
 // leafSinks returns the documented leaf sinks a node carries in its body.

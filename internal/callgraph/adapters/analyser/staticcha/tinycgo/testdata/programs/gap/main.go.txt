@@ -1,0 +1,11 @@
+package main
+
+/*
+typedef struct { int x; } *pp_t;
+static int px(pp_t p) { return p->x; }
+*/
+import "C"
+
+func P(p C.pp_t) int { return int(C.px(p)) }
+
+func main() { _ = P(nil) }

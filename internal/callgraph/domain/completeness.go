@@ -193,3 +193,13 @@ func CompletenessCaveat(level CompletenessLevel, phase AnalysisPhase) string {
 		return fmt.Sprintf("call graph is %s, not built with bodies — answers over this module may be incomplete", level)
 	}
 }
+
+// CompletenessCaveatFor is CompletenessCaveat for a record whose failure detail
+// is known. Where the record names a cause of its own that no rebuild of the
+// source clears, the coding phase states the level without the rebuild.
+func CompletenessCaveatFor(level CompletenessLevel, phase AnalysisPhase, detail string) string {
+	if phase == PhaseCoding && !level.IsBuiltWithBodies() && namesItsOwnRemedy(detail) {
+		return fmt.Sprintf("call graph is %s, not built with bodies, for the reason its record states; answers over this module may be incomplete", level)
+	}
+	return CompletenessCaveat(level, phase)
+}

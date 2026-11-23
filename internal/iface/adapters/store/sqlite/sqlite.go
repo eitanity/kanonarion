@@ -319,7 +319,6 @@ INSERT OR IGNORE INTO interface_symbols (
 	}); err != nil {
 		return err //nolint:wrapcheck // RetryOnBusy already names the write and wraps the driver's error; wrapping again would say it twice
 	}
-	_, _ = s.db.DB().ExecContext(ctx, `PRAGMA optimize`) //nolint:errcheck
 	return nil
 }
 
@@ -886,6 +885,13 @@ func page(sums []ports.InterfaceSummary, limit, offset int) []ports.InterfaceSum
 	return sums
 }
 
+// findSymbolQuery is FindSymbol's read of every row naming one symbol.
+const findSymbolQuery = `SELECT record_content_hash, module_path, module_version, pipeline_version,
+	                   package_path, symbol_kind, symbol_name, parent_type, signature
+	            FROM interface_symbols
+	            WHERE symbol_name = ? AND pipeline_version = ?
+	            ORDER BY module_path, module_version, package_path`
+
 // FindSymbol returns index entries for all packages that export a symbol with
 // the given name, restricted to the modules in scope (see ports.InterfaceStore).
 //
@@ -893,13 +899,7 @@ func page(sums []ports.InterfaceSummary, limit, offset int) []ports.InterfaceSum
 // build's version set is a list of pairs, so expressing it in the WHERE clause
 // costs one bound parameter per module, and a full-depth walk holds thousands.
 func (s *Store) FindSymbol(ctx context.Context, symbolName string, pipelineVersion string, scope coordinate.ModuleSet) ([]ports.SymbolRef, error) {
-	const q = `SELECT record_content_hash, module_path, module_version, pipeline_version,
-	                   package_path, symbol_kind, symbol_name, parent_type, signature
-	            FROM interface_symbols
-	            WHERE symbol_name = ? AND pipeline_version = ?
-	            ORDER BY module_path, module_version, package_path`
-
-	rows, err := s.db.DB().QueryContext(ctx, q, symbolName, pipelineVersion)
+	rows, err := s.db.DB().QueryContext(ctx, findSymbolQuery, symbolName, pipelineVersion)
 	if err != nil {
 		return nil, fmt.Errorf("querying interface symbols for %q: %w", symbolName, err)
 	}

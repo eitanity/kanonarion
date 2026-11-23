@@ -30,6 +30,10 @@ var declaredTarget goenv.Target
 // every resolving child applies this frame after it.
 var declaredTinyGo goenv.TinyGo
 
+// declaredTinyGoVersion is the declared release, read when it is asked: a
+// method value of declaredTinyGo would keep the frame of the moment it was taken.
+func declaredTinyGoVersion() string { return declaredTinyGo.Version() }
+
 // liveContainers are the containers open in this process. A declaration
 // settled after one was built is re-adopted by each, so the order in which a
 // command opens its store and resolves its flags cannot leave a read in the

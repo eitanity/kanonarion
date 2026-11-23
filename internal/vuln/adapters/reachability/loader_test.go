@@ -46,6 +46,12 @@ func (s *fakeStore) FindCallees(context.Context, string, string, coordinate.Modu
 
 var loaderCoord = coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
 
+var loaderEscape = callgraphdomain.DispatchEscape{
+	Kind: callgraphdomain.EscapeConversion, Type: "*body", Via: "io.Reader", Function: "github.com/foo/bar.Fn",
+}
+
+var loaderDispatch = callgraphdomain.DependencyDispatch{Escape: loaderEscape, ProductionEscape: loaderEscape}
+
 func TestLoad_ProjectsRecord(t *testing.T) {
 	rec := callgraphdomain.CallGraphRecord{
 		Algorithm:       callgraphdomain.AlgorithmCHA,
@@ -61,6 +67,9 @@ func TestLoad_ProjectsRecord(t *testing.T) {
 		}, {
 			ID: "github.com/foo/bar.parse", Module: "github.com/foo/bar", Package: "github.com/foo/bar", Symbol: "parse",
 			ExportDirective: callgraphdomain.ExportDirective{Kind: callgraphdomain.ExportWasm, Name: "parse"},
+		}, {
+			ID: "github.com/foo/bar.(*body).Read", Module: "github.com/foo/bar", Package: "github.com/foo/bar", Symbol: "Read", Receiver: "*body",
+			DependencyDispatch: loaderDispatch,
 		}},
 		Edges:              []callgraphdomain.CallEdge{{FromID: "github.com/foo/bar.Fn", ToID: "net/http.Get"}},
 		StdlibPackages:     []string{"net/http"},
@@ -103,6 +112,11 @@ func TestLoad_ProjectsRecord(t *testing.T) {
 		// selector reads it here.
 		ID: "github.com/foo/bar.parse", Module: "github.com/foo/bar", Package: "github.com/foo/bar", Symbol: "parse",
 		ExportKind: "wasmexport", ExportName: "parse",
+	}, {
+		// The dispatch fact survives as its production detail: the dispatch roots
+		// read it, and TestSearchNegative_ATestOnlyHandOffRootsNothing has the rest.
+		ID: "github.com/foo/bar.(*body).Read", Module: "github.com/foo/bar", Package: "github.com/foo/bar", Symbol: "Read", Receiver: "*body",
+		DependencyDispatch: loaderDispatch.Production().Describe(),
 	}}
 	if !slices.Equal(proj.Nodes, want) {
 		t.Errorf("Nodes = %+v, want %+v", proj.Nodes, want)

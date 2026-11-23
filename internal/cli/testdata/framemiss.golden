@@ -39,7 +39,7 @@ Reached only through unresolved dispatch — not established use (0 symbols, 0 e
 
 Linked but not called (0 packages of this project import the module):
 
-Unreached — unmeasured: the store holds no call graph for any version of example.com/dep, so its public API was never enumerated and nothing about the module was measured; check the module path, then run: kanonarion fetch example.com/dep@v1.0.0 && kanonarion callgraph example.com/dep@v1.0.0
+Unreached — unmeasured: the store holds no call graph for any version of example.com/dep, so its public API was never enumerated and nothing about the module was measured; check the module path, then run: kanonarion fetch example.com/dep@v1.0.0 && kanonarion callgraph example.com/dep@v1.0.0 --target wasip1/wasm
 
 unmeasured: types, constants and variables have no call-graph node, so no use of one appears anywhere in this report. List them with: kanonarion fetch example.com/dep@v1.0.0 && kanonarion interface example.com/dep@v1.0.0 && kanonarion interface-show example.com/dep@v1.0.0
 coverage: reached/not-reached is measured over recorded CALL EDGES in the stored call graph. Method values (a method referenced as a value rather than called) are not recorded as edges, so a symbol shown as not reached may still be referenced that way. Types, constants and variables have no call-graph node at all and are reported as unmeasured rather than as unreached.
@@ -58,7 +58,7 @@ Reached only through unresolved dispatch — not established use (0 symbols, 0 e
 
 Linked but not called (0 packages of this project import the module):
 
-Unreached — unmeasured: the store holds no call graph for any version of example.com/dep, so its public API was never enumerated and nothing about the module was measured; check the module path, then run: kanonarion fetch example.com/dep@v1.0.0 && kanonarion callgraph example.com/dep@v1.0.0
+Unreached — unmeasured: the store holds no call graph for any version of example.com/dep, so its public API was never enumerated and nothing about the module was measured; check the module path, then run: kanonarion fetch example.com/dep@v1.0.0 && kanonarion callgraph example.com/dep@v1.0.0 --target wasip1/wasm
 
 unmeasured: types, constants and variables have no call-graph node, so no use of one appears anywhere in this report. List them with: kanonarion fetch example.com/dep@v1.0.0 && kanonarion interface example.com/dep@v1.0.0 && kanonarion interface-show example.com/dep@v1.0.0
 coverage: reached/not-reached is measured over recorded CALL EDGES in the stored call graph. Method values (a method referenced as a value rather than called) are not recorded as edges, so a symbol shown as not reached may still be referenced that way. Types, constants and variables have no call-graph node at all and are reported as unmeasured rather than as unreached.
@@ -167,7 +167,7 @@ Reached only through unresolved dispatch — not established use (0 symbols, 0 e
 
 Linked but not called (0 packages of this project import the module):
 
-Unreached — unmeasured: the store holds no call graph for any version of example.com/dep, so its public API was never enumerated and nothing about the module was measured; check the module path, then run: kanonarion fetch example.com/dep@v1.0.0 && kanonarion callgraph example.com/dep@v1.0.0
+Unreached — unmeasured: the store holds no call graph for any version of example.com/dep, so its public API was never enumerated and nothing about the module was measured; check the module path, then run: kanonarion fetch example.com/dep@v1.0.0 && kanonarion callgraph example.com/dep@v1.0.0 --target linux/amd64
 
 unmeasured: types, constants and variables have no call-graph node, so no use of one appears anywhere in this report. List them with: kanonarion fetch example.com/dep@v1.0.0 && kanonarion interface example.com/dep@v1.0.0 && kanonarion interface-show example.com/dep@v1.0.0
 coverage: reached/not-reached is measured over recorded CALL EDGES in the stored call graph. Method values (a method referenced as a value rather than called) are not recorded as edges, so a symbol shown as not reached may still be referenced that way. Types, constants and variables have no call-graph node at all and are reported as unmeasured rather than as unreached.
@@ -186,7 +186,7 @@ Reached only through unresolved dispatch — not established use (0 symbols, 0 e
 
 Linked but not called (0 packages of this project import the module):
 
-Unreached — unmeasured: the store holds no call graph for any version of example.com/dep, so its public API was never enumerated and nothing about the module was measured; check the module path, then run: kanonarion fetch example.com/dep@v1.0.0 && kanonarion callgraph example.com/dep@v1.0.0
+Unreached — unmeasured: the store holds no call graph for any version of example.com/dep, so its public API was never enumerated and nothing about the module was measured; check the module path, then run: kanonarion fetch example.com/dep@v1.0.0 && kanonarion callgraph example.com/dep@v1.0.0 --target linux/amd64
 
 unmeasured: types, constants and variables have no call-graph node, so no use of one appears anywhere in this report. List them with: kanonarion fetch example.com/dep@v1.0.0 && kanonarion interface example.com/dep@v1.0.0 && kanonarion interface-show example.com/dep@v1.0.0
 coverage: reached/not-reached is measured over recorded CALL EDGES in the stored call graph. Method values (a method referenced as a value rather than called) are not recorded as edges, so a symbol shown as not reached may still be referenced that way. Types, constants and variables have no call-graph node at all and are reported as unmeasured rather than as unreached.
@@ -347,7 +347,7 @@ Reached only through unresolved dispatch — not established use (0 symbols, 0 e
 
 Linked but not called (0 packages of this project import the module):
 
-Unreached — unmeasured: the store holds no call graph for any version of example.com/dep, so its public API was never enumerated and nothing about the module was measured; check the module path, then run: kanonarion fetch example.com/dep@v1.0.0 && kanonarion callgraph example.com/dep@v1.0.0
+Unreached — unmeasured: the store holds no call graph for any version of example.com/dep, so its public API was never enumerated and nothing about the module was measured; check the module path, then run: kanonarion fetch example.com/dep@v1.0.0 && kanonarion callgraph example.com/dep@v1.0.0 --target wasip1/wasm
 
 unmeasured: types, constants and variables have no call-graph node, so no use of one appears anywhere in this report. List them with: kanonarion fetch example.com/dep@v1.0.0 && kanonarion interface example.com/dep@v1.0.0 && kanonarion interface-show example.com/dep@v1.0.0
 coverage: reached/not-reached is measured over recorded CALL EDGES in the stored call graph. Method values (a method referenced as a value rather than called) are not recorded as edges, so a symbol shown as not reached may still be referenced that way. Types, constants and variables have no call-graph node at all and are reported as unmeasured rather than as unreached.
@@ -366,7 +366,7 @@ Reached only through unresolved dispatch — not established use (0 symbols, 0 e
 
 Linked but not called (0 packages of this project import the module):
 
-Unreached — unmeasured: the store holds no call graph for any version of example.com/dep, so its public API was never enumerated and nothing about the module was measured; check the module path, then run: kanonarion fetch example.com/dep@v1.0.0 && kanonarion callgraph example.com/dep@v1.0.0
+Unreached — unmeasured: the store holds no call graph for any version of example.com/dep, so its public API was never enumerated and nothing about the module was measured; check the module path, then run: kanonarion fetch example.com/dep@v1.0.0 && kanonarion callgraph example.com/dep@v1.0.0 --target linux/amd64
 
 unmeasured: types, constants and variables have no call-graph node, so no use of one appears anywhere in this report. List them with: kanonarion fetch example.com/dep@v1.0.0 && kanonarion interface example.com/dep@v1.0.0 && kanonarion interface-show example.com/dep@v1.0.0
 coverage: reached/not-reached is measured over recorded CALL EDGES in the stored call graph. Method values (a method referenced as a value rather than called) are not recorded as edges, so a symbol shown as not reached may still be referenced that way. Types, constants and variables have no call-graph node at all and are reported as unmeasured rather than as unreached.
@@ -385,7 +385,7 @@ Reached only through unresolved dispatch — not established use (0 symbols, 0 e
 
 Linked but not called (0 packages of this project import the module):
 
-Unreached — unmeasured: the store holds no call graph for any version of example.com/dep, so its public API was never enumerated and nothing about the module was measured; check the module path, then run: kanonarion fetch example.com/dep@v1.0.0 && kanonarion callgraph example.com/dep@v1.0.0
+Unreached — unmeasured: the store holds no call graph for any version of example.com/dep, so its public API was never enumerated and nothing about the module was measured; check the module path, then run: kanonarion fetch example.com/dep@v1.0.0 && kanonarion callgraph example.com/dep@v1.0.0 --target linux/amd64
 
 unmeasured: types, constants and variables have no call-graph node, so no use of one appears anywhere in this report. List them with: kanonarion fetch example.com/dep@v1.0.0 && kanonarion interface example.com/dep@v1.0.0 && kanonarion interface-show example.com/dep@v1.0.0
 coverage: reached/not-reached is measured over recorded CALL EDGES in the stored call graph. Method values (a method referenced as a value rather than called) are not recorded as edges, so a symbol shown as not reached may still be referenced that way. Types, constants and variables have no call-graph node at all and are reported as unmeasured rather than as unreached.
@@ -404,7 +404,7 @@ Reached only through unresolved dispatch — not established use (0 symbols, 0 e
 
 Linked but not called (0 packages of this project import the module):
 
-Unreached — unmeasured: the store holds no call graph for any version of example.com/dep, so its public API was never enumerated and nothing about the module was measured; check the module path, then run: kanonarion fetch example.com/dep@v1.0.0 && kanonarion callgraph example.com/dep@v1.0.0
+Unreached — unmeasured: the store holds no call graph for any version of example.com/dep, so its public API was never enumerated and nothing about the module was measured; check the module path, then run: kanonarion fetch example.com/dep@v1.0.0 && kanonarion callgraph example.com/dep@v1.0.0 --target wasip1/wasm
 
 unmeasured: types, constants and variables have no call-graph node, so no use of one appears anywhere in this report. List them with: kanonarion fetch example.com/dep@v1.0.0 && kanonarion interface example.com/dep@v1.0.0 && kanonarion interface-show example.com/dep@v1.0.0
 coverage: reached/not-reached is measured over recorded CALL EDGES in the stored call graph. Method values (a method referenced as a value rather than called) are not recorded as edges, so a symbol shown as not reached may still be referenced that way. Types, constants and variables have no call-graph node at all and are reported as unmeasured rather than as unreached.

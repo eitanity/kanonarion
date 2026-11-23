@@ -32,7 +32,7 @@ func TestIncompleteGraphRemedy_AnalyserLimitIsNotACompileError(t *testing.T) {
 		{local, domain.FailureCauseModule, "kanonarion local /work/tree"},
 		{published, domain.FailureCauseModule, "kanonarion callgraph example.com/dep@v1.0.0"},
 	} {
-		got := domain.IncompleteGraphRemedy(tc.coord, tc.cause, limitDetail, "/work/tree")
+		got := domain.IncompleteGraphRemedy(tc.coord, tc.cause, limitDetail, "/work/tree", domain.BuildFrame{})
 		for _, bad := range []string{"Fix the package", "go mod download", "fetched dependency", "--force"} {
 			if strings.Contains(got, bad) {
 				t.Errorf("%s/%s: remedy says %q:\n%s", tc.coord, tc.cause, bad, got)
@@ -52,7 +52,7 @@ func TestIncompleteGraphRemedy_AnalyserLimitThisBinaryClears(t *testing.T) {
 	restore := domain.SetAnalysingGo("go1.27.1")
 	defer restore()
 	coord := coordinatetest.MustNew("example.com/probe", coordinate.LocalVersion)
-	got := domain.IncompleteGraphRemedy(coord, domain.FailureCauseModule, limitDetail, "/work/tree")
+	got := domain.IncompleteGraphRemedy(coord, domain.FailureCauseModule, limitDetail, "/work/tree", domain.BuildFrame{})
 	if strings.Contains(got, "go install") || strings.Contains(got, "Fix the package") {
 		t.Errorf("remedy for a record this binary can re-measure names an install or a source fix:\n%s", got)
 	}

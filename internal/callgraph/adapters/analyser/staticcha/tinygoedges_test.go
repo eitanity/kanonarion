@@ -199,15 +199,19 @@ func assertTinyGoDirectives(t *testing.T, rec domain.CallGraphRecord) {
 }
 
 // A TinyGo release the lowering table does not cover still yields the parse and
-// the class-hierarchy edges, Partial, with the release named.
+// the class-hierarchy edges, Partial, with the release named. The gap files no
+// cause of its own and is never served back.
 func TestAnalyseDir_AnUnlistedTinyGoVersionIsPartial(t *testing.T) {
 	rec := analyseEdgesFixture(t, "0.41.0")
-	if rec.OverallStatus != domain.CallGraphStatusPartial || rec.FailureCause != domain.FailureCauseEnvironment {
-		t.Fatalf("status = %s, cause %s, want Partial for this run", rec.OverallStatus, rec.FailureCause)
+	if rec.OverallStatus != domain.CallGraphStatusPartial || rec.FailureCause != domain.FailureCauseUnrecorded {
+		t.Fatalf("status = %s, cause %s, want Partial with no cause filed", rec.OverallStatus, rec.FailureCause)
 	}
-	const want = "compiler-inserted runtime calls and the entry points TinyGo exports by name are not recorded: TinyGo 0.41.0 is outside kanonarion's lowering table, which covers TinyGo 0.42.0"
+	const want = "compiler-inserted runtime calls and the entry points TinyGo exports by name are not recorded: TinyGo 0.41.0 is outside kanonarion's lowering table, which covers TinyGo 0.42.0, 0.43.0, 0.44.0"
 	if !strings.HasPrefix(rec.FailureDetail, want) {
 		t.Errorf("detail = %q, want it to lead with %q", rec.FailureDetail, want)
+	}
+	if domain.RecordIsCacheable(rec) {
+		t.Error("a lowering-gap record is served back as a cache hit")
 	}
 	for _, e := range rec.Edges {
 		if e.Kind == domain.EdgeKindCompilerInserted {
@@ -219,6 +223,46 @@ func TestAnalyseDir_AnUnlistedTinyGoVersionIsPartial(t *testing.T) {
 	}
 	if n, _ := nodeByID(rec, "example.com/lowerfx.onIRQ"); n.InterruptHandler.IsZero() {
 		t.Error("handler facts depend on the source, not the table, and are missing")
+	}
+}
+
+// A package that fails to compile keeps its module cause and its remedy beside
+// the lowering gap, and a covered release's record of the same failure is served.
+func TestAnalyseDir_LoweringGapKeepsTheLoadsCause(t *testing.T) {
+	analyse := func(version string) domain.CallGraphRecord {
+		frame, program := edgesFixture(t, version, "linux", "arm")
+		if err := os.MkdirAll(filepath.Join(program, "broken"), 0o750); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(program, "broken", "broken.go"), []byte("package broken\n\nvar X = undefinedName\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		coord, err := coordinate.NewModuleCoordinate("example.com/lowerfx", coordinate.LocalVersion)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rec, err := staticcha.New("0.0.0-test", "", slog.Default()).WithTinyGo(frame).AnalyseDir(context.Background(), program, coord)
+		if err != nil {
+			t.Fatalf("AnalyseDir: %v", err)
+		}
+		return rec
+	}
+	rec := analyse("0.41.0")
+	if rec.OverallStatus != domain.CallGraphStatusPartial || rec.FailureCause != domain.FailureCauseModule {
+		t.Fatalf("status = %s, cause %s, want Partial with the module's cause: %s", rec.OverallStatus, rec.FailureCause, rec.FailureDetail)
+	}
+	remedy := domain.IncompleteGraphRemedy(rec.Coordinate, rec.FailureCause, rec.FailureDetail, "/work/tree", rec.Frame)
+	for _, want := range []string{"TinyGo 0.41.0", "Fix the package so it compiles", "kanonarion local /work/tree --tinygo fakeboard"} {
+		if !strings.Contains(remedy, want) {
+			t.Errorf("remedy does not say %q:\n%s", want, remedy)
+		}
+	}
+	if domain.RecordIsCacheable(rec) {
+		t.Error("a lowering-gap record with a module cause is served back as a cache hit")
+	}
+	covered := analyse("0.42.0")
+	if covered.FailureCause != domain.FailureCauseModule || !domain.RecordIsCacheable(covered) {
+		t.Errorf("covered release: cause %s, cacheable %v, want the module's and served", covered.FailureCause, domain.RecordIsCacheable(covered))
 	}
 }
 

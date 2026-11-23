@@ -60,7 +60,22 @@ func Migrations() []sqlitestore.Migration {
 	m = append(m, stalesqlite.Migrations()...)
 	m = append(m, nativesqlite.Migrations()...)
 	m = append(m, tinygosqlite.Migrations()...)
+	m = append(m, storeMigrations()...)
 	return m
+}
+
+// storeMigrations are the migrations of the store as a whole, not of one
+// record module's tables.
+func storeMigrations() []sqlitestore.Migration {
+	return []sqlitestore.Migration{
+		// The store plans on SQLite's built-in estimates: nothing refreshes
+		// statistics, and a stale row sent reads onto a full scan. The first
+		// ANALYZE creates the tables if absent; the last reloads this connection.
+		{Module: "store", Version: 1, SQL: `ANALYZE sqlite_schema;
+DELETE FROM sqlite_stat1;
+DELETE FROM sqlite_stat4;
+ANALYZE sqlite_schema`},
+	}
 }
 
 // DatabasePath is the database file of the store under root.

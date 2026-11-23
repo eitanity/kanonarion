@@ -353,6 +353,16 @@ type CallGraphFrontierFinder interface {
 	FindCalleesOfEach(ctx context.Context, symbolIDs []string, pipelineVersion string, scope coordinate.ModuleSet, opts EdgeQueryOptions) ([]CallEdgeRef, error)
 }
 
+// CallGraphDispatchReader reads the dependency dispatch facts of the served
+// records from rows, so an edge answer can be qualified without decoding one.
+// It is optional on the same terms as CallGraphFrontierFinder.
+type CallGraphDispatchReader interface {
+	// DependencyDispatchOf maps each of symbolIDs that carries a dependency
+	// dispatch fact in its owning module's served record to the fact's sink
+	// detail. An id without one is absent from the map.
+	DependencyDispatchOf(ctx context.Context, symbolIDs []string, pipelineVersion string, scope coordinate.ModuleSet, toolchain gotoolchain.Version) (map[string]string, error)
+}
+
 // UnservedCoordinate is a coordinate the store holds no generation of at the
 // served pipeline, so no edge query reads it.
 type UnservedCoordinate struct {

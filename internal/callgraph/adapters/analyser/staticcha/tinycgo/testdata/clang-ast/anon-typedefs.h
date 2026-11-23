@@ -1,0 +1,10 @@
+typedef struct { int a; } anon_t;
+typedef union { int only; } anon_u;
+typedef enum { ANON_A, ANON_B = -1 } anon_e;
+typedef enum : unsigned char { FIXED_A } anon_fixed;
+typedef struct { struct { int x; } in; int y; } anon_nest;
+struct pt { int x; };
+typedef struct pt pt_t;
+typedef struct named_s { int b; } named_t;
+typedef anon_t anon_chain;
+anon_t anon_var;

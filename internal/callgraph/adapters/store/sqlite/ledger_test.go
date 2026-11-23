@@ -40,6 +40,7 @@ type ledgerSpec struct {
 	// collections above. Zero means the default of one each.
 	nodeCount int
 	edgeCount int
+	frame     domain2.BuildFrame
 }
 
 func ledgerRecord(t *testing.T, spec ledgerSpec) domain2.CallGraphRecord {
@@ -95,6 +96,7 @@ func ledgerRecord(t *testing.T, spec ledgerSpec) domain2.CallGraphRecord {
 		WorktreeDigest:     spec.worktree,
 		WorktreeScanDigest: spec.scanDigest,
 		AnalysisRoot:       spec.root,
+		Frame:              spec.frame,
 	}
 	if r.AnalysisSource == domain2.AnalysisSourceWorktree && r.AnalysisRoot == "" {
 		// A worktree record must say where its tree was. Defaulting from the digest
@@ -1712,5 +1714,39 @@ func TestLedger_DerivationSurvivesTheStore(t *testing.T) {
 	}
 	if got.ContentHash != sealed.ContentHash {
 		t.Errorf("content hash changed across the store: got %s, want %s", got.ContentHash, sealed.ContentHash)
+	}
+}
+
+// A tree's TinyGo generations are offered for reuse only to the release that
+// built them, whichever is newer.
+func TestLedger_WorktreeGenerationIsTheTinyGoReleasesOwn(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	local, err := coordinate.NewLocalCoordinate("example.com/mod")
+	if err != nil {
+		t.Fatalf("NewLocalCoordinate: %v", err)
+	}
+	frame := func(v string) domain2.BuildFrame {
+		return domain2.BuildFrame{GOOS: "js", GOARCH: "wasm", TinyGoTarget: "wasm", TinyGoVersion: v}
+	}
+	old := ledgerRecord(t, ledgerSpec{coord: local, source: domain2.AnalysisSourceWorktree, worktree: "analysed-sha256:a",
+		scanDigest: "scanned-sha256:a", root: "/src/a", completeness: domain2.CompletenessBuiltWithBodies,
+		at: testTime, callee: "example.com/mod.A", frame: frame("0.44.0")})
+	newer := ledgerRecord(t, ledgerSpec{coord: local, source: domain2.AnalysisSourceWorktree, worktree: "analysed-sha256:a",
+		scanDigest: "scanned-sha256:a", root: "/src/a", completeness: domain2.CompletenessBuiltWithBodies,
+		at: testTime.Add(time.Hour), callee: "example.com/mod.B", frame: frame("0.42.0")})
+	for _, r := range []domain2.CallGraphRecord{old, newer} {
+		if perr := s.PutCallGraphRecord(ctx, r); perr != nil {
+			t.Fatalf("PutCallGraphRecord: %v", perr)
+		}
+	}
+	for v, want := range map[string]string{"0.44.0": old.ContentHash, "0.42.0": newer.ContentHash} {
+		got, found, gerr := s.WorktreeGeneration(ctx, local, testPipeline, "/src/a", "scanned-sha256:a", frame(v))
+		if gerr != nil || !found || got.ContentHash != want {
+			t.Errorf("TinyGo %s: found=%v err=%v, served the other release's generation: %v", v, found, gerr, got.ContentHash != want)
+		}
+	}
+	if _, found, gerr := s.WorktreeGeneration(ctx, local, testPipeline, "/src/a", "scanned-sha256:a", frame("0.43.0")); gerr != nil || found {
+		t.Errorf("a release with no generation: found=%v err=%v", found, gerr)
 	}
 }

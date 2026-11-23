@@ -1,0 +1,13 @@
+package main
+
+/*
+#include <stdio.h>
+#include <nosuchheader.h>
+static int greet(void) { return puts("hello"); }
+*/
+import "C"
+
+// Greet calls C code whose preamble includes a header no libc has.
+func Greet() int { return int(C.greet()) }
+
+func main() { println(Greet()) }

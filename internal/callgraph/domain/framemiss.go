@@ -54,5 +54,5 @@ func FrameMissReason(coord coordinate.ModuleCoordinate, recs []CallGraphRecord, 
 	if line, named := ReanalysisCommand(coord, AgreedRoot(recs), false); named {
 		return reason, line + wantFlag, true
 	}
-	return reason, ReanalysisInstruction(coord, ""), true
+	return reason, UnnamedWorkingTreeLead + ", so run kanonarion local" + wantFlag + " from inside it", true
 }

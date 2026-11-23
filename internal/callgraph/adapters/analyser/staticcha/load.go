@@ -296,11 +296,10 @@ func registerTargetPackages(res *ssaBuildResult, loaded []*packages.Package, mar
 		if isSyntheticTestMain(p) {
 			continue
 		}
-		for _, e := range p.Errors {
-			res.LoadErrs = append(res.LoadErrs, e.Error())
-		}
+		appendPackageErrors(res, p)
 		if len(p.Errors) > 0 {
 			markFailed(p.PkgPath)
+			res.markIllTyped(p.PkgPath)
 		}
 		if p.Types == nil {
 			markFailed(p.PkgPath)
@@ -343,11 +342,10 @@ func registerTargetPackages(res *ssaBuildResult, loaded []*packages.Package, mar
 func registerTinyGoPackages(res *ssaBuildResult, pkgs []*packages.Package, markFailed func(string), typeOnly map[string]bool) []*ssa.Package {
 	var built []*ssa.Package
 	for _, p := range pkgs {
-		for _, e := range p.Errors {
-			res.LoadErrs = append(res.LoadErrs, e.Error())
-		}
+		appendPackageErrors(res, p)
 		if len(p.Errors) > 0 {
 			markFailed(p.PkgPath)
+			res.markIllTyped(p.PkgPath)
 		}
 		if p.Types == nil || res.Prog.Package(p.Types) != nil {
 			continue
@@ -365,6 +363,41 @@ func registerTinyGoPackages(res *ssaBuildResult, pkgs []*packages.Package, markF
 		built = append(built, ssaPkg)
 	}
 	return built
+}
+
+// cgoGap is one package's cgo translation refusals, and whether it also has
+// compile errors of its own.
+type cgoGap struct {
+	refusals []string
+	mixed    bool
+}
+
+// appendPackageErrors adds p's errors to res.LoadErrs, setting the cgo
+// translation's refusals and the errors that follow from them aside as its gap.
+func appendPackageErrors(res *ssaBuildResult, p *packages.Package) {
+	msgs := make([]string, 0, len(p.Errors))
+	for _, e := range p.Errors {
+		msgs = append(msgs, e.Error())
+	}
+	refusals, _, rest := domain.SplitCgoTranslationErrors(msgs)
+	res.LoadErrs = append(res.LoadErrs, rest...)
+	if len(refusals) == 0 {
+		return
+	}
+	if res.CgoGaps == nil {
+		res.CgoGaps = map[string]*cgoGap{}
+	}
+	g := res.CgoGaps[p.PkgPath]
+	if g == nil {
+		g = &cgoGap{}
+		res.CgoGaps[p.PkgPath] = g
+	}
+	for _, r := range refusals {
+		if !slices.Contains(g.refusals, r) {
+			g.refusals = append(g.refusals, r)
+		}
+	}
+	g.mixed = g.mixed || len(rest) > 0
 }
 
 // tinyGoConfig is the TinyGo loader's view of this analysis.
@@ -394,7 +427,7 @@ func (a *Analyser) buildSSAPackages(coord coordinate.ModuleCoordinate, built []*
 			if ssaPkg.Pkg != nil {
 				path = ssaPkg.Pkg.Path()
 			}
-			res.LoadErrs = append(res.LoadErrs, fmt.Sprintf("SSA construction panic for %s: %v; it is analysed without its bodies", path, berr))
+			res.LoadErrs = append(res.LoadErrs, buildPanicError(path, res.IllTyped[path], berr))
 			markFailed(path)
 			return builtPaths, path
 		}
@@ -404,6 +437,23 @@ func (a *Analyser) buildSSAPackages(coord coordinate.ModuleCoordinate, built []*
 		}
 	}
 	return builtPaths, ""
+}
+
+// buildPanicError states a Build that panicked. go/ssa builds only well-typed
+// code, so for a package with errors of its own the panic is their consequence:
+// those errors are stated already, and the panic's text would read as a crash.
+func buildPanicError(path string, illTyped bool, berr error) string {
+	if illTyped {
+		return "the errors stated for " + path + " leave code SSA cannot build, so it is analysed without its bodies"
+	}
+	return fmt.Sprintf("SSA construction panic for %s: %v; it is analysed without its bodies", path, berr)
+}
+
+func (res *ssaBuildResult) markIllTyped(path string) {
+	if res.IllTyped == nil {
+		res.IllTyped = map[string]bool{}
+	}
+	res.IllTyped[path] = true
 }
 
 // recordFailedPackages states the failed target packages on res, sorted.
@@ -436,8 +486,15 @@ type ssaBuildResult struct {
 	// complete without panicking, i.e. how many carry function bodies. Zero with
 	// a non-zero Registered() is the TYPE_ONLY state: the packages type-checked
 	// and are known to the program, but no body was ever built from them.
-	BodiesBuilt     int
-	LoadErrs        []string
+	BodiesBuilt int
+	LoadErrs    []string
+	// CgoGaps are the packages the TinyGo cgo translation refused declarations
+	// of, with its refusals; those and the type errors that follow from them are
+	// kept out of LoadErrs, which holds the compile errors.
+	CgoGaps map[string]*cgoGap
+	// IllTyped are the packages with errors of their own, whose SSA build may
+	// panic on what the errors leave unresolved.
+	IllTyped        map[string]bool
 	FailedPkgs      []string
 	TestScope       domain.TestScope
 	TestScopeDetail string

@@ -141,7 +141,17 @@ import (
 // Bumped to "0.15.0" when a template Execute edge's LookupName started reading
 // text held in a package-level var or a //go:embed file. A 0.14.0 record leaves
 // such an edge empty.
-const PipelineVersion = "0.15.0"
+//
+// Bumped to "0.16.0" when an exported method whose type the module hands to an
+// interface or an outside generic started recording it (DependencyDispatch). A
+// 0.15.0 record lacks it, and its empty callers answer for such a method reads
+// as a measured absence. The same generation reads clang 22's anonymous typedef
+// tags, loads a cgo package that does not reach syscall, and states a C type the
+// cgo translation refuses as kanonarion's gap, never served from cache. It also
+// reads a preamble with TinyGo's libc headers, so a record quoting a refusal
+// made without them is re-measured, and states an ill-typed package's SSA panic
+// as its errors' consequence.
+const PipelineVersion = "0.16.0"
 
 // ExtractCallGraphUseCase extracts the call graph of a module and persists a
 // CallGraphRecord.
@@ -438,6 +448,12 @@ func (uc *ExtractCallGraphUseCase) lookupCachedRecord(ctx context.Context, log *
 	// that failure permanent. Re-analysis APPENDS; the ladder in composition
 	// decides which generation answers afterwards, so nothing is overwritten.
 	superseded := domain2.PinnedAnalysisSupersedes(existing, req.Inputs)
+	if found && !domain2.SameTinyGoRelease(existing.Frame, uc.analyser.AnalyserMetadata().Frame) {
+		log.InfoContext(ctx, "callgraph_cache_other_tinygo_release",
+			slog.String("recorded_tinygo_version", existing.Frame.TinyGoVersion),
+			slog.String("content_hash", existing.ContentHash))
+		return existing, found, false, nil
+	}
 	if found && domain2.RecordIsCacheable(existing) && !superseded {
 		log.InfoContext(ctx, "callgraph_cache_hit")
 		return existing, found, true, nil

@@ -8,9 +8,11 @@ import (
 	"go/version"
 	"io"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 
 	"code.eitanity.com/kanonarion/internal/adapters/childproc"
@@ -732,7 +734,8 @@ func (a *Analyser) analyseDirOnce(
 	a.logMem(ctx, "all_packages_processed")
 
 	if build.Registered() == 0 {
-		return a.noPackageTypeCheckedRecord(coord, target, tempDir, targetPkgPaths, allLoadErrs, metaErrs, build), nil
+		failed := stateCgoGap(a.noPackageTypeCheckedRecord(coord, target, tempDir, targetPkgPaths, allLoadErrs, metaErrs, build), build.CgoGaps, len(allLoadErrs))
+		return stateLibcAbsence(failed, allLoadErrs), nil
 	}
 
 	if ctx.Err() != nil {
@@ -813,6 +816,10 @@ func (a *Analyser) analyseDirOnce(
 	// directive too.
 	attachExportDirectives(nodes, build.ExportDirectives)
 
+	// Stamped once every node exists, for the same reason: a dependency calls a
+	// module method through a value it was handed, in a body this graph lacks.
+	a.attachDependencyDispatch(ctx, prog, ordered, mem, fset, roots, nodes)
+
 	// Record the type-level relation: which of the module's concrete types
 	// satisfy which of its interfaces. An interface method has no callers — calls
 	// go to implementations — so the edge collections cannot answer "what must
@@ -831,6 +838,8 @@ func (a *Analyser) analyseDirOnce(
 
 	rec = a.newCallGraphRecord(coord, build, nodes, edges, ifaces, impls, overallStatus, allLoadErrs, failedPkgs)
 	rec = stateGraphIncompleteness(rec, overallStatus, mode, tempDir, metaErrs, allLoadErrs, failedPkgs, build, mem)
+	rec = stateCgoGap(rec, build.CgoGaps, len(allLoadErrs))
+	rec = stateLibcAbsence(rec, allLoadErrs)
 	rec = stateLoweringGap(rec, loweringGap)
 	// The last thing the analysis says. What follows is the caller sealing and
 	// storing the record, which on a large graph is the longest stretch after this
@@ -841,8 +850,8 @@ func (a *Analyser) analyseDirOnce(
 }
 
 // stateLoweringGap makes a record that lacks one edge class Partial and leads
-// its detail with why. The cause is this run: a kanonarion whose table covers
-// the TinyGo version measures the class.
+// its detail with why. The cause stays the load's: the gap is kanonarion's own
+// limit, read from the detail as an analyser limit is (domain.ReadTinyGoLoweringGap).
 func stateLoweringGap(rec domain.CallGraphRecord, gap string) domain.CallGraphRecord {
 	if gap == "" {
 		return rec
@@ -851,7 +860,44 @@ func stateLoweringGap(rec domain.CallGraphRecord, gap string) domain.CallGraphRe
 		rec.OverallStatus = domain.CallGraphStatusPartial
 	}
 	rec.FailureDetail = strings.TrimSuffix(gap+"; "+rec.FailureDetail, "; ")
-	rec.FailureCause = domain.FailureCauseEnvironment
+	return rec
+}
+
+// stateCgoGap leads a record's detail with the cgo translation's gap. With no
+// compile error beside it the module's cause is withdrawn: the gap is
+// kanonarion's, read from the detail as a lowering gap is.
+func stateCgoGap(rec domain.CallGraphRecord, gaps map[string]*cgoGap, compileErrs int) domain.CallGraphRecord {
+	if len(gaps) == 0 {
+		return rec
+	}
+	clauses := make([]string, 0, len(gaps))
+	for _, pkg := range slices.Sorted(maps.Keys(gaps)) {
+		clauses = append(clauses, domain.CgoTranslationGapClause(pkg, gaps[pkg].refusals, gaps[pkg].mixed))
+	}
+	rec.FailureDetail = strings.TrimSuffix(strings.Join(clauses, "; ")+"; "+rec.FailureDetail, "; ")
+	if compileErrs == 0 && rec.FailureCause == domain.FailureCauseModule {
+		rec.FailureCause = domain.FailureCauseUnrecorded
+	}
+	return rec
+}
+
+// stateLibcAbsence files a record as the environment's when clang refused a
+// preamble because TinyGo had not built the target's libc, leading the detail
+// with each such refusal it does not already quote.
+func stateLibcAbsence(rec domain.CallGraphRecord, loadErrs []string) domain.CallGraphRecord {
+	var lead []string
+	for _, e := range loadErrs {
+		if _, ok := domain.ReadTinyGoLibcAbsence(e); !ok {
+			continue
+		}
+		rec.FailureCause = domain.FailureCauseEnvironment
+		if !strings.Contains(rec.FailureDetail, e) {
+			lead = append(lead, e)
+		}
+	}
+	if len(lead) > 0 {
+		rec.FailureDetail = strings.TrimSuffix(strings.Join(lead, "; ")+"; "+rec.FailureDetail, "; ")
+	}
 	return rec
 }
 

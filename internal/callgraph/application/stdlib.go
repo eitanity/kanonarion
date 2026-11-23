@@ -126,7 +126,7 @@ func (uc *ExtractStdlibCallGraphUseCase) Execute(ctx context.Context, req Extrac
 		case cerr != nil:
 			return ExtractResult{}, fmt.Errorf("checking callgraph store: %w", cerr)
 		}
-		if found && domain2.RecordIsCacheable(existing) {
+		if found && domain2.RecordIsCacheable(existing) && domain2.SameTinyGoRelease(existing.Frame, uc.analyser.AnalyserMetadata().Frame) {
 			log.InfoContext(ctx, "callgraph_stdlib_cache_hit",
 				slog.String("content_hash", existing.ContentHash))
 			return ExtractResult{Record: existing, FromCache: true}, nil

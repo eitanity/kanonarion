@@ -38,6 +38,7 @@ type fakeStdlibAnalyser struct {
 	err    error
 	calls  int
 	gotSrc ports.ToolchainSource
+	frame  domain.BuildFrame
 }
 
 func (a *fakeStdlibAnalyser) AnalyseStdlib(
@@ -47,11 +48,14 @@ func (a *fakeStdlibAnalyser) AnalyseStdlib(
 	a.gotSrc = src
 	rec := a.record
 	rec.Coordinate = coord
+	if !a.frame.IsZero() {
+		rec.Frame = a.frame
+	}
 	return rec, a.err
 }
 
 func (a *fakeStdlibAnalyser) AnalyserMetadata() ports.AnalyserMetadata {
-	return ports.AnalyserMetadata{Algorithm: domain.AlgorithmCHA, Version: "0.0.0-test"}
+	return ports.AnalyserMetadata{Algorithm: domain.AlgorithmCHA, Version: "0.0.0-test", Frame: a.frame}
 }
 
 type fakeCustody struct {
@@ -610,5 +614,27 @@ func TestExtractStdlib_AppendsWhenTheHeldGenerationCannotBeRead(t *testing.T) {
 	}
 	if len(store.puts) != 1 {
 		t.Errorf("the measurement was lost to an unreadable ledger: %d puts", len(store.puts))
+	}
+}
+
+// A held generation built by another TinyGo release is not served; one built by
+// this release is.
+func TestExtractStdlib_ServesOnlyThisTinyGoReleasesGeneration(t *testing.T) {
+	store := &fakeCallGraphStore{}
+	analyser := &fakeStdlibAnalyser{record: analysedStdlibRecord(),
+		frame: domain.BuildFrame{GOOS: "js", GOARCH: "wasm", TinyGoTarget: "wasm", TinyGoVersion: "0.42.0"}}
+	uc := newStdlibUseCase(t, store,
+		&fakeToolchainLocator{src: ports.ToolchainSource{GoRoot: "/usr/local/go", Version: "go1.26.5"}},
+		analyser, fakeCustody{})
+	coord := coordinatetest.MustNew(coordinate.StdlibPath, "v1.26.5")
+	if _, err := uc.Execute(t.Context(), cgapp.ExtractRequest{Coordinate: coord}); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	analyser.frame.TinyGoVersion = "0.44.0"
+	if res, err := uc.Execute(t.Context(), cgapp.ExtractRequest{Coordinate: coord}); err != nil || res.FromCache {
+		t.Fatalf("another release: FromCache=%v err=%v, want a measurement", res.FromCache, err)
+	}
+	if res, err := uc.Execute(t.Context(), cgapp.ExtractRequest{Coordinate: coord}); err != nil || !res.FromCache {
+		t.Fatalf("the same release: FromCache=%v err=%v, want the held generation", res.FromCache, err)
 	}
 }

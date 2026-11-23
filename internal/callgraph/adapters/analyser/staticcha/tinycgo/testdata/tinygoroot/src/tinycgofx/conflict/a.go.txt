@@ -6,6 +6,4 @@ typedef int shared_t;
 */
 import "C"
 
-import _ "syscall" // the generated cgo file imports it
-
 func A() C.shared_t { return 1 }

@@ -25,21 +25,23 @@ const determinismShuffles = 50
 // of them, and fails when the record grows one it does not shuffle, so a
 // collection cannot join the seal without a decision about its order.
 var sealedCallGraphCollections = map[string]bool{
-	"DroppedReplaces":           true,
-	"Edges":                     true,
-	"ForeignModulesBuilt":       true,
-	"ExclusionList":             true,
-	"FailedPackages":            true,
-	"Implementations":           true,
-	"Implementations[].Methods": true,
-	"Interfaces":                true,
-	"Interfaces[].Methods":      true,
-	"Nodes":                     true,
-	"PrefixAttributedPackages":  true,
-	"StdlibPackages":            true,
-	"DependencyPackages":        true,
-	"SynthesisedGoMod.Requires": true,
-	"Frame.TinyGoTags":          true,
+	"DroppedReplaces":                       true,
+	"Edges":                                 true,
+	"ForeignModulesBuilt":                   true,
+	"ExclusionList":                         true,
+	"FailedPackages":                        true,
+	"Implementations":                       true,
+	"Implementations[].Methods":             true,
+	"Interfaces":                            true,
+	"Interfaces[].Methods":                  true,
+	"Nodes":                                 true,
+	"Nodes[].DependencyDispatch.Interfaces": true,
+	"Nodes[].DependencyDispatch.ProductionInterfaces": true,
+	"PrefixAttributedPackages":                        true,
+	"StdlibPackages":                                  true,
+	"DependencyPackages":                              true,
+	"SynthesisedGoMod.Requires":                       true,
+	"Frame.TinyGoTags":                                true,
 }
 
 // TestCallGraphRecord_ContentHashIsIndependentOfInputOrder is the determinism
@@ -100,6 +102,18 @@ func makeTiedCallGraphRecord() domain.CallGraphRecord {
 			{ID: "example.com/mod.Alpha", Module: "example.com/mod", Package: "example.com/mod", Symbol: "Alpha", Position: domain.SourcePosition{File: "a.go", Line: 3}},
 			{ID: "example.com/mod.Alpha", Module: "example.com/mod", Package: "example.com/mod", Symbol: "Alpha", Position: domain.SourcePosition{File: "b.go", Line: 3}},
 			{ID: "example.com/mod.Beta", Module: "example.com/mod", Package: "example.com/mod", Symbol: "Beta", Position: domain.SourcePosition{File: "a.go", Line: 9}},
+			{ID: "example.com/mod.(T).Read", Module: "example.com/mod", Package: "example.com/mod", Symbol: "Read", Receiver: "T",
+				DependencyDispatch: domain.DependencyDispatch{
+					Escape:               domain.DispatchEscape{Kind: domain.EscapeConversion, Type: "T", Via: "io.Reader", Function: "example.com/mod.Beta"},
+					Interfaces:           []string{"io.Reader", "io.ByteReader", "bufio.Reader"},
+					ProductionEscape:     domain.DispatchEscape{Kind: domain.EscapeConversion, Type: "T", Via: "io.Reader", Function: "example.com/mod.Beta"},
+					ProductionInterfaces: []string{"io.Reader", "bufio.Reader"},
+				}},
+			{ID: "example.com/mod.(T).Read", Module: "example.com/mod", Package: "example.com/mod", Symbol: "Read", Receiver: "T",
+				DependencyDispatch: domain.DependencyDispatch{
+					Escape:     domain.DispatchEscape{Kind: domain.EscapeConversion, Type: "T", Via: "io.Reader", Function: "example.com/mod.Beta"},
+					Interfaces: []string{"io.Reader", "io.ByteReader", "compress/flate.Reader"},
+				}},
 		},
 		Edges: []domain.CallEdge{
 			{FromID: "example.com/mod.Alpha", ToID: "example.com/mod.Beta", CallSite: domain.SourcePosition{File: "a.go", Line: 5}, Confidence: domain.ConfidenceDirect},
@@ -155,6 +169,11 @@ func makeTiedCallGraphRecord() domain.CallGraphRecord {
 
 func shuffleCallGraphRecord(rng *rand.Rand, r *domain.CallGraphRecord) {
 	rng.Shuffle(len(r.Nodes), func(i, j int) { r.Nodes[i], r.Nodes[j] = r.Nodes[j], r.Nodes[i] })
+	for i := range r.Nodes {
+		for _, m := range [][]string{r.Nodes[i].DependencyDispatch.Interfaces, r.Nodes[i].DependencyDispatch.ProductionInterfaces} {
+			rng.Shuffle(len(m), func(a, b int) { m[a], m[b] = m[b], m[a] })
+		}
+	}
 	rng.Shuffle(len(r.Edges), func(i, j int) { r.Edges[i], r.Edges[j] = r.Edges[j], r.Edges[i] })
 	rng.Shuffle(len(r.Interfaces), func(i, j int) { r.Interfaces[i], r.Interfaces[j] = r.Interfaces[j], r.Interfaces[i] })
 	for i := range r.Interfaces {

@@ -595,6 +595,22 @@ CREATE INDEX IF NOT EXISTS callgraph_records_frame_idx
 		// at a pipeline before the field existed and is never served at 0.14.0.
 		{Module: "callgraph", Version: 18, SQL: `
 ALTER TABLE callgraph_edges ADD COLUMN lookup_name TEXT NOT NULL DEFAULT ''`},
+		// Migration v19: the row copy of each node's dependency dispatch fact, so
+		// an edge answer is qualified without decoding the record. NO BACK-FILL:
+		// every existing record is at a pipeline before the fact existed and is
+		// never served at 0.16.0.
+		{Module: "callgraph", Version: 19, SQL: `
+CREATE TABLE IF NOT EXISTS callgraph_dependency_dispatch (
+    record_content_hash TEXT NOT NULL,
+    module_path         TEXT NOT NULL,
+    module_version      TEXT NOT NULL,
+    pipeline_version    TEXT NOT NULL,
+    node_id             TEXT NOT NULL,
+    detail              TEXT NOT NULL,
+    PRIMARY KEY (record_content_hash, node_id)
+);
+CREATE INDEX IF NOT EXISTS callgraph_dependency_dispatch_node_idx
+    ON callgraph_dependency_dispatch (node_id, pipeline_version)`},
 	}
 }
 
@@ -1042,6 +1058,10 @@ INSERT OR IGNORE INTO callgraph_edges (
 			}
 		}
 
+		if err := insertDependencyDispatch(ctx, tx, r); err != nil {
+			return err
+		}
+
 		if err := tx.Commit(); err != nil {
 			return fmt.Errorf("committing callgraph record: %w", err)
 		}
@@ -1049,7 +1069,33 @@ INSERT OR IGNORE INTO callgraph_edges (
 	}); err != nil {
 		return err //nolint:wrapcheck // RetryOnBusy already names the write and wraps the driver's error; wrapping again would say it twice
 	}
-	_, _ = s.db.DB().ExecContext(ctx, `PRAGMA optimize`) //nolint:errcheck
+	return nil
+}
+
+// insertDependencyDispatch writes the row copy of every node's dependency
+// dispatch fact, in the transaction that writes the blob it copies.
+func insertDependencyDispatch(ctx context.Context, tx *sql.Tx, r domain2.CallGraphRecord) error {
+	const q = `
+INSERT OR IGNORE INTO callgraph_dependency_dispatch (
+    record_content_hash, module_path, module_version, pipeline_version, node_id, detail
+) VALUES (?, ?, ?, ?, ?, ?)`
+	var stmt *sql.Stmt
+	for _, n := range r.Nodes {
+		if n.DependencyDispatch.IsZero() {
+			continue
+		}
+		if stmt == nil {
+			var err error
+			if stmt, err = tx.PrepareContext(ctx, q); err != nil {
+				return fmt.Errorf("preparing dependency dispatch statement: %w", err)
+			}
+			defer func() { _ = stmt.Close() }()
+		}
+		if _, err := stmt.ExecContext(ctx, r.ContentHash, r.Coordinate.Path(), r.Coordinate.Version(),
+			r.PipelineVersion, n.ID, n.DependencyDispatch.Describe()); err != nil {
+			return fmt.Errorf("inserting dependency dispatch of %s: %w", n.ID, err)
+		}
+	}
 	return nil
 }
 
@@ -1564,6 +1610,12 @@ func (s *Store) WorktreeGeneration(ctx context.Context, coord coordinate.ModuleC
 		return domain2.CallGraphRecord{}, false, nil
 	}
 	pred, fargs := frameFilter(frame)
+	// The release is selected here, not in frameFilter: reuse claims the same
+	// build, and a read selects on the frame alone (domain.SameTinyGoRelease).
+	if !frame.IsZero() {
+		pred += " AND tinygo_version = ?"
+		fargs = append(fargs, frame.TinyGoVersion)
+	}
 	q := `SELECT serialised, content_hash, overall_status, completeness, failure_cause, extracted_at, analyser, rowid
 FROM callgraph_records
 WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
@@ -2113,6 +2165,12 @@ func storedBytesHashToSeal(raw []byte, edges []domain2.CallEdge, storedHash stri
 	return err == nil && digest == storedHash
 }
 
+// fetchEdgesQuery is the edge read of one record, in canonical sort order.
+const fetchEdgesQuery = `SELECT from_id, to_id, confidence, call_site_file, call_site_line, reflect_dispatch, kind, lookup_name
+	    FROM callgraph_edges
+	    WHERE record_content_hash = ?
+	    ORDER BY from_id, to_id, call_site_file, call_site_line`
+
 // fetchEdges queries callgraph_edges for the edges belonging to ONE record,
 // addressed by that record's content hash, in canonical sort order (from_id,
 // to_id, call_site_file, call_site_line).
@@ -2123,12 +2181,7 @@ func storedBytesHashToSeal(raw []byte, edges []domain2.CallEdge, storedHash stri
 // every other generation's — and the hash verification over the reconstructed
 // record would then fail on a record nothing had tampered with.
 func (s *Store) fetchEdges(ctx context.Context, recordContentHash string, expected int, pool *identifierPool) ([]domain2.CallEdge, error) {
-	const q = `SELECT from_id, to_id, confidence, call_site_file, call_site_line, reflect_dispatch, kind, lookup_name
-	    FROM callgraph_edges
-	    WHERE record_content_hash = ?
-	    ORDER BY from_id, to_id, call_site_file, call_site_line`
-
-	rows, err := s.db.DB().QueryContext(ctx, q, recordContentHash)
+	rows, err := s.db.DB().QueryContext(ctx, fetchEdgesQuery, recordContentHash)
 	if err != nil {
 		return nil, fmt.Errorf("fetching callgraph edges: %w", err)
 	}
@@ -2676,29 +2729,29 @@ LIMIT 2`
 // FindCallers returns all edges where the callee matches symbolID, restricted
 // to edges owned by a module in scope (see ports.CallGraphStore).
 func (s *Store) FindCallers(ctx context.Context, symbolID string, pipelineVersion string, scope coordinate.ModuleSet, opts ports.EdgeQueryOptions) ([]ports.CallEdgeRef, error) {
-	q := `SELECT DISTINCT record_content_hash, from_module, from_version, pipeline_version,
-	                   from_id, to_id, confidence, is_test, kind
-	            FROM callgraph_edges
-	            WHERE to_id = ? AND pipeline_version = ?`
-	if opts.ExcludeTests {
-		q += ` AND is_test = 0`
-	}
-	q += ` ORDER BY from_module, from_version, from_id`
+	q := edgesQuery("to_id", "= ?", "from_id", opts.ExcludeTests)
 	return s.queryEdges(ctx, q, symbolID, pipelineVersion, scope, opts.Toolchain)
 }
 
 // FindCallees returns all edges where the caller matches symbolID, restricted
 // to edges owned by a module in scope (see ports.CallGraphStore).
 func (s *Store) FindCallees(ctx context.Context, symbolID string, pipelineVersion string, scope coordinate.ModuleSet, opts ports.EdgeQueryOptions) ([]ports.CallEdgeRef, error) {
+	q := edgesQuery("from_id", "= ?", "to_id", opts.ExcludeTests)
+	return s.queryEdges(ctx, q, symbolID, pipelineVersion, scope, opts.Toolchain)
+}
+
+// edgesQuery is the edge read FindCallers, FindCallees and frontierEdges run:
+// matchCol is compared by match (`= ?` or an IN list), and orderCol sorts last.
+// Both columns are literals from those callers, never query input.
+func edgesQuery(matchCol, match, orderCol string, excludeTests bool) string {
 	q := `SELECT DISTINCT record_content_hash, from_module, from_version, pipeline_version,
 	                   from_id, to_id, confidence, is_test, kind
 	            FROM callgraph_edges
-	            WHERE from_id = ? AND pipeline_version = ?`
-	if opts.ExcludeTests {
+	            WHERE ` + matchCol + ` ` + match + ` AND pipeline_version = ?`
+	if excludeTests {
 		q += ` AND is_test = 0`
 	}
-	q += ` ORDER BY from_module, from_version, to_id`
-	return s.queryEdges(ctx, q, symbolID, pipelineVersion, scope, opts.Toolchain)
+	return q + ` ORDER BY from_module, from_version, ` + orderCol
 }
 
 // FindCallersOfEach returns every edge whose callee is any of symbolIDs
@@ -2759,14 +2812,7 @@ func (s *Store) frontierEdges(ctx context.Context, matchCol, orderCol string, sy
 		}
 		args = append(args, pipelineVersion)
 
-		q := `SELECT DISTINCT record_content_hash, from_module, from_version, pipeline_version,
-	                   from_id, to_id, confidence, is_test, kind
-	            FROM callgraph_edges
-	            WHERE ` + matchCol + ` IN (` + strings.Join(placeholders, ",") + `) AND pipeline_version = ?`
-		if opts.ExcludeTests {
-			q += ` AND is_test = 0`
-		}
-		q += ` ORDER BY from_module, from_version, ` + orderCol
+		q := edgesQuery(matchCol, `IN (`+strings.Join(placeholders, ",")+`)`, orderCol, opts.ExcludeTests)
 
 		batchCandidates, err := s.edgeCandidates(ctx, q, args, scope)
 		if err != nil {
@@ -2779,6 +2825,95 @@ func (s *Store) frontierEdges(ctx context.Context, matchCol, orderCol string, sy
 	// chunks, and resolving per chunk would put back a smaller copy of the cost
 	// this method exists to remove.
 	return s.servedEdges(ctx, candidates, pipelineVersion, opts.Toolchain)
+}
+
+// DependencyDispatchOf reads the dependency dispatch rows of symbolIDs, keeping
+// those of each module's served record (see ports.CallGraphDispatchReader). A
+// module whose generations conflict contributes nothing here; the edge query
+// beside it is what reports the conflict.
+func (s *Store) DependencyDispatchOf(ctx context.Context, symbolIDs []string, pipelineVersion string, scope coordinate.ModuleSet, toolchain gotoolchain.Version) (map[string]string, error) {
+	rows, err := s.dispatchRows(ctx, symbolIDs, pipelineVersion, scope)
+	if err != nil {
+		return nil, err
+	}
+	served := map[string]string{}
+	out := map[string]string{}
+	for _, r := range rows {
+		key := r.path + "@" + r.version
+		hash, resolved := served[key]
+		if !resolved {
+			if hash, err = s.dispatchServedHash(ctx, r.path, r.version, pipelineVersion, toolchain); err != nil {
+				return nil, err
+			}
+			served[key] = hash
+		}
+		if hash != "" && r.hash == hash {
+			out[r.node] = r.detail
+		}
+	}
+	return out, nil
+}
+
+// dispatchRow is one row of callgraph_dependency_dispatch.
+type dispatchRow struct{ hash, path, version, node, detail string }
+
+// dispatchServedHash is the served generation's hash, and "" for a module
+// whose generations conflict or none of which this build can serve.
+func (s *Store) dispatchServedHash(ctx context.Context, path, version, pipelineVersion string, toolchain gotoolchain.Version) (string, error) {
+	coord, err := coordinate.NewModuleCoordinate(path, version)
+	if err != nil {
+		return "", fmt.Errorf("dependency dispatch row %s@%s names no module: %w", path, version, err)
+	}
+	h, _, err := s.servedContentHash(ctx, coord, pipelineVersion, toolchain)
+	if errors.Is(err, ports.ErrCallGraphConflict) || errors.As(err, new(*recordseal.NothingServable)) {
+		return "", nil
+	}
+	return h, err
+}
+
+// dispatchQuery reads the dispatch rows of n node ids at one pipeline version.
+func dispatchQuery(n int) string {
+	return `SELECT record_content_hash, module_path, module_version, node_id, detail
+FROM callgraph_dependency_dispatch
+WHERE node_id IN (` + strings.TrimSuffix(strings.Repeat("?,", n), ",") + `) AND pipeline_version = ?`
+}
+
+// dispatchRows reads the in-scope rows of symbolIDs at pipelineVersion.
+func (s *Store) dispatchRows(ctx context.Context, symbolIDs []string, pipelineVersion string, scope coordinate.ModuleSet) ([]dispatchRow, error) {
+	var rows []dispatchRow
+	ids := slices.Compact(slices.Sorted(slices.Values(symbolIDs)))
+	const chunk = 400
+	for start := 0; start < len(ids); start += chunk {
+		batch := ids[start:min(start+chunk, len(ids))]
+		args := make([]any, 0, len(batch)+1)
+		for _, id := range batch {
+			args = append(args, id)
+		}
+		args = append(args, pipelineVersion)
+		rs, err := s.db.DB().QueryContext(ctx, dispatchQuery(len(batch)), args...)
+		if err != nil {
+			return nil, fmt.Errorf("querying dependency dispatch: %w", err)
+		}
+		for rs.Next() {
+			var r dispatchRow
+			if serr := rs.Scan(&r.hash, &r.path, &r.version, &r.node, &r.detail); serr != nil {
+				_ = rs.Close() //nolint:errcheck // returning the scan error
+				return nil, fmt.Errorf("scanning dependency dispatch: %w", serr)
+			}
+			if scope.ContainsPathVersion(r.path, r.version) {
+				rows = append(rows, r)
+			}
+		}
+		if err := rs.Err(); err != nil {
+			_ = rs.Close() //nolint:errcheck // returning the iteration error
+			return nil, fmt.Errorf("iterating dependency dispatch: %w", err)
+		}
+		// Closed before resolving the served generation: one connection.
+		if err := rs.Close(); err != nil {
+			return nil, fmt.Errorf("closing dependency dispatch rows: %w", err)
+		}
+	}
+	return rows, nil
 }
 
 // SupersededCallerHolders names the coordinates holding an edge into any of
@@ -3114,4 +3249,5 @@ var (
 	_ ports.CallGraphWorktreeRouter   = (*Store)(nil)
 	_ ports.CallGraphFrontierFinder   = (*Store)(nil)
 	_ ports.CallGraphUnservedReader   = (*Store)(nil)
+	_ ports.CallGraphDispatchReader   = (*Store)(nil)
 )

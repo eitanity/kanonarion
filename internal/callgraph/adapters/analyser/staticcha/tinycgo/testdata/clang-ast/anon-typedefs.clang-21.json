@@ -1,0 +1,501 @@
+{
+ "inner": [
+  {
+   "completeDefinition": true,
+   "id": "0x589db3b49ed8",
+   "inner": [
+    {
+     "id": "0x589db3b49f98",
+     "kind": "FieldDecl",
+     "name": "a",
+     "type": {
+      "qualType": "int"
+     }
+    }
+   ],
+   "kind": "RecordDecl",
+   "tagUsed": "struct"
+  },
+  {
+   "id": "0x589db3b4a048",
+   "inner": [
+    {
+     "id": "0x589db3b49ff0",
+     "inner": [
+      {
+       "decl": {
+        "id": "0x589db3b49ed8",
+        "kind": "RecordDecl",
+        "name": ""
+       },
+       "id": "0x589db3b49f60",
+       "kind": "RecordType",
+       "type": {
+        "qualType": "anon_t"
+       }
+      }
+     ],
+     "kind": "ElaboratedType",
+     "ownedTagDecl": {
+      "id": "0x589db3b49ed8",
+      "kind": "RecordDecl",
+      "name": ""
+     },
+     "type": {
+      "qualType": "struct anon_t"
+     }
+    }
+   ],
+   "kind": "TypedefDecl",
+   "name": "anon_t",
+   "type": {
+    "desugaredQualType": "anon_t",
+    "qualType": "struct anon_t"
+   }
+  },
+  {
+   "completeDefinition": true,
+   "id": "0x589db3b4a0b8",
+   "inner": [
+    {
+     "id": "0x589db3b4a178",
+     "kind": "FieldDecl",
+     "name": "only",
+     "type": {
+      "qualType": "int"
+     }
+    }
+   ],
+   "kind": "RecordDecl",
+   "tagUsed": "union"
+  },
+  {
+   "id": "0x589db3bd56a8",
+   "inner": [
+    {
+     "id": "0x589db3bd5650",
+     "inner": [
+      {
+       "decl": {
+        "id": "0x589db3b4a0b8",
+        "kind": "RecordDecl",
+        "name": ""
+       },
+       "id": "0x589db3b4a140",
+       "kind": "RecordType",
+       "type": {
+        "qualType": "anon_u"
+       }
+      }
+     ],
+     "kind": "ElaboratedType",
+     "ownedTagDecl": {
+      "id": "0x589db3b4a0b8",
+      "kind": "RecordDecl",
+      "name": ""
+     },
+     "type": {
+      "qualType": "union anon_u"
+     }
+    }
+   ],
+   "kind": "TypedefDecl",
+   "name": "anon_u",
+   "type": {
+    "desugaredQualType": "anon_u",
+    "qualType": "union anon_u"
+   }
+  },
+  {
+   "id": "0x589db3bd5718",
+   "inner": [
+    {
+     "id": "0x589db3bd57e0",
+     "kind": "EnumConstantDecl",
+     "name": "ANON_A",
+     "type": {
+      "qualType": "int"
+     }
+    },
+    {
+     "id": "0x589db3bd5890",
+     "inner": [
+      {
+       "id": "0x589db3bd5870",
+       "inner": [
+        {
+         "id": "0x589db3bd5858",
+         "inner": [
+          {
+           "id": "0x589db3bd5838",
+           "kind": "IntegerLiteral",
+           "type": {
+            "qualType": "int"
+           },
+           "value": "1"
+          }
+         ],
+         "kind": "UnaryOperator",
+         "type": {
+          "qualType": "int"
+         }
+        }
+       ],
+       "kind": "ConstantExpr",
+       "type": {
+        "qualType": "int"
+       },
+       "value": "-1"
+      }
+     ],
+     "kind": "EnumConstantDecl",
+     "name": "ANON_B",
+     "type": {
+      "qualType": "int"
+     }
+    }
+   ],
+   "kind": "EnumDecl"
+  },
+  {
+   "id": "0x589db3bd5948",
+   "inner": [
+    {
+     "id": "0x589db3bd58f0",
+     "inner": [
+      {
+       "decl": {
+        "id": "0x589db3bd5718",
+        "kind": "EnumDecl",
+        "name": ""
+       },
+       "id": "0x589db3bd57c0",
+       "kind": "EnumType",
+       "type": {
+        "qualType": "anon_e"
+       }
+      }
+     ],
+     "kind": "ElaboratedType",
+     "ownedTagDecl": {
+      "id": "0x589db3bd5718",
+      "kind": "EnumDecl",
+      "name": ""
+     },
+     "type": {
+      "qualType": "enum anon_e"
+     }
+    }
+   ],
+   "kind": "TypedefDecl",
+   "name": "anon_e",
+   "type": {
+    "desugaredQualType": "anon_e",
+    "qualType": "enum anon_e"
+   }
+  },
+  {
+   "fixedUnderlyingType": {
+    "qualType": "unsigned char"
+   },
+   "id": "0x589db3bd59d0",
+   "inner": [
+    {
+     "id": "0x589db3bd5a90",
+     "kind": "EnumConstantDecl",
+     "name": "FIXED_A",
+     "type": {
+      "qualType": "unsigned char"
+     }
+    }
+   ],
+   "kind": "EnumDecl"
+  },
+  {
+   "id": "0x589db3bd5b48",
+   "inner": [
+    {
+     "id": "0x589db3bd5af0",
+     "inner": [
+      {
+       "decl": {
+        "id": "0x589db3bd59d0",
+        "kind": "EnumDecl",
+        "name": ""
+       },
+       "id": "0x589db3bd5a70",
+       "kind": "EnumType",
+       "type": {
+        "qualType": "anon_fixed"
+       }
+      }
+     ],
+     "kind": "ElaboratedType",
+     "ownedTagDecl": {
+      "id": "0x589db3bd59d0",
+      "kind": "EnumDecl",
+      "name": ""
+     },
+     "type": {
+      "qualType": "enum anon_fixed"
+     }
+    }
+   ],
+   "kind": "TypedefDecl",
+   "name": "anon_fixed",
+   "type": {
+    "desugaredQualType": "anon_fixed",
+    "qualType": "enum anon_fixed"
+   }
+  },
+  {
+   "completeDefinition": true,
+   "id": "0x589db3bd5bb8",
+   "inner": [
+    {
+     "completeDefinition": true,
+     "id": "0x589db3bd5c60",
+     "inner": [
+      {
+       "id": "0x589db3bd5d18",
+       "kind": "FieldDecl",
+       "name": "x",
+       "type": {
+        "qualType": "int"
+       }
+      }
+     ],
+     "kind": "RecordDecl",
+     "tagUsed": "struct"
+    },
+    {
+     "id": "0x589db3bd5dc8",
+     "kind": "FieldDecl",
+     "name": "in",
+     "type": {
+      "desugaredQualType": "struct anon_nest::(unnamed at anon-typedefs.h:5:18)",
+      "qualType": "struct (unnamed struct at anon-typedefs.h:5:18)"
+     }
+    },
+    {
+     "id": "0x589db3bd5e30",
+     "kind": "FieldDecl",
+     "name": "y",
+     "type": {
+      "qualType": "int"
+     }
+    }
+   ],
+   "kind": "RecordDecl",
+   "tagUsed": "struct"
+  },
+  {
+   "id": "0x589db3bd5f38",
+   "inner": [
+    {
+     "id": "0x589db3bd5ee0",
+     "inner": [
+      {
+       "decl": {
+        "id": "0x589db3bd5bb8",
+        "kind": "RecordDecl",
+        "name": ""
+       },
+       "id": "0x589db3bd5c40",
+       "kind": "RecordType",
+       "type": {
+        "qualType": "anon_nest"
+       }
+      }
+     ],
+     "kind": "ElaboratedType",
+     "ownedTagDecl": {
+      "id": "0x589db3bd5bb8",
+      "kind": "RecordDecl",
+      "name": ""
+     },
+     "type": {
+      "qualType": "struct anon_nest"
+     }
+    }
+   ],
+   "kind": "TypedefDecl",
+   "name": "anon_nest",
+   "type": {
+    "desugaredQualType": "anon_nest",
+    "qualType": "struct anon_nest"
+   }
+  },
+  {
+   "completeDefinition": true,
+   "id": "0x589db3bd5fa8",
+   "inner": [
+    {
+     "id": "0x589db3bd6068",
+     "kind": "FieldDecl",
+     "name": "x",
+     "type": {
+      "qualType": "int"
+     }
+    }
+   ],
+   "kind": "RecordDecl",
+   "name": "pt",
+   "tagUsed": "struct"
+  },
+  {
+   "id": "0x589db3bd6110",
+   "inner": [
+    {
+     "id": "0x589db3bd60c0",
+     "inner": [
+      {
+       "decl": {
+        "id": "0x589db3bd5fa8",
+        "kind": "RecordDecl",
+        "name": "pt"
+       },
+       "id": "0x589db3bd6030",
+       "kind": "RecordType",
+       "type": {
+        "qualType": "struct pt"
+       }
+      }
+     ],
+     "kind": "ElaboratedType",
+     "type": {
+      "qualType": "struct pt"
+     }
+    }
+   ],
+   "kind": "TypedefDecl",
+   "name": "pt_t",
+   "type": {
+    "qualType": "struct pt"
+   }
+  },
+  {
+   "completeDefinition": true,
+   "id": "0x589db3bd6168",
+   "inner": [
+    {
+     "id": "0x589db3bd6228",
+     "kind": "FieldDecl",
+     "name": "b",
+     "type": {
+      "qualType": "int"
+     }
+    }
+   ],
+   "kind": "RecordDecl",
+   "name": "named_s",
+   "tagUsed": "struct"
+  },
+  {
+   "id": "0x589db3bd62d8",
+   "inner": [
+    {
+     "id": "0x589db3bd6280",
+     "inner": [
+      {
+       "decl": {
+        "id": "0x589db3bd6168",
+        "kind": "RecordDecl",
+        "name": "named_s"
+       },
+       "id": "0x589db3bd61f0",
+       "kind": "RecordType",
+       "type": {
+        "qualType": "struct named_s"
+       }
+      }
+     ],
+     "kind": "ElaboratedType",
+     "ownedTagDecl": {
+      "id": "0x589db3bd6168",
+      "kind": "RecordDecl",
+      "name": "named_s"
+     },
+     "type": {
+      "qualType": "struct named_s"
+     }
+    }
+   ],
+   "kind": "TypedefDecl",
+   "name": "named_t",
+   "type": {
+    "qualType": "struct named_s"
+   }
+  },
+  {
+   "id": "0x589db3bd63c0",
+   "inner": [
+    {
+     "id": "0x589db3bd6380",
+     "inner": [
+      {
+       "decl": {
+        "id": "0x589db3b4a048",
+        "kind": "TypedefDecl",
+        "name": "anon_t"
+       },
+       "id": "0x589db3bd6350",
+       "inner": [
+        {
+         "id": "0x589db3b49ff0",
+         "inner": [
+          {
+           "decl": {
+            "id": "0x589db3b49ed8",
+            "kind": "RecordDecl",
+            "name": ""
+           },
+           "id": "0x589db3b49f60",
+           "kind": "RecordType",
+           "type": {
+            "qualType": "anon_t"
+           }
+          }
+         ],
+         "kind": "ElaboratedType",
+         "ownedTagDecl": {
+          "id": "0x589db3b49ed8",
+          "kind": "RecordDecl",
+          "name": ""
+         },
+         "type": {
+          "qualType": "struct anon_t"
+         }
+        }
+       ],
+       "kind": "TypedefType",
+       "type": {
+        "qualType": "anon_t"
+       }
+      }
+     ],
+     "kind": "ElaboratedType",
+     "type": {
+      "qualType": "anon_t"
+     }
+    }
+   ],
+   "kind": "TypedefDecl",
+   "name": "anon_chain",
+   "type": {
+    "qualType": "anon_t",
+    "typeAliasDeclId": "0x589db3b4a048"
+   }
+  },
+  {
+   "id": "0x589db3bd6428",
+   "kind": "VarDecl",
+   "name": "anon_var",
+   "type": {
+    "qualType": "anon_t",
+    "typeAliasDeclId": "0x589db3b4a048"
+   }
+  }
+ ],
+ "kind": "TranslationUnitDecl"
+}

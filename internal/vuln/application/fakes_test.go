@@ -1000,6 +1000,8 @@ type fakeCallGraphLoader struct {
 	// whether it may answer.
 	ineligible bool
 	loadErr    error
+	// tinyGoVersion is the TinyGo release the stored graph was built by.
+	tinyGoVersion string
 }
 
 func (f *fakeCallGraphLoader) setPresent(v bool) {
@@ -1017,7 +1019,7 @@ func (f *fakeCallGraphLoader) Load(_ context.Context, _ coordinate.ModuleCoordin
 	if !f.present {
 		return ports.CallGraphProjection{}, fmt.Errorf("%w: test coord", ports.ErrCallGraphNotFound)
 	}
-	return ports.CallGraphProjection{ServableAsCacheHit: !f.ineligible}, nil
+	return ports.CallGraphProjection{ServableAsCacheHit: !f.ineligible, TinyGoVersion: f.tinyGoVersion}, nil
 }
 
 // fakeCallGraphSpawner implements ports.CallGraphSpawner and records all invocations.

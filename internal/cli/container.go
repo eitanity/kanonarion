@@ -583,6 +583,7 @@ func NewContainerFrom(st *storage.Storage, storeRoot, goproxy, goBinary string, 
 	).WithSetAsideReporter(setAside.report).
 		WithCallGraphLoader(cgLoader).
 		WithCallGraphSpawner(cgSpawner).
+		WithTinyGoRelease(declaredTinyGoVersion).
 		WithRouteAnnotator(routeAnnotator).
 		// A module scan resolves its own snapshot when no walk scan handed it one,
 		// and that download is a persist like any other. The walk and re-scan use

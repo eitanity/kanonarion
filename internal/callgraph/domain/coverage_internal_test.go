@@ -423,7 +423,7 @@ func TestIncompleteGraphRemedy_EveryCauseAndKind(t *testing.T) {
 		{dep, FailureCauseModule, "is a fetched dependency, so the failure is in its own sources"},
 		{dep, FailureCauseEnvironment, "the gap is in the environment and not in what it published"},
 	} {
-		if got := IncompleteGraphRemedy(tc.coord, tc.cause, "x", "/work"); !strings.Contains(got, tc.want) {
+		if got := IncompleteGraphRemedy(tc.coord, tc.cause, "x", "/work", BuildFrame{}); !strings.Contains(got, tc.want) {
 			t.Errorf("%s/%s:\n%s", tc.coord, tc.cause, got)
 		}
 	}

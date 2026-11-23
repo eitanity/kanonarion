@@ -288,3 +288,16 @@ func TestPrintFindingLines_RendersAReflectHopAndABoundedOneDifferently(t *testin
 		t.Errorf("printFindingLines does not report the hop into reflect.TypeOf as unresolved:\n%s", got)
 	}
 }
+
+// A route the search found only from a method a dependency could call is
+// published with the search, so the route the rung's reason names can be read.
+func TestNegativeSearchToOutput_PublishesTheDispatchRoute(t *testing.T) {
+	route := vuldomain.ReachabilityRoute{
+		{ModulePath: "example.com/mod", Package: "example.com/mod", Receiver: "*body", Symbol: "Read"},
+		{ModulePath: "example.com/mod", Package: "example.com/mod", Symbol: "Vulnerable"},
+	}
+	out := negativeSearchToOutput(&vuldomain.NegativeSearch{DispatchPathFound: true, DispatchRoute: route}, unclassifiedRoutes)
+	if out.EntryPointPathFound || len(out.Routes) != 1 {
+		t.Errorf("output = %+v, want the one dispatch route and no entry-point path", out)
+	}
+}

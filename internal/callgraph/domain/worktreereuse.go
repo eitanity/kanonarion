@@ -37,8 +37,9 @@ func (i WorktreeIdentity) IsZero() bool { return i.Root == "" || i.ScanDigest ==
 //     field existed carries none, and absence cannot show that two runs were
 //     handed the same tree. The first run after this field lands therefore
 //     re-derives, and every run after that reuses.
-//   - It was extracted under the same build frame. Build constraints decide
-//     which files compile, so a host graph is no answer about wasip1.
+//   - It was extracted under the same build frame, by the same TinyGo release.
+//     Build constraints decide which files compile, so a host graph is no answer
+//     about wasip1, and two releases build different runtimes.
 //   - It is servable at all. A record the analysis environment cut short — one
 //     that failed for want of a toolchain, or came back incomplete because a
 //     dependency was absent from this host's module cache — describes the run and
@@ -65,7 +66,7 @@ func WorktreeRecordAnswersFor(existing CallGraphRecord, identity WorktreeIdentit
 	if existing.WorktreeScanDigest == "" || existing.WorktreeScanDigest != identity.ScanDigest {
 		return false
 	}
-	if !SameFrame(existing.Frame, identity.Frame) {
+	if !SameFrame(existing.Frame, identity.Frame) || !SameTinyGoRelease(existing.Frame, identity.Frame) {
 		return false
 	}
 	return RecordIsCacheable(existing)

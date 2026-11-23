@@ -98,14 +98,14 @@ func TestTinyGoPackage_FetchedRecordRemedy(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := incompleteGraphRemedy(context.Background(), coord, cgdomain.FailureCauseModule,
-		"x.go:3:2: package machine is not in std (src/machine)", "")
+		"x.go:3:2: package machine is not in std (src/machine)", "", cgdomain.BuildFrame{})
 	if !strings.Contains(got, "machine is provided by TinyGo, not Go") ||
 		!strings.Contains(got, "kanonarion callgraph example.com/drivers@v1.0.0 --tinygo <target>") {
 		t.Errorf("remedy:\n%s", got)
 	}
 	// One missing package TinyGo does not provide: --tinygo would not find it either.
 	mixed := incompleteGraphRemedy(context.Background(), coord, cgdomain.FailureCauseModule,
-		"package machine is not in std (a); package foo/bar is not in std (b)", "")
+		"package machine is not in std (a); package foo/bar is not in std (b)", "", cgdomain.BuildFrame{})
 	if strings.Contains(mixed, "provided by TinyGo") {
 		t.Errorf("a remedy with an unknown package named TinyGo:\n%s", mixed)
 	}

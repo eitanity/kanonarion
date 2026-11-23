@@ -105,6 +105,10 @@ type CallGraphConflict struct {
 	// Frames are the build frames a ConflictFieldFrame refusal found, in the
 	// order of Values, so the remedy can spell the flag that selects each.
 	Frames []BuildFrame
+
+	// Frame is the one build frame every disagreeing record was extracted under,
+	// so a re-analysis line lands in it; a TinyGo frame keeps its --tinygo.
+	Frame BuildFrame
 }
 
 // The field names a CallGraphConflict can carry. They are constants rather than
@@ -254,7 +258,7 @@ func (c CallGraphConflict) Remedy() Remedy {
 					"Inspect the generations, then analyse the tree you mean",
 				Lines: []string{
 					"kanonarion callgraph-show " + coord + " --history",
-					ReanalysisInstruction(c.Coordinate, c.AnalysisRoot),
+					FrameReanalysisInstruction(c.Coordinate, c.AnalysisRoot, c.Frame, false),
 				},
 			}
 		}
@@ -264,7 +268,7 @@ func (c CallGraphConflict) Remedy() Remedy {
 			Lines: []string{
 				"kanonarion callgraph-show " + coord + " --history",
 				"kanonarion fetch " + coord,
-				ForcedReanalysisInstruction(c.Coordinate, c.AnalysisRoot),
+				FrameReanalysisInstruction(c.Coordinate, c.AnalysisRoot, c.Frame, true),
 			},
 		}
 	default:
@@ -305,7 +309,7 @@ func (c CallGraphConflict) Remedy() Remedy {
 				// --force is on the analysis because a stored answer already exists, so
 				// without it the run is served from cache and reads as the remedy having
 				// been tried and failed.
-				ForcedReanalysisInstruction(c.Coordinate, c.AnalysisRoot),
+				FrameReanalysisInstruction(c.Coordinate, c.AnalysisRoot, c.Frame, true),
 			},
 		}
 	}
@@ -444,6 +448,7 @@ func Compose(records []CallGraphRecord, req ComposeRequest) (CallGraphRecord, er
 	if c := findConflict(candidates); c != nil {
 		resolved, ok := preferredToolchain(candidates, c, req.ToolchainPreference)
 		if !ok {
+			c.Frame = candidates[0].Frame
 			return CallGraphRecord{}, *c
 		}
 		candidates = resolved

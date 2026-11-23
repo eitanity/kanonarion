@@ -194,7 +194,7 @@ func (l implementerLookup) verdict(present bool, opts cgports.EdgeQueryOptions) 
 		sinks = append(sinks, domain.SoundnessSink{
 			Kind:   domain.SinkDroppedPackageEdges,
 			Site:   l.iface.ID,
-			Detail: "package " + l.partialPkg + " " + domain.DroppedPackageReason(l.partialDetail) + ", so its edges were dropped",
+			Detail: "package " + l.partialPkg + " " + domain.DroppedPackageReasonFor(l.partialPkg, l.partialDetail) + ", so its edges were dropped",
 		})
 	}
 	if l.belowFull != domain.CompletenessUnknown && !l.belowFull.IsBuiltWithBodies() {

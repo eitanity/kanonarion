@@ -243,7 +243,7 @@ func TestRunCallers_DroppedEdgeRemedyNamesTheColdCacheWhenThatIsTheCause(t *test
 // because the record a cold cache produced is not served back.
 func TestDroppedEdgeRemedy_LocalColdCacheReanalysesWithoutForce(t *testing.T) {
 	coord := coordinatetest.MustNew("example.com/app", coordinate.LocalVersion)
-	got := cgdomain.IncompleteGraphRemedy(coord, cgdomain.FailureCauseEnvironment, "", "/work/tree")
+	got := cgdomain.IncompleteGraphRemedy(coord, cgdomain.FailureCauseEnvironment, "", "/work/tree", cgdomain.BuildFrame{})
 	if !strings.Contains(got, cgdomain.ColdModuleCacheRemedy) {
 		t.Errorf("the remedy does not warm the cache in one step:\n%s", got)
 	}
@@ -255,5 +255,77 @@ func TestDroppedEdgeRemedy_LocalColdCacheReanalysesWithoutForce(t *testing.T) {
 	}
 	if strings.Contains(got, "Fix the package so it compiles") {
 		t.Errorf("a cold cache was reported as a compile error:\n%s", got)
+	}
+}
+
+// A package the cgo translation gap alone dropped is not analysed rather than
+// failing to typecheck, and its remedy sends no one to fix the source.
+func TestDroppedEdgesNotice_ACgoTranslationGap(t *testing.T) {
+	clause := cgdomain.CgoTranslationGapClause("example.com/app",
+		[]string{"C.pp_t: struct (unnamed at main.go:9:9) * is a C type this analysis does not translate"}, false)
+	pr := partialRoot{failedPkg: "example.com/app", coord: coordinatetest.MustNew("example.com/app", coordinate.LocalVersion),
+		isPartial: true, cause: cgdomain.FailureCauseUnrecorded, detail: clause, analysisRoot: "/work/tree",
+		frame: cgdomain.BuildFrame{GOOS: "wasip1", GOARCH: "wasm", TinyGoTarget: "wasip1", TinyGoVersion: "0.44.0"}}
+	got := droppedEdgesNotice(context.Background(), "callers", "example.com/app.P", pr)
+	for _, want := range []string{`package "example.com/app" was not analysed: kanonarion's cgo translation does not cover what it uses`,
+		"not in the source", "kanonarion local /work/tree --tinygo wasip1"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("notice does not say %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "Fix the package") || strings.Contains(got, "did not typecheck") {
+		t.Errorf("notice blames the source:\n%s", got)
+	}
+}
+
+// A package whose preamble clang read while TinyGo had not built the target's
+// libc was not analysed, and its remedy builds the libc.
+func TestDroppedEdgesNotice_AnUnbuiltLibc(t *testing.T) {
+	dir := "/home/u/.cache/tinygo/wasi-libc-wasm32-unknown-wasi-generic/include"
+	detail := "/work/tree/main.go: TinyGo has not built wasi-libc for target wasip1 on this host: " + dir +
+		" does not exist, so clang could not read the preamble of example.com/app (/work/tree/main.go:4:10: fatal error: 'stdio.h' file not found)"
+	pr := partialRoot{failedPkg: "example.com/app", coord: coordinatetest.MustNew("example.com/app", coordinate.LocalVersion),
+		isPartial: true, cause: cgdomain.FailureCauseEnvironment, detail: detail, analysisRoot: "/work/tree",
+		frame: cgdomain.BuildFrame{GOOS: "wasip1", GOARCH: "wasm", TinyGoTarget: "wasip1", TinyGoVersion: "0.44.0"}}
+	got := droppedEdgesNotice(context.Background(), "callers", "example.com/app.P", pr)
+	for _, want := range []string{`package "example.com/app" was not analysed: TinyGo has not built wasi-libc for target wasip1 on this host (` + dir + ` does not exist)`,
+		"not in the source", "tinygo build -target wasip1", "kanonarion local /work/tree --tinygo wasip1"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("notice does not say %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "Fix the package") || strings.Contains(got, "did not typecheck") {
+		t.Errorf("notice blames the source:\n%s", got)
+	}
+}
+
+// typeOnlyRecord serves one TYPE_ONLY record of example.com/app with detail.
+type typeOnlyRecord struct {
+	*testfakes.FakeQueryCallGraph
+	detail string
+}
+
+func (r typeOnlyRecord) ListCallGraphCoordinates(context.Context, cgports.CallGraphFilter) ([]cgports.CallGraphCoordinate, error) {
+	return []cgports.CallGraphCoordinate{{ModulePath: "example.com/app", ModuleVersion: coordinate.LocalVersion,
+		PipelineVersion: cgapp.PipelineVersion, AnyBelowFull: true}}, nil
+}
+
+func (r typeOnlyRecord) GetCallGraphRecordFrom(context.Context, coordinate.ModuleCoordinate, string, cgdomain.ComposeRequest) (cgdomain.CallGraphRecord, bool, error) {
+	return cgdomain.CallGraphRecord{Completeness: cgdomain.CompletenessTypeOnly, FailureDetail: r.detail}, true, nil
+}
+
+// The completeness notice prescribes a rebuild only when the record states no
+// cause of its own that a rebuild cannot clear.
+func TestCompletenessNotice_NoRebuildForAStatedLimit(t *testing.T) {
+	libc := "/w/main.go: TinyGo has not built wasi-libc for target wasip1 on this host: /c/include does not exist, so clang could not read the preamble of example.com/app (x)"
+	for detail, wantRebuild := range map[string]bool{libc: false, "": true, "/w/main.go:4:27: undefined: missing": true} {
+		var out bytes.Buffer
+		if err := writeCompletenessNotice(context.Background(), "example.com/app.Greet",
+			typeOnlyRecord{FakeQueryCallGraph: &testfakes.FakeQueryCallGraph{}, detail: detail}, &out, coordinate.ModuleSet{}); err != nil {
+			t.Fatal(err)
+		}
+		if got := strings.Contains(out.String(), "go generate"); got != wantRebuild || !strings.Contains(out.String(), "TYPE_ONLY") {
+			t.Errorf("detail %q: notice %q, want the rebuild %v", detail, out.String(), wantRebuild)
+		}
 	}
 }

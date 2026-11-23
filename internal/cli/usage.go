@@ -56,6 +56,9 @@ func usageUnmeasuredKindsNote(coord coordinate.ModuleCoordinate) string {
 // usageRemeasure re-derives a module's call graph; force is owed exactly when
 // a stored record would otherwise answer the re-run (RecordIsCacheable).
 func usageRemeasure(coord coordinate.ModuleCoordinate, force bool) string {
+	if line, ok := cgdomain.ReanalysisCommand(coord, "", force); ok {
+		return line + targetFlagHint()
+	}
 	if force {
 		return cgdomain.ForcedReanalysisInstruction(coord, "")
 	}
@@ -769,7 +772,7 @@ func (r *usageReport) surfaceUnenumeratedReason() string {
 	if !r.ModuleGraphFound {
 		return fmt.Sprintf("the store holds no call graph for any version of %s, so its public "+
 			"API was never enumerated and nothing about the module was measured; check the module "+
-			"path, then run: %s", r.Module.Path(), cgdomain.ReanalysisInstruction(r.Requested, ""))
+			"path, then run: %s", r.Module.Path(), frameReanalysis(r.Requested, ""))
 	}
 	rec := r.ModuleRecord
 	if cgdomain.RecordIsFailure(rec) || cgdomain.RecordIsIncomplete(rec) {
@@ -954,7 +957,7 @@ func printUsageVersionBasis(stdout io.Writer, r *usageReport) error {
 	if _, err := fmt.Fprintf(stdout,
 		"version: %s has no stored call graph, so nothing below was measured against it. This report "+
 			"measures %s — %s. To measure the version you asked for, run: %s\n",
-		r.Requested, r.Module, why, cgdomain.ReanalysisInstruction(r.Requested, "")); err != nil {
+		r.Requested, r.Module, why, frameReanalysis(r.Requested, "")); err != nil {
 		return fmt.Errorf("writing version basis: %w", err)
 	}
 	return nil

@@ -170,6 +170,17 @@ values there, as they did when `verdict` and `reachability_state` gained theirs)
   a record that names no frame. `callgraph-show` text gains a `frame:` line and
   `--history` a `frame:` line per generation, both absent on such a record.
 
+## Store: module `store`, migration 1 - the store plans without statistics
+
+**No table or record change, no pipeline bump.** Migration 1 of the new `store`
+module deletes every row of `sqlite_stat1` and `sqlite_stat4`, and the opening
+process reloads the empty statistics. Call-graph and interface writes no longer
+run `PRAGMA optimize`, so nothing writes statistics, and a fresh store and a
+migrated one plan their reads on SQLite's built-in estimates alike. Statistics
+left stale by earlier writes had sent symbol and dependency-dispatch reads onto
+whole-table scans. Store `v95` -> `v96`; an older build refuses a `v96` store at
+the schema gate, naming `store@v1`.
+
 ## Fetch record: pipeline `0.6.0` → `0.7.0`
 
 **Derivation change; no record shape change, no store migration.** A `0.7.0`
@@ -218,6 +229,114 @@ names a newer Go than the installed one recorded every standard package as Go's
 and none as TinyGo's; it now records the split TinyGo builds. Unchanged for
 every walk without `--tinygo`. Rows at `1.11.0` stay and are re-resolved rather
 than read.
+
+## Call graph record: pipeline `0.15.0` → `0.16.0`, and callgraph migration 19 - methods a dependency can call
+
+**Record shape change; store migration 19; no schema-version bump.** An exported
+method of a module type records, inside the seal, as `dependency_dispatch`, how a
+dependency can call it with no edge in the module's graph: the first conversion
+of its type (or a type embedding it) to an interface, or the type passed as a
+type argument to a generic declared outside the module or to an owned generic
+that converts or hands on that type parameter, with the function and site
+(`escape`), and the package-level interfaces declared outside the module
+that contain the method and that the type satisfies (`interfaces`); `production`
+holds the same over hand-offs outside test code, absent when none is. The field is
+omitted when absent, so a node without one marshals to the bytes it always did.
+Migration 19 adds its row copy, so an edge answer reads it without decoding the
+record:
+
+```sql
+CREATE TABLE IF NOT EXISTS callgraph_dependency_dispatch (
+    record_content_hash TEXT NOT NULL,
+    module_path         TEXT NOT NULL,
+    module_version      TEXT NOT NULL,
+    pipeline_version    TEXT NOT NULL,
+    node_id             TEXT NOT NULL,
+    detail              TEXT NOT NULL,
+    PRIMARY KEY (record_content_hash, node_id)
+);
+CREATE INDEX IF NOT EXISTS callgraph_dependency_dispatch_node_idx
+    ON callgraph_dependency_dispatch (node_id, pipeline_version)
+```
+
+No back-fill: every existing record is at `0.15.0` or earlier, which is never
+served at `0.16.0`. Store `v94` -> `v95`.
+
+An empty `callers` answer for such a method reads `UNRESOLVED` naming
+`dependency-dispatch-unmeasured`, where a `0.15.0` record read `RESOLVED-ABSENT`.
+A non-empty one stays `RESOLVED-PRESENT` and carries the sink on its `answer:`
+line; single-hop `--json` states it on stderr. `callers --transitive --json` gains
+`dependency_dispatch`, always present, and a `callgraph-show --json` node gains
+it, omitted when absent. Where a production hand-off exists, a
+`reachability` route root nothing in the module calls reads `ingress`, where it
+read `exported-api` or `internal`, and a clean read-time negative search past
+such a method that reaches the symbol reads `unconfirmed` and lists that route.
+
+Under `--tinygo`, TinyGo 0.43.0 and 0.44.0 have lowering tables: their records
+hold `compiler-inserted` edges and the named wasm export, and are `Extracted`
+where they were `Partial` with the lowering sentence, which now lists
+`0.42.0, 0.43.0, 0.44.0`. From 0.43.0 a wasm build supports recover, so its
+records gain edges to `runtime.setupDeferFrame`, `runtime.destroyDeferFrame`,
+`runtime.clearUnwind`, `runtime.unwindPending` and the asyncify panic-replay
+functions. TinyGo 0.42.0 records are unchanged. A record under a release no table
+covers keeps the cause its load stated (empty, or `module` for a package that
+does not compile) where it stated `environment`. No column and no cause value is
+added. Such a record, at either cause, is never served as a cache hit, its remedy
+names the release instead of the module cache, and its re-run keeps `--tinygo`.
+A `callers` or `callees` read over it names the sink `tinygo-lowering-unrecorded`:
+on the answer line of a list, as `UNRESOLVED` for an empty answer or a symbol only
+such a call reaches (where it read `RESOLVED-ABSENT` or "not in the call-graph
+store"), on stderr under single-hop `--json`, and as `tinygo_lowering_unrecorded`,
+omitted when absent, on `--transitive --json`. A reachability negative search
+over it reads `unconfirmed`, never `confirmed` or `disputed`, and its
+`negative_search` gains `tinygo_lowering_unrecorded`; route-root classification
+reads it as unavailable; `capability` caveats it. Every re-analysis line keeps
+the record's frame flag, `--target` included, except this host's own.
+A `0.16.0` record written before this change, `environment` with the sentence,
+reads the same; it still ranks below a graph with no environment cause, and a
+new one ranks by recency. `local`, `callgraph`, the standard-library extraction
+and a scan's on-demand call graph reuse a TinyGo record only under the release
+that built it; reads still select on the target.
+
+Under `--tinygo`, four changes to cgo packages:
+
+- With clang 22, a preamble's anonymous `typedef struct`, `union` or `enum` is
+  translated as under clang 21: the record is `Extracted` where it was
+  `Partial`, cause `module`.
+- A cgo package whose imports do not reach `syscall` loads. Its record is
+  `Extracted` where it was `Partial` with `could not import syscall (no metadata
+  for syscall)`.
+- A C type the translation refuses, or a `#cgo CFLAGS` line, leads the detail as
+  `kanonarion's cgo translation does not cover what <package> uses: …`, and the
+  `undefined: _Cgo_<name>` errors it causes leave the detail. With no other
+  compile error the cause is empty where it was `module`; beside one it stays
+  `module`. Either record is never served as a cache hit, and `callers` and
+  `callees` say a package the gap alone dropped was not analysed. A `0.16.0`
+  record written before this change quotes the refusal under `module`; it reads
+  as the gap too and is re-measured on the next run.
+- A preamble is read with TinyGo's libc headers for the target: one including
+  `<stdio.h>` under `wasip1` or `pico` is `Extracted` where it was `Partial`,
+  cause `module`. clang's refusal reads `clang rejected the preamble, read with
+  TinyGo's <libc> headers: …` (or `with no libc headers`), still `module`. While
+  TinyGo has not built the target's libc, the detail leads with `TinyGo has not
+  built <libc> for target <target> on this host: <dir> does not exist, …`, the
+  cause is `environment`, and the remedy is `tinygo build -target <target>`. A
+  `0.16.0` record written before this change quotes `clang rejected the
+  preamble: …` under `module`; it is re-measured on the next run.
+
+A package with errors of its own whose SSA construction panics, such as one
+calling an undefined name or a C name whose preamble clang refused, states `the
+errors stated for <package> leave code SSA cannot build, so it is analysed
+without its bodies` where it stated `SSA construction panic for <package>: …`.
+Graph, cause and completeness are unchanged; a `0.16.0` record written before
+this change keeps the old sentence and is not re-measured for it. Under any
+pipeline, a record below `BUILT_WITH_BODIES` whose detail names a limit no
+rebuild clears (TinyGo's libc, the cgo translation, the lowering table, the
+analysing binary) no longer has `callers`/`callees` prescribe `go generate`.
+
+Records are keyed `(module, version, pipeline_version)`: `0.15.0` rows stay and
+become unreachable. Cost is one re-extraction per coordinate on its next
+`callgraph` or `local` run.
 
 ## Call graph record: pipeline `0.14.0` → `0.15.0` - template text in a package var or an embedded file
 

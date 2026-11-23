@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"hash"
+	"slices"
 	"sort"
 	"time"
 
@@ -144,12 +145,10 @@ func (CallGraphRecordHasher) Unmarshal(data []byte) (CallGraphRecord, error) {
 				Kind: HandlerKind(cn.InterruptHandler.Kind),
 				Site: SourcePosition{File: cn.InterruptHandler.Site.File, Line: cn.InterruptHandler.Site.Line},
 			},
+			DependencyDispatch: cn.DependencyDispatch.domain(),
 		}
-		if err := nodes[i].ExportDirective.Validate(); err != nil {
-			return CallGraphRecord{}, fmt.Errorf("node %s: %w", cn.ID, err)
-		}
-		if err := nodes[i].InterruptHandler.Validate(); err != nil {
-			return CallGraphRecord{}, fmt.Errorf("node %s: %w", cn.ID, err)
+		if err := validateNodeFacts(nodes[i]); err != nil {
+			return CallGraphRecord{}, err
 		}
 	}
 	var ifaces []InterfaceType
@@ -364,6 +363,8 @@ type canonicalPos struct {
 }
 
 type canonicalNode struct {
+	// DependencyDispatch is omitted when absent, as ExportDirective is.
+	DependencyDispatch canonicalDependencyDispatch `json:"dependency_dispatch,omitzero"`
 	// ExportDirective is omitted when absent, so a node without one marshals to
 	// the bytes it always did.
 	ExportDirective      canonicalExportDirective `json:"export_directive,omitzero"`
@@ -387,14 +388,90 @@ type canonicalNode struct {
 // build would not have recorded, on the write leg as Unmarshal does on the read.
 func validateExportDirectives(nodes []CallNode) error {
 	for _, n := range nodes {
-		if err := n.ExportDirective.Validate(); err != nil {
-			return fmt.Errorf("node %s: %w", n.ID, err)
-		}
-		if err := n.InterruptHandler.Validate(); err != nil {
-			return fmt.Errorf("node %s: %w", n.ID, err)
+		if err := validateNodeFacts(n); err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+// validateNodeFacts refuses a node carrying a fact this build would not record.
+func validateNodeFacts(n CallNode) error {
+	if err := n.ExportDirective.Validate(); err != nil {
+		return fmt.Errorf("node %s: %w", n.ID, err)
+	}
+	if err := n.InterruptHandler.Validate(); err != nil {
+		return fmt.Errorf("node %s: %w", n.ID, err)
+	}
+	if err := n.DependencyDispatch.Validate(); err != nil {
+		return fmt.Errorf("node %s: %w", n.ID, err)
+	}
+	return nil
+}
+
+// canonicalDependencyDispatch is the wire shape of domain.DependencyDispatch.
+type canonicalDependencyDispatch struct {
+	Escape     canonicalDispatchEscape `json:"escape"`
+	Interfaces []string                `json:"interfaces,omitempty"`
+	// Production is the same over production hand-offs, absent when none is.
+	Production canonicalHandOff `json:"production,omitzero"`
+}
+
+type canonicalHandOff struct {
+	Escape     canonicalDispatchEscape `json:"escape"`
+	Interfaces []string                `json:"interfaces,omitempty"`
+}
+
+// IsZero is what omitzero asks.
+func (c canonicalHandOff) IsZero() bool {
+	return c.Escape == canonicalDispatchEscape{} && len(c.Interfaces) == 0
+}
+
+type canonicalDispatchEscape struct {
+	Function string       `json:"function"`
+	Kind     string       `json:"kind"`
+	Site     canonicalPos `json:"site"`
+	Type     string       `json:"type"`
+	Via      string       `json:"via"`
+}
+
+// IsZero is what omitzero asks, so a node without the fact marshals as before.
+func (c canonicalDependencyDispatch) IsZero() bool {
+	return c.Escape == canonicalDispatchEscape{} && len(c.Interfaces) == 0 && c.Production.IsZero()
+}
+
+func newCanonicalDependencyDispatch(d DependencyDispatch) canonicalDependencyDispatch {
+	all, prod := newCanonicalHandOff(d), newCanonicalHandOff(d.Production())
+	return canonicalDependencyDispatch{Escape: all.Escape, Interfaces: all.Interfaces, Production: prod}
+}
+
+func newCanonicalHandOff(d DependencyDispatch) canonicalHandOff {
+	e := d.Escape
+	return canonicalHandOff{
+		Escape: canonicalDispatchEscape{
+			Function: e.Function, Kind: string(e.Kind), Type: e.Type, Via: e.Via,
+			Site: canonicalPos{File: e.Site.File, Line: e.Site.Line},
+		},
+		Interfaces: d.SortedInterfaces(),
+	}
+}
+
+func (c canonicalDependencyDispatch) domain() DependencyDispatch {
+	all := canonicalHandOff{Escape: c.Escape, Interfaces: c.Interfaces}.domain()
+	prod := c.Production.domain()
+	all.ProductionEscape, all.ProductionInterfaces = prod.Escape, prod.Interfaces
+	return all
+}
+
+func (c canonicalHandOff) domain() DependencyDispatch {
+	e := c.Escape
+	return DependencyDispatch{
+		Escape: DispatchEscape{
+			Kind: EscapeKind(e.Kind), Type: e.Type, Via: e.Via, Function: e.Function,
+			Site: SourcePosition{File: e.Site.File, Line: e.Site.Line},
+		},
+		Interfaces: slices.Clone(c.Interfaces),
+	}
 }
 
 // canonicalInterruptHandler is the wire shape of domain.InterruptHandler.
@@ -703,6 +780,7 @@ func canonicalShell(r CallGraphRecord) canonicalRecord {
 				Kind: string(n.InterruptHandler.Kind),
 				Site: canonicalPos{File: n.InterruptHandler.Site.File, Line: n.InterruptHandler.Site.Line},
 			},
+			DependencyDispatch: newCanonicalDependencyDispatch(n.DependencyDispatch),
 		}
 	}
 	var cIfaces []canonicalInterface

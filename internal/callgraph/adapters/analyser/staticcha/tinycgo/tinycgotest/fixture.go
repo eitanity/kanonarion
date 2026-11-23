@@ -35,6 +35,17 @@ func Testdata(t testing.TB) string {
 // every entry of this toolchain's src, and tinycgofx from the fake TINYGOROOT.
 func Frame(t testing.TB) goenv.TinyGo {
 	t.Helper()
+	return frame(t, "fakeboard")
+}
+
+// LibcFrame is Frame for fakelibc, fakeboard's chip with TinyGo's wasi-libc.
+func LibcFrame(t testing.TB) goenv.TinyGo {
+	t.Helper()
+	return frame(t, "fakelibc")
+}
+
+func frame(t testing.TB, target string) goenv.TinyGo {
+	t.Helper()
 	root := t.TempDir()
 	copyTree(t, filepath.Join(Testdata(t), "tinygoroot"), root)
 	host := build.Default.GOROOT
@@ -60,7 +71,7 @@ func Frame(t testing.TB) goenv.TinyGo {
 		link(t, filepath.Join(host, "src", e.Name()), filepath.Join(src, e.Name()))
 	}
 	link(t, filepath.Join(root, "src", "tinycgofx"), filepath.Join(src, "tinycgofx"))
-	f, err := goenv.NewTinyGo("fakeboard", "0.42.0", "go1.27.2", "linux", "arm", "6", merged, root, Triple,
+	f, err := goenv.NewTinyGo(target, "0.42.0", "go1.27.2", "linux", "arm", "6", merged, root, Triple,
 		[]string{"fakeboard", "tinygo"})
 	if err != nil {
 		t.Fatalf("NewTinyGo: %v", err)

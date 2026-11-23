@@ -304,7 +304,7 @@ func TestCallGraphSummaryText_IsUnchanged(t *testing.T) {
 			want: "example.com/cg@v1.0.0: Partial — 2 nodes, 1 edges [CHA]\n" +
 				"  failure: bad/bad.go:3:25: undefined: undefinedSymbol\n" +
 				"  failed packages (1): example.com/cg/bad\n" +
-				cgdomain.IncompleteGraphRemedy(partial.Coordinate, partial.FailureCause, partial.FailureDetail, "") + "\n",
+				cgdomain.IncompleteGraphRemedy(partial.Coordinate, partial.FailureCause, partial.FailureDetail, "", cgdomain.BuildFrame{}) + "\n",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

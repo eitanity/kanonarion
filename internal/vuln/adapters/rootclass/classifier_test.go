@@ -264,6 +264,18 @@ func TestClassify_UnavailableGraphIsAMeasurement(t *testing.T) {
 			wantRemedy: true,
 		},
 		{
+			name: "a TinyGo record without the calls its compiler inserts",
+			graphs: &fakeGraphs{records: map[string]cgdomain.CallGraphRecord{
+				"example.com/app@local": func() cgdomain.CallGraphRecord {
+					r := appRecord([]cgdomain.CallNode{node("example.com/app/handlers.(*Server).ServeHTTP", "*Server", "ServeHTTP", exported)}, nil)
+					r.FailureDetail = cgdomain.TinyGoLoweringGap{Found: "0.45.0", Covered: []string{"0.44.0"}}.Clause()
+					return r
+				}(),
+			}},
+			wantIn:     "holds none of the calls TinyGo's compiler inserts (TinyGo 0.45.0 ran",
+			wantRemedy: true,
+		},
+		{
 			name:   "the store could not be read",
 			graphs: &fakeGraphs{err: errors.New("content hash mismatch")},
 			wantIn: "content hash mismatch",

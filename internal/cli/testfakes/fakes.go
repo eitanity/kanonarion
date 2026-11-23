@@ -866,6 +866,32 @@ func (f *FakeQueryCallGraph) ForeignModulesBuilt(_ context.Context, coord coordi
 	return rec.ForeignModulesBuilt, true, nil
 }
 
+// DependencyDispatchOf answers from the added records' own nodes, which is what
+// the store's row copy holds: the write leg copies it in the blob's transaction.
+func (f *FakeQueryCallGraph) DependencyDispatchOf(_ context.Context, symbolIDs []string, pipelineVersion string, _ coordinate.ModuleSet, _ gotoolchain.Version) (map[string]string, bool, error) {
+	if f.Err != nil {
+		return nil, false, f.Err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	want := make(map[string]bool, len(symbolIDs))
+	for _, id := range symbolIDs {
+		want[id] = true
+	}
+	out := map[string]string{}
+	for key, rec := range f.records {
+		if !strings.HasSuffix(key, "|"+pipelineVersion) {
+			continue
+		}
+		for _, n := range rec.Nodes {
+			if want[n.ID] && !n.DependencyDispatch.IsZero() {
+				out[n.ID] = n.DependencyDispatch.Describe()
+			}
+		}
+	}
+	return out, true, nil
+}
+
 func (f *FakeQueryCallGraph) SetList(summaries []cgports.CallGraphSummary) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

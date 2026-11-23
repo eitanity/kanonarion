@@ -206,6 +206,14 @@ func Analyse(rec cgdomain.CallGraphRecord, roots []string, scope cgdomain.RootSc
 			"): " + clause + "; capability set is a lower bound and may be incomplete. " + remedy)
 	}
 
+	// The calls TinyGo's compiler inserts are absent, so a capability reached
+	// through the runtime has no path; the reader is owed what closes it.
+	if gap, ok := cgdomain.ReadTinyGoLoweringGap(rec.FailureDetail); ok && report.Partial {
+		report.Caveat = "call graph did not fully resolve (status " + rec.OverallStatus.String() +
+			"): it holds none of the calls TinyGo's compiler inserts (" + gap.Detail() +
+			"); capability set is a lower bound and may be incomplete. " + gap.Remedy()
+	}
+
 	nodeByID := make(map[string]cgdomain.CallNode, len(rec.Nodes))
 	for _, n := range rec.Nodes {
 		nodeByID[n.ID] = n

@@ -272,6 +272,7 @@ func Run(args []string, stdout, stderr io.Writer) error {
 	err = withFlagRemedy(err)
 	storeSetAside.flush(stderr, err)
 	storeNotSearched.flush(stderr)
+	storeDispatchNotice.flush(stderr)
 	frameExcludes.flush(stderr)
 	if err == nil {
 		// A signal that arrived after the work was done stopped nothing.

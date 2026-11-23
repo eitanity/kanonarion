@@ -242,7 +242,7 @@ func TestSites_OnePerLoweredConstruct(t *testing.T) {
 		"chanRecv":         {tinylower.OpChanRecv},
 		"chanClose":        {tinylower.OpChanClose},
 		"chanLen":          {tinylower.OpChanLen, tinylower.OpChanCap},
-		"chanSelect":       {tinylower.OpChanSelect},
+		"chanSelect":       {tinylower.OpChanTryRecv},
 		"selectBlock":      {tinylower.OpDeadlock, tinylower.OpPanic},
 		"selectNone":       nil,
 		"goStmt":           {tinylower.OpGoStart},
@@ -303,7 +303,7 @@ func TestSites_OnePerLoweredConstruct(t *testing.T) {
 		if fn == nil {
 			t.Fatalf("fixture has no function %s", name)
 		}
-		if got := ops(tinylower.Sites(fn, cfg)); !slices.Equal(sorted(got), sorted(want)) {
+		if got := ops(sitesOf(fn, cfg)); !slices.Equal(sorted(got), sorted(want)) {
 			t.Errorf("%s: Sites = %v, want %v\n%s", name, got, want, dump(fn))
 		}
 	}
@@ -320,37 +320,37 @@ func dump(fn *ssa.Function) string {
 func TestSites_FollowTheBuild(t *testing.T) {
 	fns := build(t, thumb)
 	none := tinylower.Config{Sizes: thumb, Scheduler: "none", Recover: false}
-	if got := ops(tinylower.Sites(fns["wasmExport"], none)); !slices.Equal(got, []tinylower.Op{tinylower.OpWasmExportCheckRun}) {
+	if got := ops(sitesOf(fns["wasmExport"], none)); !slices.Equal(got, []tinylower.Op{tinylower.OpWasmExportCheckRun}) {
 		t.Errorf("wasmExport under scheduler none = %v, want only the check", got)
 	}
-	if got := ops(tinylower.Sites(fns["deferPanic"], none)); !slices.Equal(got, []tinylower.Op{tinylower.OpPanic}) {
+	if got := ops(sitesOf(fns["deferPanic"], none)); !slices.Equal(got, []tinylower.Op{tinylower.OpPanic}) {
 		t.Errorf("deferPanic without recover support = %v, want no defer frame", got)
 	}
 	asyncify := tinylower.Config{Sizes: thumb, Scheduler: "asyncify", Recover: true}
-	if got := ops(tinylower.Sites(fns["goSmall"], asyncify)); !slices.Equal(sorted(got), sorted([]tinylower.Op{tinylower.OpAlloc, tinylower.OpGoStart, tinylower.OpGoExit})) {
+	if got := ops(sitesOf(fns["goSmall"], asyncify)); !slices.Equal(sorted(got), sorted([]tinylower.Op{tinylower.OpAlloc, tinylower.OpGoStart, tinylower.OpGoExit})) {
 		t.Errorf("goSmall under asyncify = %v, want the wrapper's exit too", got)
 	}
 	// Without sizes every value is taken to need a box, and int prints at no size.
-	if got := ops(tinylower.Sites(fns["boxPtr"], tinylower.Config{})); len(got) != 0 {
+	if got := ops(sitesOf(fns["boxPtr"], tinylower.Config{})); len(got) != 0 {
 		t.Errorf("boxPtr without sizes = %v, want a pointer never boxed", got)
 	}
-	if got := ops(tinylower.Sites(fns["boxBig"], tinylower.Config{})); !slices.Equal(got, []tinylower.Op{tinylower.OpAlloc}) {
+	if got := ops(sitesOf(fns["boxBig"], tinylower.Config{})); !slices.Equal(got, []tinylower.Op{tinylower.OpAlloc}) {
 		t.Errorf("boxBig without sizes = %v, want it boxed", got)
 	}
-	if got := ops(tinylower.Sites(fns["heapAlloc"], tinylower.Config{})); !slices.Equal(got, []tinylower.Op{tinylower.OpAlloc}) {
+	if got := ops(sitesOf(fns["heapAlloc"], tinylower.Config{})); !slices.Equal(got, []tinylower.Op{tinylower.OpAlloc}) {
 		t.Errorf("heapAlloc without sizes = %v", got)
 	}
-	if got := ops(tinylower.Sites(fns["printOne"], tinylower.Config{})); len(got) != 3 {
+	if got := ops(sitesOf(fns["printOne"], tinylower.Config{})); len(got) != 3 {
 		t.Errorf("printOne without sizes = %v", got)
 	}
 	var rec *ssa.Function
 	for _, anon := range fns["doRecover"].AnonFuncs {
 		rec = anon
 	}
-	if got := ops(tinylower.Sites(rec, none)); !slices.Equal(got, []tinylower.Op{tinylower.OpRecover}) {
+	if got := ops(sitesOf(rec, none)); !slices.Equal(got, []tinylower.Op{tinylower.OpRecover}) {
 		t.Errorf("doRecover$1 = %v, want recover", got)
 	}
-	if got := tinylower.Sites(fns["extern"], none); got != nil {
+	if got := sitesOf(fns["extern"], none); got != nil {
 		t.Errorf("a declaration without a body = %v, want none", got)
 	}
 }
@@ -359,7 +359,7 @@ func TestSites_FollowTheBuild(t *testing.T) {
 // its size on the target: int is 32 bits on a 32-bit target.
 func TestSites_PrintByTypeAndSize(t *testing.T) {
 	fns := build(t, thumb)
-	got := ops(tinylower.Sites(fns["printAll"], tinylower.Config{Sizes: thumb}))
+	got := ops(sitesOf(fns["printAll"], tinylower.Config{Sizes: thumb}))
 	want := []tinylower.Op{tinylower.OpPrintLock,
 		tinylower.OpPrintInt8, tinylower.OpPrintInt16, tinylower.OpPrintInt32, tinylower.OpPrintUint8, tinylower.OpPrintUint16,
 		tinylower.OpPrintUint32, tinylower.OpPrintUint64, tinylower.OpPrintPointer, tinylower.OpPrintPointer, tinylower.OpPrintBool,
@@ -409,39 +409,14 @@ func use() *int { return box(1) }
 	if inst == nil || inst.Origin() == nil {
 		t.Fatalf("no instantiation found: %v", inst)
 	}
-	if got := ops(tinylower.Sites(inst, tinylower.Config{Sizes: thumb})); !slices.Equal(got, []tinylower.Op{tinylower.OpAllocNoHeap}) {
+	if got := ops(sitesOf(inst, tinylower.Config{Sizes: thumb})); !slices.Equal(got, []tinylower.Op{tinylower.OpAllocNoHeap}) {
 		t.Errorf("box[int] = %v, want the origin's //go:noheap", got)
 	}
 }
 
-// Every operation the lowering can produce names a runtime function in every
-// table, and an unlisted version has no table.
-func TestTable_CoversEveryOp(t *testing.T) {
-	if got := tinylower.Versions(); !slices.Equal(got, []string{"0.42.0"}) {
-		t.Errorf("Versions = %v", got)
-	}
-	if _, ok := tinylower.ForVersion("0.41.0"); ok {
-		t.Error("ForVersion(0.41.0) found a table")
-	}
-	table, ok := tinylower.ForVersion("0.42.0")
-	if !ok || table.Version() != "0.42.0" {
-		t.Fatalf("ForVersion(0.42.0) = %v, %v", table, ok)
-	}
-	for _, op := range allOps {
-		cs := table.Callees(op)
-		if len(cs) == 0 {
-			t.Errorf("op %s names no runtime function", op)
-		}
-		for _, c := range cs {
-			if c.Pkg != "runtime" && c.Pkg != "internal/task" {
-				t.Errorf("op %s names %s.%s outside runtime and internal/task", op, c.Pkg, c.Name)
-			}
-		}
-	}
-	if got := table.WasmExports(); len(got) != 1 || got[0] != (tinylower.NamedExport{Callee: tinylower.Callee{Pkg: "runtime", Name: "wasmEntryCommand"}, Symbol: "_start"}) {
-		t.Errorf("WasmExports = %+v, want only the default build mode's _start", got)
-	}
-	if table.Callees("no-such-op") != nil {
-		t.Error("an unknown op has callees")
-	}
+// sitesOf lowers fn under cfg by the newest table; the ops do not depend on the
+// release, only the unwind analysis does.
+func sitesOf(fn *ssa.Function, cfg tinylower.Config) []tinylower.Site {
+	table, _ := tinylower.ForVersion("0.44.0")
+	return table.Lowering(cfg).Sites(fn)
 }

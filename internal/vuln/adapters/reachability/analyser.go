@@ -218,6 +218,13 @@ func collectNamedEntryPoints(cg ports.CallGraphProjection) []string {
 	return callgraphdomain.SelectEntryPointRoots(rootCandidates(cg), callgraphdomain.RootScopeProduction)
 }
 
+// collectDispatchEntryPoints returns the methods a dependency can call through a
+// value the module hands it, which the confirming search adds only where the
+// named entry points reach nothing. Same scope as collectNamedEntryPoints.
+func collectDispatchEntryPoints(cg ports.CallGraphProjection) []string {
+	return callgraphdomain.SelectDependencyDispatchRoots(rootCandidates(cg), callgraphdomain.RootScopeProduction)
+}
+
 // rootCandidates projects the graph's nodes onto the shared selector's input, so
 // both root sets are chosen from one projection and a field added to the
 // candidate cannot reach one selector and not the other.
@@ -240,6 +247,7 @@ func rootCandidates(cg ports.CallGraphProjection) []callgraphdomain.RootCandidat
 				Kind: callgraphdomain.HandlerKind(node.HandlerKind),
 				Site: callgraphdomain.SourcePosition{File: node.HandlerFile, Line: node.HandlerLine},
 			},
+			Dispatch: node.DependencyDispatch,
 		})
 	}
 	return candidates

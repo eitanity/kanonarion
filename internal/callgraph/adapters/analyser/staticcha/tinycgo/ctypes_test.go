@@ -6,6 +6,9 @@ import (
 	"go/parser"
 	"go/printer"
 	"go/token"
+	"os"
+	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -228,5 +231,90 @@ func TestEnumIntegerType_TheLowestRankOfTheSize(t *testing.T) {
 	}
 	if got := rawValue([]byte(`12`)); got != "12" {
 		t.Errorf("a numeric value = %q", got)
+	}
+}
+
+// anonTypedefNames are the C names of testdata/clang-ast/anon-typedefs.h, in
+// the order a Go file would first reach them.
+var anonTypedefNames = []string{"anon_t", "anon_u", "anon_e", "anon_fixed", "anon_nest", "pt_t", "named_t", "anon_chain", "anon_var"}
+
+// translateRecorded declares every name from a recorded clang AST of
+// anon-typedefs.h, returning the generated Go, the errors, and the spellings
+// the enum probe was asked for.
+func translateRecorded(t *testing.T, file string) (decls, errs, probed []string) {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join("testdata", "clang-ast", file))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fset := token.NewFileSet()
+	goFile, err := parser.ParseFile(fset, "/d/a.go", "package a\n", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := newCgoPackage([]*ast.File{goFile}, "/d", "a", "linux", fset)
+	p.sizes = cSizes{short: 2, int: 4, long: 4, longLong: 8, float: 4, double: 8, longDouble: 8}
+	f := p.newCGoFile(goFile, 0)
+	if f.decls, f.names, err = parseTranslationUnit(raw); err != nil {
+		t.Fatal(err)
+	}
+	f.enumProbe = func(spellings []string) ([]int, []bool, error) {
+		probed = spellings
+		sizes, signed := make([]int, len(spellings)), make([]bool, len(spellings))
+		for i := range spellings {
+			sizes[i], signed[i] = 4, true
+		}
+		return sizes, signed, nil
+	}
+	first := len(p.generated.Decls)
+	for _, name := range anonTypedefNames {
+		f.getASTDeclName(name, f.names[name], false)
+	}
+	for _, d := range p.generated.Decls[first:] {
+		decls = append(decls, printedNode(d))
+	}
+	for _, e := range p.errors {
+		errs = append(errs, e.Error())
+	}
+	return decls, errs, probed
+}
+
+// Clang 21 names a typedef's anonymous struct, union or enum in an
+// ElaboratedType's ownedTagDecl; clang 22 marks the RecordType or EnumType
+// isTagOwned. One preamble's AST from each translates to the same Go: a named
+// tag, a typedef chain and a variable read through the name, and a nested
+// anonymous member refused.
+func TestTypedefUnderlying_ReadsTheOwnedTagOfEitherClang(t *testing.T) {
+	want := []string{
+		"type _Cgo__Ctype_struct___0 struct{ a _Cgo_int }",
+		"type _Cgo_anon_t = _Cgo__Ctype_struct___0",
+		"type _Cgo__Ctype_union___1 struct{ only _Cgo_int }",
+		"type _Cgo_anon_u = _Cgo__Ctype_union___1",
+		"type _Cgo__Ctype_enum___2 = _Cgo_int",
+		"type _Cgo_anon_e = _Cgo__Ctype_enum___2",
+		"type _Cgo__Ctype_enum___3 = _Cgo_uchar",
+		"type _Cgo_anon_fixed = _Cgo__Ctype_enum___3",
+		"type _Cgo_anon_nest = _Cgo__Ctype_struct___4",
+		"type _Cgo_struct_pt struct{ x _Cgo_int }",
+		"type _Cgo_pt_t = _Cgo_struct_pt",
+		"type _Cgo_struct_named_s struct{ b _Cgo_int }",
+		"type _Cgo_named_t = _Cgo_struct_named_s",
+		"type _Cgo_anon_chain = _Cgo_anon_t",
+		"var _Cgo_anon_var _Cgo_anon_t\t//go:extern anon_var\n",
+	}
+	for _, tc := range []struct{ clang, nested string }{{"21", "unnamed struct at"}, {"22", "unnamed at"}} {
+		t.Run("clang-"+tc.clang, func(t *testing.T) {
+			decls, errs, probed := translateRecorded(t, "anon-typedefs.clang-"+tc.clang+".json")
+			if !slices.Equal(decls, want) {
+				t.Errorf("declarations:\n%s\nwant:\n%s", strings.Join(decls, "\n"), strings.Join(want, "\n"))
+			}
+			wantErr := "/d/a.go: C._Ctype_struct___4: struct (" + tc.nested + " anon-typedefs.h:5:18) is a C type this analysis does not translate"
+			if len(errs) != 1 || errs[0] != wantErr {
+				t.Errorf("errors = %q, want only %q", errs, wantErr)
+			}
+			if !slices.Equal(probed, []string{"anon_e", "anon_fixed"}) {
+				t.Errorf("the enum probe was asked for %q, want both anonymous enum typedefs", probed)
+			}
+		})
 	}
 }

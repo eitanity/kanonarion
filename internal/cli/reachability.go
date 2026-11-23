@@ -761,7 +761,10 @@ type negativeSearchOutput struct {
 	// one does. Its presence means every field below it is a zero value because
 	// nothing was measured, not because the measurement came back empty — the two
 	// were indistinguishable while a skipped search published no object at all.
-	NotSearched         string `json:"not_searched,omitempty"`
+	NotSearched string `json:"not_searched,omitempty"`
+	// TinyGoLowering names the graphs searched that hold none of the calls
+	// TinyGo's compiler inserts; absent when none.
+	TinyGoLowering      string `json:"tinygo_lowering_unrecorded,omitempty"`
 	ArtifactKind        string `json:"artifact_kind"`
 	Fidelity            string `json:"fidelity,omitempty"`
 	EntryPointRoots     int    `json:"entry_point_roots"`
@@ -839,6 +842,7 @@ func negativeSearchToOutput(s *vuldomain.NegativeSearch, classify routeRootFunc)
 	}
 	out := &negativeSearchOutput{
 		NotSearched:         s.NotSearched,
+		TinyGoLowering:      s.LoweringGap,
 		ArtifactKind:        s.ArtifactKind,
 		Fidelity:            s.Fidelity,
 		EntryPointRoots:     s.EntryPointRoots,
@@ -858,6 +862,9 @@ func negativeSearchToOutput(s *vuldomain.NegativeSearch, classify routeRootFunc)
 	}
 	if s.ShippedCodePathFound {
 		routes = append(routes, s.ShippedCodeRoute)
+	}
+	if s.DispatchPathFound {
+		routes = append(routes, s.DispatchRoute)
 	}
 	out.Routes = routesToOutput(routes, classify)
 	return out
