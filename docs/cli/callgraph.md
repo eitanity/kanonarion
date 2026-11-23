@@ -377,18 +377,18 @@ The record also holds what TinyGo adds beyond the source's calls:
   `interrupt_handler`, and reachability starts there as it does at an export.
 
 TinyGo's packages are read the way TinyGo reads them: `import "C"` is removed
-and every `C.<name>` becomes the name TinyGo declares for it. A package that
-only imports `"C"` for its preamble needs nothing more. A file that references C
-names needs a C compiler: `clang` on `PATH`, else the highest-numbered
-`clang-<N>`. The preamble is compiled for the target with the `cflags`, `cpu`
-and ABI of its definition under `TINYGOROOT/targets/`, and its declarations
-become Go declarations. The record is `Partial` when:
+and every `C.<name>` becomes the name TinyGo declares for it. A file that
+references C names needs a C compiler: `clang` on `PATH`, else the highest-numbered
+`clang-<N>`. The preamble is compiled with the flags TinyGo gives the target,
+with its libc's headers, and its declarations become Go declarations. The record
+is `Partial` when:
 
 | Message | What it means |
 |---|---|
-| `package <path>: no C compiler found on PATH (looked for clang, then clang-<N>)` | The named file references C names and this host has no clang. Install one and re-analyse |
-| `clang rejected the preamble: <file>:<line>:<col>: error: …` | clang's first diagnostic for the file's preamble under this target |
-| `kanonarion's cgo translation does not cover what <package> uses: …` | A C type kanonarion does not translate (bit fields, a union of several fields, `__int128`, `_Complex`, an unnamed struct inside another or behind a pointer), or a `#cgo CFLAGS` line. The gap is kanonarion's, so the record is never served from cache |
+| `package <path>: no C compiler found on PATH (looked for clang, then clang-<N>)` | This host has no clang. Install one and re-analyse |
+| `clang rejected the preamble, read with <headers>: <file>:<line>:<col>: error: …` | clang's first diagnostic for the preamble |
+| `TinyGo has not built <libc> for target <target> on this host: <dir> …` | Build any program with `tinygo build -target <target>`; never served from cache |
+| `kanonarion's cgo translation does not cover what <package> uses: …` | A C type kanonarion does not translate (bit fields, a union of several fields, `__int128`, `_Complex`, an unnamed struct inside another or behind a pointer), or a `#cgo CFLAGS` line. Kanonarion's gap; never served from cache |
 | `C.<name>: the macro "<text>" is not a constant this analysis evaluates: …` | A referenced macro that is not an integer, float, character or string constant, or an expression of those |
 
 The result line names the frame the analysis ran under. With `--from-walk`, the

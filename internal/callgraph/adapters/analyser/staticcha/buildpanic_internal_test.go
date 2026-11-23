@@ -2,6 +2,7 @@ package staticcha
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"os"
@@ -63,8 +64,12 @@ func TestAnalyseDir_ABuildPanicCannotHangALaterBuild(t *testing.T) {
 	if !slices.Contains(got.rec.FailedPackages, "example.com/panics/a") {
 		t.Errorf("failed packages = %v, want example.com/panics/a named", got.rec.FailedPackages)
 	}
-	if !strings.Contains(got.rec.FailureDetail, "SSA construction panic for example.com/panics/a") {
-		t.Errorf("failure detail does not name the panic: %s", got.rec.FailureDetail)
+	// a's Build panics on what its compile error leaves unresolved, which the
+	// detail states as that error's consequence, not as a crash.
+	if !strings.Contains(got.rec.FailureDetail, "undefined: undefinedFn") ||
+		!strings.Contains(got.rec.FailureDetail, "the errors stated for example.com/panics/a leave code SSA cannot build, so it is analysed without its bodies") ||
+		strings.Contains(got.rec.FailureDetail, "SSA construction panic") {
+		t.Errorf("failure detail = %s", got.rec.FailureDetail)
 	}
 	built := false
 	for _, n := range got.rec.Nodes {
@@ -74,5 +79,18 @@ func TestAnalyseDir_ABuildPanicCannotHangALaterBuild(t *testing.T) {
 	}
 	if !built {
 		t.Error("b, which built in the rebuilt program, is missing from the graph")
+	}
+}
+
+// A panic in a package with no errors of its own is stated as one.
+func TestBuildPanicError(t *testing.T) {
+	berr := errors.New("runtime error: invalid memory address or nil pointer dereference")
+	if got := buildPanicError("example.com/a", false, berr); got !=
+		"SSA construction panic for example.com/a: runtime error: invalid memory address or nil pointer dereference; it is analysed without its bodies" {
+		t.Errorf("well-typed: %q", got)
+	}
+	if got := buildPanicError("example.com/a", true, berr); got !=
+		"the errors stated for example.com/a leave code SSA cannot build, so it is analysed without its bodies" {
+		t.Errorf("ill-typed: %q", got)
 	}
 }

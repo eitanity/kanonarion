@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 )
 
@@ -164,14 +165,16 @@ func (spec *TargetSpec) resolveInherits(root string) error {
 }
 
 // cFlags is the target part of the clang command, in TinyGo's order: the
-// definition's cflags with {root} as TINYGOROOT, the triple, the CPU flag as
-// TinyGo spells it for the architecture, and the ABI when the chain names one.
-// TinyGo's resource-dir, libc, debug and optimisation flags are left out.
-func cFlags(spec *TargetSpec, root, triple, goarch string) []string {
+// definition's cflags with {root} as TINYGOROOT, the libc's flags, the triple,
+// the CPU flag as TinyGo spells it for the architecture, and the ABI when the
+// chain names one. TinyGo's resource-dir, debug and optimisation flags are left
+// out: clang's own builtin headers serve the libc's.
+func cFlags(spec *TargetSpec, root, triple, goarch string, lc libcHeaders) []string {
 	var cflags []string
 	for _, flag := range spec.CFlags {
 		cflags = append(cflags, strings.ReplaceAll(flag, "{root}", root))
 	}
+	cflags = append(cflags, lc.flags...)
 	cflags = append(cflags, "--target="+triple)
 	if spec.CPU != "" {
 		switch {
@@ -187,6 +190,136 @@ func cFlags(spec *TargetSpec, root, triple, goarch string) []string {
 		cflags = append(cflags, "-mabi="+spec.ABI)
 	}
 	return cflags
+}
+
+// SPDX-SnippetEnd
+
+// SPDX-SnippetBegin
+// SPDX-SnippetCopyrightText: Copyright (c) 2018-2026 The TinyGo Authors. All rights reserved.
+// SPDX-License-Identifier: BSD-3-Clause
+// SPDX-SnippetName: TinyGo libc C flags and library cache paths
+// SPDX-SnippetComment: Ported from github.com/tinygo-org/tinygo@v0.44.0, compileopts/config.go (libVersions, LibcNeedsMalloc, LibraryPath, CanonicalArchName, LibcCFlags) and goenv/goenv.go (GOCACHE); v0.43.0 is the same for every libc
+
+// libcVersions are the libc entries of TinyGo's libVersions.
+var libcVersions = map[string]int{
+	"musl":     3,
+	"picolibc": 2,
+}
+
+// libcHeaders is the libc part of TinyGo's C flags for one target.
+type libcHeaders struct {
+	// name is the target's libc, "" when it names none.
+	name  string
+	flags []string
+	// cacheInclude is the include directory TinyGo builds into its cache for
+	// this target, "" when the libc has none.
+	cacheInclude string
+}
+
+// tinyGoCacheDir is where TinyGo keeps the libraries it builds.
+func tinyGoCacheDir() (string, error) {
+	dir, err := os.UserCacheDir()
+	if err != nil {
+		return "", fmt.Errorf("finding TinyGo's cache directory: %w", err)
+	}
+	return filepath.Join(dir, "tinygo"), nil
+}
+
+// libraryPath is the cache directory TinyGo builds the named libc into. The
+// options are those a target alone selects: kanonarion passes no -gc or
+// -trimpath, so neither does the tinygo build its remedy names.
+func libraryPath(spec *TargetSpec, triple, cacheDir, name string) string {
+	archname := triple
+	if spec.CPU != "" {
+		archname += "-" + spec.CPU
+	}
+	if spec.ABI != "" {
+		archname += "-" + spec.ABI
+	}
+	if spec.SoftFloat {
+		archname += "-softfloat"
+	}
+	if v, ok := libcVersions[name]; ok {
+		archname += "-v" + strconv.Itoa(v)
+	}
+	options := ""
+	if spec.GC == "boehm" && spec.Libc == "wasi-libc" {
+		options += "+malloc"
+	}
+	return filepath.Join(cacheDir, name+options+"-"+archname)
+}
+
+// canonicalArchName folds arm*, thumb*, arm64 and mipsel as TinyGo does.
+func canonicalArchName(triple string) string {
+	arch, _, _ := strings.Cut(triple, "-")
+	if arch == "arm64" {
+		return "aarch64"
+	}
+	if strings.HasPrefix(arch, "arm") || strings.HasPrefix(arch, "thumb") {
+		return "arm"
+	}
+	if arch == "mipsel" {
+		return "mips"
+	}
+	return arch
+}
+
+// libcCFlags is TinyGo's LibcCFlags for spec. A libc TinyGo does not define is
+// refused, where TinyGo panics.
+func libcCFlags(spec *TargetSpec, root, triple, goarch, cacheDir string) (libcHeaders, error) {
+	lc := libcHeaders{name: spec.Libc}
+	switch spec.Libc {
+	case "darwin-libSystem":
+		lc.flags = []string{
+			"-nostdlibinc",
+			"-isystem", filepath.Join(root, "lib/macos-minimal-sdk/src/usr/include"),
+		}
+	case "picolibc":
+		picolibcDir := filepath.Join(root, "lib", "picolibc", "libc")
+		lc.cacheInclude = filepath.Join(libraryPath(spec, triple, cacheDir, "picolibc"), "include")
+		lc.flags = []string{
+			"-nostdlibinc",
+			"-isystem", lc.cacheInclude,
+			"-isystem", filepath.Join(picolibcDir, "include"),
+			"-isystem", filepath.Join(picolibcDir, "stdio"),
+			"-D__PICOLIBC_ERRNO_FUNCTION=__errno_location",
+		}
+	case "musl":
+		arch := canonicalArchName(triple)
+		lc.cacheInclude = filepath.Join(libraryPath(spec, triple, cacheDir, "musl"), "include")
+		lc.flags = []string{
+			"-nostdlibinc",
+			"-isystem", lc.cacheInclude,
+			"-isystem", filepath.Join(root, "lib", "musl", "arch", arch),
+			"-isystem", filepath.Join(root, "lib", "musl", "arch", "generic"),
+			"-isystem", filepath.Join(root, "lib", "musl", "include"),
+		}
+	case "wasi-libc":
+		lc.cacheInclude = filepath.Join(libraryPath(spec, triple, cacheDir, "wasi-libc"), "include")
+		lc.flags = []string{
+			"-nostdlibinc",
+			"-isystem", lc.cacheInclude,
+		}
+	case "wasmbuiltins", "":
+		// No headers: the library is builtins only, or there is no libc.
+	case "mingw-w64":
+		lc.cacheInclude = filepath.Join(libraryPath(spec, triple, cacheDir, "mingw-w64"), "include")
+		lc.flags = []string{
+			"-nostdlibinc",
+			"-isystem", lc.cacheInclude,
+			"-isystem", filepath.Join(root, "lib", "mingw-w64", "mingw-w64-headers", "crt"),
+			"-isystem", filepath.Join(root, "lib", "mingw-w64", "mingw-w64-headers", "include"),
+			"-isystem", filepath.Join(root, "lib", "mingw-w64", "mingw-w64-headers", "defaults", "include"),
+		}
+		if goarch == "386" {
+			lc.flags = append(lc.flags, "-D__MSVCRT_VERSION__=0x700", "-D_WIN32_WINNT=0x0501")
+		} else {
+			lc.flags = append(lc.flags, "-D_UCRT", "-D_WIN32_WINNT=0x0a00")
+		}
+	default:
+		return libcHeaders{}, fmt.Errorf("the target names libc %q, which TinyGo does not define", spec.Libc)
+	}
+	return lc, nil
 }
 
 // SPDX-SnippetEnd

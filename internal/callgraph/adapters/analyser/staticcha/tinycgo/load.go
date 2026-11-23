@@ -412,13 +412,24 @@ func (l *loader) compiler(ctx context.Context) (*compiler, error) {
 		l.compErr = err
 		return nil, err
 	}
+	cacheDir, err := tinyGoCacheDir()
+	if err != nil {
+		l.compErr = err
+		return nil, err
+	}
+	lc, err := libcCFlags(spec, l.cfg.SourceRoot, l.cfg.Triple, l.cfg.GOARCH, cacheDir)
+	if err != nil {
+		l.compErr = err
+		return nil, err
+	}
 	tmp, err := os.MkdirTemp("", "kanonarion-cg-cgo-*")
 	if err != nil {
 		l.compErr = fmt.Errorf("creating a directory for the preambles: %w", err)
 		return nil, l.compErr
 	}
 	l.tmp = tmp
-	l.comp = &compiler{path: path, env: l.cfg.Env, flags: cFlags(spec, l.cfg.SourceRoot, l.cfg.Triple, l.cfg.GOARCH)}
+	l.comp = &compiler{path: path, env: l.cfg.Env, flags: cFlags(spec, l.cfg.SourceRoot, l.cfg.Triple, l.cfg.GOARCH, lc),
+		target: l.cfg.Target, libc: lc}
 	l.step(fmt.Sprintf("C compiler %s (%s)", path, l.comp.version(ctx)))
 	return l.comp, nil
 }
@@ -434,11 +445,11 @@ func (l *loader) readPreamble(ctx context.Context, comp *compiler, pkg *cgoPacka
 	pre := []string{"-ffreestanding", "-I" + dir}
 	astOut, err := comp.run(ctx, append(pre, "-fsyntax-only", "-Xclang", "-ast-dump=json", src)...)
 	if err != nil {
-		return nil, fmt.Errorf("clang rejected the preamble: %w", err)
+		return nil, comp.rejected(pkg.importPath, err)
 	}
 	macroOut, err := comp.run(ctx, append(pre, "-dM", "-E", src)...)
 	if err != nil {
-		return nil, fmt.Errorf("clang rejected the preamble: %w", err)
+		return nil, comp.rejected(pkg.importPath, err)
 	}
 	decls, names, err := parseTranslationUnit(astOut)
 	if err != nil {

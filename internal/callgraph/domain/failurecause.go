@@ -91,6 +91,11 @@ func RecordIsCacheable(r CallGraphRecord) bool {
 	if _, ok := ReadCgoTranslationGap(r.FailureDetail); ok {
 		return false
 	}
+	// And for a preamble clang refused without TinyGo's libc headers, which the
+	// same generation filed as the module's before it passed them.
+	if IsLegacyPreambleRejection(r.FailureDetail) {
+		return false
+	}
 	switch r.FailureCause {
 	case FailureCauseEnvironment:
 		return false

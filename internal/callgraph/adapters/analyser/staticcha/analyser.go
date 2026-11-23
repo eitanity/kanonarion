@@ -734,7 +734,8 @@ func (a *Analyser) analyseDirOnce(
 	a.logMem(ctx, "all_packages_processed")
 
 	if build.Registered() == 0 {
-		return stateCgoGap(a.noPackageTypeCheckedRecord(coord, target, tempDir, targetPkgPaths, allLoadErrs, metaErrs, build), build.CgoGaps, len(allLoadErrs)), nil
+		failed := stateCgoGap(a.noPackageTypeCheckedRecord(coord, target, tempDir, targetPkgPaths, allLoadErrs, metaErrs, build), build.CgoGaps, len(allLoadErrs))
+		return stateLibcAbsence(failed, allLoadErrs), nil
 	}
 
 	if ctx.Err() != nil {
@@ -838,6 +839,7 @@ func (a *Analyser) analyseDirOnce(
 	rec = a.newCallGraphRecord(coord, build, nodes, edges, ifaces, impls, overallStatus, allLoadErrs, failedPkgs)
 	rec = stateGraphIncompleteness(rec, overallStatus, mode, tempDir, metaErrs, allLoadErrs, failedPkgs, build, mem)
 	rec = stateCgoGap(rec, build.CgoGaps, len(allLoadErrs))
+	rec = stateLibcAbsence(rec, allLoadErrs)
 	rec = stateLoweringGap(rec, loweringGap)
 	// The last thing the analysis says. What follows is the caller sealing and
 	// storing the record, which on a large graph is the longest stretch after this
@@ -875,6 +877,26 @@ func stateCgoGap(rec domain.CallGraphRecord, gaps map[string]*cgoGap, compileErr
 	rec.FailureDetail = strings.TrimSuffix(strings.Join(clauses, "; ")+"; "+rec.FailureDetail, "; ")
 	if compileErrs == 0 && rec.FailureCause == domain.FailureCauseModule {
 		rec.FailureCause = domain.FailureCauseUnrecorded
+	}
+	return rec
+}
+
+// stateLibcAbsence files a record as the environment's when clang refused a
+// preamble because TinyGo had not built the target's libc, leading the detail
+// with each such refusal it does not already quote.
+func stateLibcAbsence(rec domain.CallGraphRecord, loadErrs []string) domain.CallGraphRecord {
+	var lead []string
+	for _, e := range loadErrs {
+		if _, ok := domain.ReadTinyGoLibcAbsence(e); !ok {
+			continue
+		}
+		rec.FailureCause = domain.FailureCauseEnvironment
+		if !strings.Contains(rec.FailureDetail, e) {
+			lead = append(lead, e)
+		}
+	}
+	if len(lead) > 0 {
+		rec.FailureDetail = strings.TrimSuffix(strings.Join(lead, "; ")+"; "+rec.FailureDetail, "; ")
 	}
 	return rec
 }

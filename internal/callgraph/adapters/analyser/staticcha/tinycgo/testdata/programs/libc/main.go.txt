@@ -1,0 +1,12 @@
+package main
+
+/*
+#include <stdio.h>
+static int greet(void) { return puts("hello"); }
+*/
+import "C"
+
+// Greet calls C code that includes a libc header.
+func Greet() int { return int(C.greet()) }
+
+func main() { println(Greet()) }

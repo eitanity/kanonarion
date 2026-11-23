@@ -147,7 +147,10 @@ import (
 // 0.15.0 record lacks it, and its empty callers answer for such a method reads
 // as a measured absence. The same generation reads clang 22's anonymous typedef
 // tags, loads a cgo package that does not reach syscall, and states a C type the
-// cgo translation refuses as kanonarion's gap, never served from cache.
+// cgo translation refuses as kanonarion's gap, never served from cache. It also
+// reads a preamble with TinyGo's libc headers, so a record quoting a refusal
+// made without them is re-measured, and states an ill-typed package's SSA panic
+// as its errors' consequence.
 const PipelineVersion = "0.16.0"
 
 // ExtractCallGraphUseCase extracts the call graph of a module and persists a

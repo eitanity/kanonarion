@@ -298,7 +298,7 @@ new one ranks by recency. `local`, `callgraph`, the standard-library extraction
 and a scan's on-demand call graph reuse a TinyGo record only under the release
 that built it; reads still select on the target.
 
-Under `--tinygo`, three changes to cgo packages:
+Under `--tinygo`, four changes to cgo packages:
 
 - With clang 22, a preamble's anonymous `typedef struct`, `union` or `enum` is
   translated as under clang 21: the record is `Extracted` where it was
@@ -314,6 +314,25 @@ Under `--tinygo`, three changes to cgo packages:
   `callees` say a package the gap alone dropped was not analysed. A `0.16.0`
   record written before this change quotes the refusal under `module`; it reads
   as the gap too and is re-measured on the next run.
+- A preamble is read with TinyGo's libc headers for the target: one including
+  `<stdio.h>` under `wasip1` or `pico` is `Extracted` where it was `Partial`,
+  cause `module`. clang's refusal reads `clang rejected the preamble, read with
+  TinyGo's <libc> headers: …` (or `with no libc headers`), still `module`. While
+  TinyGo has not built the target's libc, the detail leads with `TinyGo has not
+  built <libc> for target <target> on this host: <dir> does not exist, …`, the
+  cause is `environment`, and the remedy is `tinygo build -target <target>`. A
+  `0.16.0` record written before this change quotes `clang rejected the
+  preamble: …` under `module`; it is re-measured on the next run.
+
+A package with errors of its own whose SSA construction panics, such as one
+calling an undefined name or a C name whose preamble clang refused, states `the
+errors stated for <package> leave code SSA cannot build, so it is analysed
+without its bodies` where it stated `SSA construction panic for <package>: …`.
+Graph, cause and completeness are unchanged; a `0.16.0` record written before
+this change keeps the old sentence and is not re-measured for it. Under any
+pipeline, a record below `BUILT_WITH_BODIES` whose detail names a limit no
+rebuild clears (TinyGo's libc, the cgo translation, the lowering table, the
+analysing binary) no longer has `callers`/`callees` prescribe `go generate`.
 
 Records are keyed `(module, version, pipeline_version)`: `0.15.0` rows stay and
 become unreachable. Cost is one re-extraction per coordinate on its next

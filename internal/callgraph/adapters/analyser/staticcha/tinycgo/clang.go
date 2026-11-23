@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -66,9 +67,29 @@ func isExecutable(p string) bool {
 
 // compiler runs one clang binary with the target's flags.
 type compiler struct {
-	path  string
-	env   []string
-	flags []string
+	path   string
+	env    []string
+	flags  []string
+	target string
+	libc   libcHeaders
+}
+
+// rejected states clang's refusal of pkg's preamble and the libc headers it
+// was read with. Checked once clang refuses, since a preamble that includes no
+// libc header compiles without them: a refusal while TinyGo has not built the
+// target's libc is this host's, not the package's.
+func (c compiler) rejected(pkg string, err error) error {
+	if dir := c.libc.cacheInclude; dir != "" {
+		if _, serr := os.Stat(dir); errors.Is(serr, fs.ErrNotExist) {
+			return fmt.Errorf("TinyGo has not built %s for target %s on this host: %s does not exist, so clang could not read the preamble of %s (%w)",
+				c.libc.name, c.target, dir, pkg, err)
+		}
+	}
+	headers := "no libc headers"
+	if len(c.libc.flags) > 0 {
+		headers = "TinyGo's " + c.libc.name + " headers"
+	}
+	return fmt.Errorf("clang rejected the preamble, read with %s: %w", headers, err)
 }
 
 // run compiles src (a file path) with args after the target flags, returning

@@ -3,6 +3,8 @@ package staticcha_test
 import (
 	"context"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -103,5 +105,75 @@ func TestAnalyseDir_ACgoTranslationGapIsKanonarions(t *testing.T) {
 				t.Errorf("failed packages = %v", rec.FailedPackages)
 			}
 		})
+	}
+}
+
+// Under a target whose libc TinyGo has not built, clang's refusal of a preamble
+// is this host's: the detail leads with the missing include directory, the
+// cause is the environment's and the record is never served back. With the
+// libc's headers in place the program is extracted, and a header no libc has
+// stays the module's own error.
+func TestAnalyseDir_AnUnbuiltLibcIsTheEnvironments(t *testing.T) {
+	tinycgotest.RequireClang(t)
+	frame := tinycgotest.LibcFrame(t)
+	cache := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", cache)
+	include := filepath.Join(cache, "tinygo", "wasi-libc-thumbv6m-unknown-unknown-eabi-cortex-m0plus-aapcs", "include")
+	analyse := func(program string) (domain.CallGraphRecord, string) {
+		t.Helper()
+		coord, err := coordinate.NewModuleCoordinate("example.com/"+program, coordinate.LocalVersion)
+		if err != nil {
+			t.Fatal(err)
+		}
+		dir := tinycgotest.Program(t, program)
+		rec, err := staticcha.New("0.0.0-test", "", slog.Default()).WithTinyGo(frame).AnalyseDir(context.Background(), dir, coord)
+		if err != nil {
+			t.Fatalf("AnalyseDir: %v", err)
+		}
+		return rec, dir
+	}
+
+	rec, dir := analyse("libc")
+	lead := filepath.Join(dir, "main.go") + ": TinyGo has not built wasi-libc for target fakelibc on this host: " + include +
+		" does not exist, so clang could not read the preamble of example.com/libc ("
+	if !strings.HasPrefix(rec.FailureDetail, lead) || rec.FailureCause != domain.FailureCauseEnvironment || domain.RecordIsCacheable(rec) ||
+		strings.Contains(rec.FailureDetail, "SSA construction panic") {
+		t.Errorf("cause %q, cacheable %v, detail %q; want the environment's, never served, led by %q",
+			rec.FailureCause, domain.RecordIsCacheable(rec), rec.FailureDetail, lead)
+	}
+
+	if err := os.MkdirAll(include, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(include, "stdio.h"), []byte("int puts(const char *s);\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if built, _ := analyse("libc"); built.OverallStatus != domain.CallGraphStatusExtracted {
+		t.Errorf("with the headers built: %v: %s", built.OverallStatus, built.FailureDetail)
+	}
+	rec, _ = analyse("libcbroken")
+	if !strings.Contains(rec.FailureDetail, "clang rejected the preamble, read with TinyGo's wasi-libc headers: ") ||
+		!strings.Contains(rec.FailureDetail, "nosuchheader.h") || rec.FailureCause != domain.FailureCauseModule || !domain.RecordIsCacheable(rec) ||
+		strings.Contains(rec.FailureDetail, "SSA construction panic") {
+		t.Errorf("a header no libc has: cause %q, cacheable %v, detail %q", rec.FailureCause, domain.RecordIsCacheable(rec), rec.FailureDetail)
+	}
+}
+
+// A TinyGo package whose preamble clang refused is kept without its bodies,
+// stated as its errors' consequence rather than as a crash.
+func TestAnalyseDir_ARefusedTinyGoPackageStatesNoPanic(t *testing.T) {
+	tinycgotest.RequireClang(t)
+	coord, err := coordinate.NewModuleCoordinate("example.com/rejected", coordinate.LocalVersion)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := staticcha.New("0.0.0-test", "", slog.Default()).WithTinyGo(tinycgotest.Frame(t))
+
+	rec, err := a.AnalyseDir(context.Background(), tinycgotest.Program(t, "rejected"), coord)
+
+	if err != nil || !strings.Contains(rec.FailureDetail, "clang rejected the preamble, read with no libc headers: ") ||
+		!strings.Contains(rec.FailureDetail, "the errors stated for tinycgofx/rejected leave code SSA cannot build") ||
+		strings.Contains(rec.FailureDetail, "SSA construction panic") {
+		t.Errorf("AnalyseDir = %v, %v: %s", rec.OverallStatus, err, rec.FailureDetail)
 	}
 }

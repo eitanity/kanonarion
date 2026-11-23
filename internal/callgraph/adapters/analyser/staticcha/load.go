@@ -299,6 +299,7 @@ func registerTargetPackages(res *ssaBuildResult, loaded []*packages.Package, mar
 		appendPackageErrors(res, p)
 		if len(p.Errors) > 0 {
 			markFailed(p.PkgPath)
+			res.markIllTyped(p.PkgPath)
 		}
 		if p.Types == nil {
 			markFailed(p.PkgPath)
@@ -344,6 +345,7 @@ func registerTinyGoPackages(res *ssaBuildResult, pkgs []*packages.Package, markF
 		appendPackageErrors(res, p)
 		if len(p.Errors) > 0 {
 			markFailed(p.PkgPath)
+			res.markIllTyped(p.PkgPath)
 		}
 		if p.Types == nil || res.Prog.Package(p.Types) != nil {
 			continue
@@ -425,7 +427,7 @@ func (a *Analyser) buildSSAPackages(coord coordinate.ModuleCoordinate, built []*
 			if ssaPkg.Pkg != nil {
 				path = ssaPkg.Pkg.Path()
 			}
-			res.LoadErrs = append(res.LoadErrs, fmt.Sprintf("SSA construction panic for %s: %v; it is analysed without its bodies", path, berr))
+			res.LoadErrs = append(res.LoadErrs, buildPanicError(path, res.IllTyped[path], berr))
 			markFailed(path)
 			return builtPaths, path
 		}
@@ -435,6 +437,23 @@ func (a *Analyser) buildSSAPackages(coord coordinate.ModuleCoordinate, built []*
 		}
 	}
 	return builtPaths, ""
+}
+
+// buildPanicError states a Build that panicked. go/ssa builds only well-typed
+// code, so for a package with errors of its own the panic is their consequence:
+// those errors are stated already, and the panic's text would read as a crash.
+func buildPanicError(path string, illTyped bool, berr error) string {
+	if illTyped {
+		return "the errors stated for " + path + " leave code SSA cannot build, so it is analysed without its bodies"
+	}
+	return fmt.Sprintf("SSA construction panic for %s: %v; it is analysed without its bodies", path, berr)
+}
+
+func (res *ssaBuildResult) markIllTyped(path string) {
+	if res.IllTyped == nil {
+		res.IllTyped = map[string]bool{}
+	}
+	res.IllTyped[path] = true
 }
 
 // recordFailedPackages states the failed target packages on res, sorted.
@@ -472,7 +491,10 @@ type ssaBuildResult struct {
 	// CgoGaps are the packages the TinyGo cgo translation refused declarations
 	// of, with its refusals; those and the type errors that follow from them are
 	// kept out of LoadErrs, which holds the compile errors.
-	CgoGaps         map[string]*cgoGap
+	CgoGaps map[string]*cgoGap
+	// IllTyped are the packages with errors of their own, whose SSA build may
+	// panic on what the errors leave unresolved.
+	IllTyped        map[string]bool
 	FailedPkgs      []string
 	TestScope       domain.TestScope
 	TestScopeDetail string

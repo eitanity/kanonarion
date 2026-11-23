@@ -31,7 +31,7 @@ func TestLoadTarget_ReadsThePicoChainAsTinyGoMergesIt(t *testing.T) {
 	if !reflect.DeepEqual(spec.CFlags, want) {
 		t.Errorf("cflags = %q, want cortex-m's nine in order %q", spec.CFlags, want)
 	}
-	if got := cFlags(spec, "/tg", spec.Triple, "arm"); !reflect.DeepEqual(got[len(got)-2:],
+	if got := cFlags(spec, "/tg", spec.Triple, "arm", libcHeaders{}); !reflect.DeepEqual(got[len(got)-2:],
 		[]string{"--target=thumbv6m-unknown-unknown-eabi", "-mcpu=cortex-m0plus"}) {
 		t.Errorf("flags end %q", got)
 	}
@@ -80,7 +80,7 @@ func TestCFlags_FollowTinyGosOrderAndSpelling(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadTarget: %v", err)
 	}
-	got := cFlags(spec, "/opt/tinygo", spec.Triple, "arm")
+	got := cFlags(spec, "/opt/tinygo", spec.Triple, "arm", libcHeaders{})
 	want := []string{"-Werror", "-I/opt/tinygo/include", "-DFAKEBOARD=1", "--target=thumbv6m-unknown-unknown-eabi",
 		"-mcpu=cortex-m0plus", "-mabi=aapcs"}
 	if !reflect.DeepEqual(got, want) {
@@ -91,12 +91,12 @@ func TestCFlags_FollowTinyGosOrderAndSpelling(t *testing.T) {
 		{"x86_64-unknown-linux", "amd64", "-march=atmega328p"},
 		{"i386-unknown-linux", "386", "-march=atmega328p"},
 	} {
-		flags := cFlags(&TargetSpec{CPU: "atmega328p"}, "/r", tc.triple, tc.goarch)
+		flags := cFlags(&TargetSpec{CPU: "atmega328p"}, "/r", tc.triple, tc.goarch, libcHeaders{})
 		if flags[len(flags)-1] != tc.want {
 			t.Errorf("%s/%s: cpu flag %q, want %q", tc.triple, tc.goarch, flags[len(flags)-1], tc.want)
 		}
 	}
-	if flags := cFlags(&TargetSpec{}, "/r", "wasm32-unknown-wasi", "wasm"); !reflect.DeepEqual(flags, []string{"--target=wasm32-unknown-wasi"}) {
+	if flags := cFlags(&TargetSpec{}, "/r", "wasm32-unknown-wasi", "wasm", libcHeaders{}); !reflect.DeepEqual(flags, []string{"--target=wasm32-unknown-wasi"}) {
 		t.Errorf("an empty chain gives %q", flags)
 	}
 }

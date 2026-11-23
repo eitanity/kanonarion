@@ -28,7 +28,21 @@ func DroppedPackageReasonFor(pkg, detail string) string {
 	if g, ok := ReadCgoTranslationGap(detail); ok && g.DroppedBy(pkg) {
 		return "was not analysed: kanonarion's cgo translation does not cover what it uses"
 	}
+	if a, ok := ReadTinyGoLibcAbsence(detail); ok && a.DroppedBy(pkg) {
+		return a.DroppedReason()
+	}
 	return DroppedPackageReason(detail)
+}
+
+// namesItsOwnRemedy reports whether detail states a limit whose remedy is not
+// in the source: this host's libc, kanonarion's cgo translation or lowering
+// table, the analysing binary, or a preamble read without TinyGo's libc headers.
+func namesItsOwnRemedy(detail string) bool {
+	_, libc := ReadTinyGoLibcAbsence(detail)
+	_, gap := ReadCgoTranslationGap(detail)
+	_, lowering := ReadTinyGoLoweringGap(detail)
+	_, limit := gotoolchain.ReadAnalyserLimit(detail)
+	return libc || gap || lowering || limit || IsLegacyPreambleRejection(detail)
 }
 
 // AnalyserLimitCaveat states a record's analyser limit for a caveat line, and
@@ -227,6 +241,15 @@ func IncompleteGraphRemedy(coord coordinate.ModuleCoordinate, cause FailureCause
 			return gap + "\n" + IncompleteGraphRemedy(coord, cause, rest, dir, frame)
 		}
 		return gap + " Then re-analyse:\n  " + FrameReanalysisInstruction(coord, dir, frame, false)
+	}
+	// This host lacked the target's libc. Such a record files the environment's
+	// cause and is never served back, so the re-run needs no --force.
+	if a, ok := ReadTinyGoLibcAbsence(detail); ok {
+		return "  " + a.Statement() + "\n  " + a.Remedy() + "\n  " + FrameReanalysisInstruction(coord, dir, frame, false)
+	}
+	if IsLegacyPreambleRejection(detail) {
+		return "  A kanonarion that read the preamble without TinyGo's libc headers wrote this record; this one\n" +
+			"  passes them. Re-analyse:\n  " + FrameReanalysisInstruction(coord, dir, frame, false)
 	}
 	// The same for the cgo translation's refusals. A package with compile errors
 	// of its own files the module's cause, and their remedy follows; such a record

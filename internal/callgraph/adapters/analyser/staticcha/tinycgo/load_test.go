@@ -139,7 +139,7 @@ func TestLoad_APreambleClangRejectsIsNamed(t *testing.T) {
 	res, _ := load(t, frame, "rejected", frameEnv(frame))
 
 	errs := tinyGoPackage(t, res, "tinycgofx/rejected").Errors
-	if len(errs) == 0 || !strings.Contains(errs[0].Error(), "rejected.go: clang rejected the preamble: ") ||
+	if len(errs) == 0 || !strings.Contains(errs[0].Error(), "rejected.go: clang rejected the preamble, read with no libc headers: ") ||
 		!strings.Contains(errs[0].Error(), "rejected.go:5:") || !strings.Contains(errs[0].Error(), "error: ") {
 		t.Fatalf("errors = %v, want the file and clang's first diagnostic first", errs)
 	}

@@ -483,7 +483,7 @@ func rootCompletenessCaveat(ctx context.Context, symbolID string, uc QueryCallGr
 		if !found || rec.Completeness == domain.CompletenessUnknown || rec.Completeness.IsBuiltWithBodies() {
 			continue
 		}
-		if caveat := domain.CompletenessCaveat(rec.Completeness, phase); caveat != "" {
+		if caveat := domain.CompletenessCaveatFor(rec.Completeness, phase, rec.FailureDetail); caveat != "" {
 			return caveat, nil
 		}
 	}
@@ -645,6 +645,9 @@ func droppedEdgesNotice(ctx context.Context, kind, symbolID string, pr partialRo
 	}
 	if g, ok := domain.ReadCgoTranslationGap(pr.detail); ok && g.DroppedBy(pr.failedPkg) {
 		why = "was not analysed: kanonarion's cgo translation does not cover what it uses"
+	}
+	if a, ok := domain.ReadTinyGoLibcAbsence(pr.detail); ok && a.DroppedBy(pr.failedPkg) {
+		why = a.DroppedReason()
 	}
 	line := fmt.Sprintf(
 		"notice: unmeasured on one side — package %q %s, so edges "+
